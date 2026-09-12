@@ -1,4 +1,6 @@
 //! Real mTLS terminal connections and real writer/SQLite. Device readiness is synthetic only.
+#[path = "support/operator_start_https.rs"]
+mod operator_start_https;
 mod support;
 use reqwest::{Client, StatusCode};
 use rx_api::{

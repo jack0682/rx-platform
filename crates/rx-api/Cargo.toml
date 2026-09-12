@@ -5,6 +5,7 @@ edition.workspace = true
 publish.workspace = true
 
 [dependencies]
+rx-process-contract = {path="../rx-process-contract"}
 rx-package = {path="../rx-package"}
 rx-application = { path = "../rx-application" }
 rx-domain = { path = "../rx-domain" }

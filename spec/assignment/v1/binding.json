@@ -1,0 +1,12 @@
+{
+  "max_payload_bytes": 65536,
+  "package": "rx.executor.assignment.v1",
+  "schema": "rx.assignment-binding.v1",
+  "source_sha256": {
+    "crates/rx-process-contract/src/assignment.rs": "4f12b254624abff3738c6b1554966347621ea8d0bbb60e593993c71949d03603",
+    "crates/rx-process-contract/src/execution.rs": "13e8b52d15a19d8f8e7139b1a4ded50f6c1edcf0a39abe5aa24ab102cd187edd",
+    "proto/rx/executor/assignment/v1/assignment.proto": "1a325f6094e6e65f43b69cc5d28822deb9cac452ea82bf1a04a743ae5b364f48",
+    "spec/assignment/v1/README.md": "5d720e15b9252425544e62418715da7cb23073e868162b1aaa3d599c17a0da89"
+  },
+  "view_schema": "rx.executor-assignment-state.v1"
+}

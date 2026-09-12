@@ -19,3 +19,5 @@ pub mod device_review;
 pub mod host_binding_plan;
 pub mod native_outcome;
 pub mod source_link;
+
+pub mod assignment;
