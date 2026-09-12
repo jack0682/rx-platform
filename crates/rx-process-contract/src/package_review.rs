@@ -5,6 +5,8 @@ use std::collections::BTreeMap;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Request {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device_context_digest: Option<Digest>,
     pub schema: Name,
     pub id: Id,
     pub intake: Id,
@@ -19,8 +21,10 @@ pub struct Request {
 }
 impl Request {
     pub fn validate(&self) -> Result<(), String> {
-        if self.schema.as_str() != "rx.process-review-request.v1"
-            || self.binding_selections.len() > 128
+        if !matches!(
+            (self.schema.as_str(), self.device_context_digest.is_some()),
+            ("rx.process-review-request.v1", false) | ("rx.process-review-request.v2", true)
+        ) || self.binding_selections.len() > 128
         {
             return Err("process review request shape".into());
         }

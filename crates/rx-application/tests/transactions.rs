@@ -7604,6 +7604,7 @@ fn review_job(f: &mut Fixture, p: &review_support::Fixture, step: &str) -> proce
             &f.admin,
             &id(),
             process_review::Create {
+                device_plans: vec![],
                 id: id(),
                 intake: intake_id,
                 cell: f.configuration.id.clone(),

@@ -90,6 +90,8 @@ GET의 `approval_matches_current_review`는 기록된 결정이 현재 검토 �
 
 Create: `id`, `intake`, `cell`, `configuration_digest`, `policy_generation`, `binding_selections`.
 
+장비 변경 후보를 검토할 때는 `device_plans`를 추가한다. v2 요청·후보 snapshot·현재 원본 재검증·영향 셀 접근권 및 적용 차단은 [장비 후보 공정 검토](DEVICE_PROCESS_REVIEW.md)를 따른다. 이 항목이 없는 기존 요청은 v1 동작을 유지한다.
+
 Submit: `review`, `cell`, `expected`(보고서 revision 또는 null), `directory`, `report_digest`. directory는 기존 import root 아래의 제한된 상대 경로다. 고정 파일명 `verification.json`, `verification.sig.json`, 성공 시 `resolved.json`을 읽는다. symlink 구성요소·비정규 파일·크기 초과를 거부한다.
 
 Decide: `review`, `cell`, `report_revision`, `review_digest`, `expected`(결정 revision 또는 null), `choice`(`APPROVE`/`REJECT`), 비어 있지 않은 `note`(최대1,000자).
