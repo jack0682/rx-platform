@@ -270,13 +270,15 @@ impl Worker {
                 .map_err(|e| e.to_string())?;
             let resolved =
                 rx_domain::canonical::bytes(ticket.resolved()).map_err(|e| e.to_string())?;
-            let verified = rx_application::process_review::Validated::check(
+            let devices = worker.verify_process_devices(ticket.job(), &policy)?;
+            let verified = rx_application::process_review::Validated::check_with_devices(
                 ticket.job(),
                 stored,
                 &authority,
                 ticket.version().report.clone(),
                 ticket.version().signature.clone(),
                 Some(&resolved),
+                devices,
             )?;
             rx_application::process_change::Prepared::new(ticket, verified)
         })

@@ -35,7 +35,7 @@ S compiler는 실제 새 Intent로 ResolvedProcess와 BT XML을 생성하고 com
 
 phase70에서 [장비 후보 공정 검토](DEVICE_PROCESS_REVIEW.md)를 연결했다. 기존 v1 검토는 active configuration만 검사하며 v2 device_sources를 승인하지 않는다. device_plans를 명시한 새 검토 요청은 후보 guard/configuration을 고정하고 원본·승인·영향을 재검증한다. 기존 step과 Host/Intent가 같아도 출처를 제거하거나 기본 구성의 guard로 대체하지 않는다.
 
-다음은 Host native/static binding 변경을 증명하는 경계와 APPLIED_UNQUALIFIED 적용·qualification이다. 현행 process-change는 장비 후보 검토 결과를 실제 적용할 수 없으며 명시적으로 거부한다.
+phase71에서 [변경 제안·영향 검토·staging과 Host별 요구](DEVICE_CHANGE_PLAN.md)를 연결했다. 다음은 Host native/static binding 변경을 증명하는 경계와 APPLIED_UNQUALIFIED 적용·qualification이다. 현행 process-change는 장비 후보 검토 결과를 실제 적용할 수 없으며 준비·전송·적용을 명시적으로 거부한다.
 
 기존 UI는 API로 저장한 후보 binding과 v2 출처를 읽고 내려받을 수 있도록 decoder를 확장했다. 미해결/오래된 plan은 조작을 차단하고 이전 snapshot을 표시한다. 새로운 plan을 고르는 전용 UI는 후속이다.
 

@@ -24,7 +24,7 @@ writer는 commit 직전에 다시 현재 plan revision/내용, builder, 승인 �
 
 ## 적용과 화면
 
-이 단계의 승인 scope는 PROCESS_PACKAGE_SOFTWARE다. 현행 process-change는 device context가 있는 Job을 거부한다. 후보의 Host/native 설정 변경과 운영 envelope, quiet/fence·원장 세대 및 적용 후 qualification을 연결한 다음 이 경계를 확장해야 한다. activation_authorized는 false다.
+승인 scope는 PROCESS_PACKAGE_SOFTWARE다. phase71의 [장비 변경 계획](DEVICE_CHANGE_PLAN.md)에서 후보의 제안·영향 검토·staging과 Host별 요구를 연결했다. 실제 준비·전송·적용은 차단한다. Host/native 설정 변경과 운영 envelope, quiet/fence·원장 세대 및 적용 후 qualification을 연결한 다음 이 경계를 확장해야 한다. activation_authorized는 false다.
 
 기존 운영 화면 decoder는 v2 요청과 후보 문맥을 보존하며 후보가 빠진 자료를 거부한다. 검토 근거에 후보 자료를 표시하고 현재 셀 설정이 변경되지 않았음을 안내한다. 새 장비 plan을 고르는 전용 작성 화면은 후속이며 이 단계의 생성은 API 경로다.
 
