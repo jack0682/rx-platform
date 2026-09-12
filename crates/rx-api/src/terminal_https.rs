@@ -84,11 +84,23 @@ impl TerminalHttps {
         material: TlsMaterial,
         worker: Option<Arc<rx_runtime::package_intake::Worker>>,
     ) -> Result<Self, String> {
+        Self::new_with_operator_ui(runtime, credentials, policy, material, worker, None)
+    }
+    /// Serve an already validated S bundle over the same direct terminal TLS connection.
+    pub fn new_with_operator_ui(
+        runtime: Arc<dyn ApplicationPort>,
+        credentials: Credentials,
+        policy: HttpsPolicy,
+        material: TlsMaterial,
+        worker: Option<Arc<rx_runtime::package_intake::Worker>>,
+        bundle: Option<crate::operator_ui::OperatorBundle>,
+    ) -> Result<Self, String> {
         let acceptor = prepare_tls(material)?;
-        Ok(Self {
-            router: routes::terminal_router(runtime, credentials, policy, worker)?,
-            acceptor,
-        })
+        let mut router = routes::terminal_router(runtime, credentials, policy.clone(), worker)?;
+        if let Some(bundle) = bundle {
+            router = router.merge(bundle.router(policy));
+        }
+        Ok(Self { router, acceptor })
     }
     /// Stops accepting, drains HTTP requests, then closes remaining network connections only.
     /// Dropping an HTTP reply never rolls back an already admitted writer command.

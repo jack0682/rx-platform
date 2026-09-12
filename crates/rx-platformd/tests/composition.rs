@@ -33,6 +33,8 @@ struct Fixture {
     peer_pem: String,
     peer_key: String,
     ca_pem: String,
+    terminal_pem: String,
+    terminal_key: String,
 }
 fn pin(dir: &Path, label: &str, bytes: &[u8]) -> PinnedFile {
     let path = dir.join(label);
@@ -125,6 +127,7 @@ fn fixture() -> Fixture {
     let h = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let g = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let config = Config {
+        operator_ui: None,
         package_intake: None,
         host_links: vec![HostLink {
             host: name("host/sim"),
@@ -196,6 +199,8 @@ fn fixture() -> Fixture {
         peer_pem: peer.pem(),
         peer_key: peer_key.serialize_pem(),
         ca_pem: ca.pem(),
+        terminal_pem: terminal.pem(),
+        terminal_key: terminal_key.serialize_pem(),
     }
 }
 async fn wait_ready(f: &Fixture) -> Value {
@@ -211,6 +216,198 @@ async fn wait_ready(f: &Fixture) -> Value {
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
 }
+fn add_operator_ui(f: &mut Fixture) {
+    let directory = f._dir.path().join("operator");
+    fs::create_dir_all(directory.join("assets")).unwrap();
+    let directory = fs::canonicalize(directory).unwrap();
+    let mut files = vec![];
+    for (path, bytes) in [
+        ("assets/style.css", b"body { color: black; }".as_slice()),
+        (
+            "index.html",
+            b"<!doctype html><title>RX composition</title>".as_slice(),
+        ),
+    ] {
+        fs::write(directory.join(path), bytes).unwrap();
+        files.push(json!({"path":path,"sha256":Digest::from_bytes(Sha256::digest(bytes).into()),"size_bytes":Counter(bytes.len() as u64)}));
+    }
+    let manifest = pin(&directory, "operator-bundle.json", &canonical::bytes(&json!({
+        "schema":rx_api::operator_ui::SCHEMA,"api_schema":rx_api::operator_ui::API_SCHEMA,"files":files
+    })).unwrap());
+    f.config.operator_ui = Some(OperatorUi {
+        directory,
+        manifest,
+    });
+    fs::write(&f.path, canonical::bytes(&f.config).unwrap()).unwrap();
+}
+
+#[test]
+fn configured_operator_ui_is_verified_before_installation_and_rejects_mutable_roots() {
+    let mut f = fixture();
+    add_operator_ui(&mut f);
+    assert!(Loaded::read(&f.path).unwrap().operator_ui.is_some());
+    f.config.operator_ui.as_mut().unwrap().manifest.sha256 = Digest::from_bytes([0; 32]);
+    fs::write(&f.path, canonical::bytes(&f.config).unwrap()).unwrap();
+    assert!(initialize(&f.path).is_err());
+    assert!(!f.config.data_directory.exists());
+    let mut f = fixture();
+    add_operator_ui(&mut f);
+    f.config.data_directory = f
+        .config
+        .operator_ui
+        .as_ref()
+        .unwrap()
+        .directory
+        .join("authority");
+    fs::write(&f.path, canonical::bytes(&f.config).unwrap()).unwrap();
+    assert!(initialize(&f.path).is_err());
+    assert!(!f.config.data_directory.exists());
+}
+
+#[test]
+fn operator_ui_rejects_parent_traversal_in_mutable_directory_locations() {
+    let mut f = fixture();
+    add_operator_ui(&mut f);
+    let base = fs::canonicalize(f._dir.path()).unwrap();
+    fs::create_dir(base.join("detour")).unwrap();
+    f.config.data_directory = base.join("detour/../operator/missing-data");
+    fs::write(&f.path, canonical::bytes(&f.config).unwrap()).unwrap();
+    let error = Loaded::read(&f.path)
+        .err()
+        .expect("parent traversal must be rejected");
+    assert!(error.to_string().contains("parent traversal"), "{error}");
+    assert!(!base.join("operator/missing-data").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn operator_ui_compares_resolved_aliases_with_missing_directory_suffixes() {
+    use std::os::unix::fs::symlink;
+    let mut f = fixture();
+    add_operator_ui(&mut f);
+    let original = f.config.clone();
+    let base = fs::canonicalize(f._dir.path()).unwrap();
+    let alias = base.join("alias");
+    symlink(&base, &alias).unwrap();
+    // Existing /var-like aliases are allowed when the actual locations stay separate.
+    f.config.data_directory = alias.join("new-authority");
+    fs::write(&f.path, canonical::bytes(&f.config).unwrap()).unwrap();
+    assert!(Loaded::read(&f.path).is_ok());
+    for target in ["data", "runtime", "import"] {
+        f.config = original.clone();
+        let overlapping = alias.join("operator/missing/nested");
+        match target {
+            "data" => f.config.data_directory = overlapping,
+            "runtime" => f.config.runtime_directory = overlapping,
+            "import" => {
+                f.config.package_intake = Some(PackageIntake {
+                    device_review_authority: None,
+                    qualification_policy: None,
+                    review_authority: None,
+                    import_root: overlapping,
+                    policy: f.config.catalog.clone(),
+                })
+            }
+            _ => unreachable!(),
+        }
+        fs::write(&f.path, canonical::bytes(&f.config).unwrap()).unwrap();
+        let error = Loaded::read(&f.path)
+            .err()
+            .expect("resolved locations must not overlap");
+        assert!(
+            error.to_string().contains("must be separate"),
+            "{target}: {error}"
+        );
+    }
+    f.config = original.clone();
+    f.config.data_directory = alias.clone();
+    fs::write(&f.path, canonical::bytes(&f.config).unwrap()).unwrap();
+    let error = Loaded::read(&f.path)
+        .err()
+        .expect("mutable ancestor must not contain the UI");
+    assert!(error.to_string().contains("must be separate"), "{error}");
+    f.config = original;
+    let dangling = base.join("dangling");
+    symlink(base.join("absent"), &dangling).unwrap();
+    f.config.data_directory = dangling.join("new-authority");
+    fs::write(&f.path, canonical::bytes(&f.config).unwrap()).unwrap();
+    assert!(Loaded::read(&f.path).is_err());
+    assert!(!base.join("operator/missing").exists());
+}
+
+#[tokio::test]
+async fn configured_operator_ui_serves_over_terminal_https_without_creating_runs_or_qualification()
+{
+    let mut f = fixture();
+    add_operator_ui(&mut f);
+    initialize(&f.path).unwrap();
+    let (stop, stopped) = tokio::sync::oneshot::channel();
+    let path = f.path.clone();
+    let task = tokio::spawn(async move {
+        serve(&path, TestClock, async {
+            let _ = stopped.await;
+        })
+        .await
+    });
+    wait_ready(&f).await;
+    let response = f
+        .client
+        .get(format!("{}/", f.config.https.origin))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    assert_eq!(
+        response.text().await.unwrap(),
+        "<!doctype html><title>RX composition</title>"
+    );
+    let response = f
+        .client
+        .post(format!("{}/api/v1/session", f.config.https.origin))
+        .header("origin", &f.config.https.origin)
+        .header("x-rx-client", "browser-v1")
+        .json(&json!({"principal":"admin","password":"composition-test-password"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    let cookie = response.headers()["set-cookie"]
+        .to_str()
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_owned();
+    assert_eq!(
+        response.json::<Value>().await.unwrap()["terminal"],
+        "panel/a"
+    );
+    let overview: Value = f
+        .client
+        .get(format!("{}/api/v1/overview", f.config.https.origin))
+        .header("cookie", cookie)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(overview["cells"][0]["runs"].as_array().unwrap().is_empty());
+    assert!(overview["cells"][0]["cell"]["value"]["qualification"].is_null());
+    stop.send(()).unwrap();
+    assert_eq!(
+        task.await.unwrap().unwrap().lifecycle.phase,
+        lifecycle::Phase::StopCommitted
+    );
+    let directory = &f.config.operator_ui.as_ref().unwrap().directory;
+    fs::write(directory.join("assets/style.css"), b"changed on disk").unwrap();
+    assert!(
+        serve(&f.path, TestClock, std::future::ready(()))
+            .await
+            .is_err()
+    );
+}
+
 #[tokio::test]
 async fn composed_startup_restart_and_stop_preserve_store_and_never_start_a_run() {
     let f = fixture();
@@ -546,9 +743,40 @@ fn export_container_fixture() {
     c.grpc.bind = "0.0.0.0:7443".parse().unwrap();
     c.data_directory = PathBuf::from("/data/install");
     c.runtime_directory = PathBuf::from("/data/runtime");
+    if let Some(bundle) = std::env::var_os("RX_PLATFORM_OPERATOR_BUNDLE") {
+        let directory = fs::canonicalize(bundle).unwrap();
+        let manifest = directory.join(rx_api::operator_ui::MANIFEST_FILENAME);
+        let sha256 = Digest::from_bytes(Sha256::digest(fs::read(&manifest).unwrap()).into());
+        rx_api::operator_ui::OperatorBundle::load(&directory, &manifest, sha256).unwrap();
+        c.operator_ui = Some(OperatorUi {
+            directory: PathBuf::from("/operator"),
+            manifest: PinnedFile {
+                path: PathBuf::from("/operator/operator-bundle.json"),
+                sha256,
+            },
+        });
+    }
     fs::write(output.join("startup.json"), canonical::bytes(&c).unwrap()).unwrap();
     fs::write(output.join("probe.pem"), f.peer_pem).unwrap();
     fs::write(output.join("probe.key"), f.peer_key).unwrap();
+    pin(&output, "terminal.pem", f.terminal_pem.as_bytes());
+    pin(&output, "terminal.key", f.terminal_key.as_bytes());
+    pin(
+        &output,
+        "browser-fixture.json",
+        &canonical::bytes(&json!({
+            "schema":"rx.operator-browser-test-fixture.v1",
+            "origin":c.https.origin,
+            "principal":"admin",
+            "password":"composition-test-password",
+            "ca":"ca.pem",
+            "certificate":"terminal.pem",
+            "private_key":"terminal.key",
+            "terminal":"panel/a",
+            "simulation_only":true
+        }))
+        .unwrap(),
+    );
 }
 
 #[path = "../../rx-application/tests/support/package_intake.rs"]

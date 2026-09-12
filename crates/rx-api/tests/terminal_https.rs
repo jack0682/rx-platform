@@ -94,6 +94,9 @@ fn credentials() -> Credentials {
     }
 }
 async fn fixture(qualify: bool) -> Fixture {
+    fixture_with_ui(qualify, false).await
+}
+async fn fixture_with_ui(qualify: bool, ui: bool) -> Fixture {
     use rcgen::*;
     use sha2::Digest as _;
     let ca = || {
@@ -285,17 +288,36 @@ async fn fixture(qualify: bool) -> Fixture {
     let runtime = Handle::new(writer);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let origin = format!("https://{}", listener.local_addr().unwrap());
-    let https = TerminalHttps::new(
-        Arc::new(runtime.clone()),
-        credentials(),
-        HttpsPolicy::new(&origin).unwrap(),
-        TlsMaterial {
-            server_certificate_pem: server.pem().into_bytes(),
-            server_key_pem: key.serialize_pem().into_bytes(),
-            terminal_ca_pem: root_ca.pem().into_bytes(),
-        },
-    )
-    .unwrap();
+    let material = TlsMaterial {
+        server_certificate_pem: server.pem().into_bytes(),
+        server_key_pem: key.serialize_pem().into_bytes(),
+        terminal_ca_pem: root_ca.pem().into_bytes(),
+    };
+    let policy = HttpsPolicy::new(&origin).unwrap();
+    let https = if ui {
+        let path = directory.path().join("operator");
+        std::fs::create_dir_all(path.join("assets")).unwrap();
+        let path = std::fs::canonicalize(path).unwrap();
+        let mut files = vec![];
+        for (relative, bytes) in [
+            ("assets/app.js", b"document.title = 'RX';".as_slice()),
+            ("index.html", b"<!doctype html><title>RX operator</title>".as_slice()),
+        ] {
+            std::fs::write(path.join(relative), bytes).unwrap();
+            files.push(json!({"path":relative,"sha256":Digest::from_bytes(sha2::Sha256::digest(bytes).into()),"size_bytes":Counter(bytes.len() as u64)}));
+        }
+        let bytes = rx_domain::canonical::bytes(&json!({
+            "schema":rx_api::operator_ui::SCHEMA,
+            "api_schema":rx_api::operator_ui::API_SCHEMA,
+            "files":files
+        })).unwrap();
+        let manifest = path.join(rx_api::operator_ui::MANIFEST_FILENAME);
+        std::fs::write(&manifest, &bytes).unwrap();
+        let bundle = rx_api::operator_ui::OperatorBundle::load(&path, &manifest, Digest::from_bytes(sha2::Sha256::digest(&bytes).into())).unwrap();
+        TerminalHttps::new_with_operator_ui(Arc::new(runtime.clone()), credentials(), policy, material, None, Some(bundle))
+    } else {
+        TerminalHttps::new(Arc::new(runtime.clone()), credentials(), policy, material)
+    }.unwrap();
     let (stop, stopped) = tokio::sync::oneshot::channel();
     let task = tokio::spawn(https.serve(listener, async {
         let _ = stopped.await;
@@ -388,6 +410,171 @@ async fn finish(f: Fixture) {
             .unwrap()
             .is_ok()
     );
+}
+
+#[tokio::test]
+async fn operator_bundle_uses_direct_mtls_and_never_masks_api_or_missing_assets() {
+    let f = fixture_with_ui(false, true).await;
+    for client in [&f.no_certificate, &f.untrusted] {
+        assert!(client.get(format!("{}/", f.origin)).send().await.is_err());
+    }
+    for client in [&f.a, &f.unknown] {
+        let response = client.get(format!("{}/", f.origin)).send().await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers()["content-type"],
+            "text/html; charset=utf-8"
+        );
+        assert_eq!(response.headers()["cache-control"], "no-store");
+        assert!(response.headers().get("set-cookie").is_none());
+        let csp = response.headers()["content-security-policy"]
+            .to_str()
+            .unwrap();
+        for directive in [
+            "script-src 'self'",
+            "style-src 'self'",
+            "font-src 'self'",
+            "connect-src 'self'",
+        ] {
+            assert!(csp.contains(directive));
+        }
+        assert!(!csp.contains("unsafe-inline") && !csp.contains("unsafe-eval"));
+        assert_eq!(
+            response.text().await.unwrap(),
+            "<!doctype html><title>RX operator</title>"
+        );
+    }
+    let head = f.a.head(format!("{}/", f.origin)).send().await.unwrap();
+    assert_eq!(head.status(), StatusCode::OK);
+    assert_eq!(
+        head.headers()["content-length"],
+        "<!doctype html><title>RX operator</title>"
+            .len()
+            .to_string()
+    );
+    assert!(head.bytes().await.unwrap().is_empty());
+    let response =
+        f.a.get(format!("{}/assets/app.js?v=1", f.origin))
+            .send()
+            .await
+            .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response.headers()["content-type"],
+        "text/javascript; charset=utf-8"
+    );
+    assert_eq!(response.text().await.unwrap(), "document.title = 'RX';");
+    std::fs::write(
+        f._directory.path().join("operator/assets/app.js"),
+        b"tampered after startup",
+    )
+    .unwrap();
+    assert_eq!(
+        f.a.get(format!("{}/assets/app.js", f.origin))
+            .send()
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap(),
+        "document.title = 'RX';"
+    );
+    for path in [
+        "/api",
+        "/api/v1/missing",
+        "/assets/missing.js",
+        "/assets/%61pp.js",
+        "/operator-bundle.json",
+        "/cell/a",
+    ] {
+        let response = f.a.get(format!("{}{path}", f.origin)).send().await.unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND, "{path}");
+        assert_eq!(response.headers()["content-type"], "application/json");
+        assert_eq!(response.json::<Value>().await.unwrap()["code"], "NOT_FOUND");
+    }
+    assert_eq!(
+        f.a.post(format!("{}/", f.origin))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::METHOD_NOT_ALLOWED
+    );
+    for (header, value) in [
+        ("host", "elsewhere.invalid"),
+        ("origin", "https://elsewhere.invalid"),
+    ] {
+        assert_eq!(
+            f.a.get(format!("{}/", f.origin))
+                .header(header, value)
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::FORBIDDEN
+        );
+    }
+    let unknown_login = f
+        .unknown
+        .post(format!("{}/api/v1/session", f.origin))
+        .header("origin", &f.origin)
+        .header("x-rx-client", "browser-v1")
+        .header(
+            "x-forwarded-client-cert",
+            f.terminal.certificate_digest.to_string(),
+        )
+        .header("x-rx-terminal", "panel/a")
+        .json(&json!({"principal":"alice","password":PASSWORD}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(unknown_login.status(), StatusCode::FORBIDDEN);
+    let (cookie, profile) = login(&f, &f.a).await;
+    assert_eq!(profile["terminal"], "panel/a");
+    let denied =
+        f.b.get(format!("{}/api/v1/overview", f.origin))
+            .header("cookie", &cookie)
+            .send()
+            .await
+            .unwrap();
+    assert_eq!(denied.status(), StatusCode::UNAUTHORIZED);
+    let overview =
+        f.a.get(format!("{}/api/v1/overview", f.origin))
+            .header("cookie", &cookie)
+            .send()
+            .await
+            .unwrap();
+    assert_eq!(overview.status(), StatusCode::OK);
+    assert_eq!(
+        overview.headers()["content-security-policy"],
+        "default-src 'none'; frame-ancestors 'none'"
+    );
+    assert!(
+        overview.json::<Value>().await.unwrap()["cells"][0]["runs"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    let mut terminal = f.terminal.clone();
+    terminal.active = false;
+    f.runtime
+        .call(Command::PutTerminal {
+            identity: f.root.clone(),
+            terminal,
+            expected: Some(Counter(1)),
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        f.a.get(format!("{}/api/v1/overview", f.origin))
+            .header("cookie", &cookie)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::FORBIDDEN
+    );
+    finish(f).await;
 }
 
 #[tokio::test]

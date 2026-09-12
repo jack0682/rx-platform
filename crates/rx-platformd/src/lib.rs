@@ -330,12 +330,13 @@ pub async fn serve<C: Clock + 'static>(
         } else {
             None
         };
-        let https = rx_api::terminal_https::TerminalHttps::new_with_package_intake(
+        let https = rx_api::terminal_https::TerminalHttps::new_with_operator_ui(
             Arc::new(handle.clone()),
             loaded.credentials,
             rx_api::terminal_https::HttpsPolicy::new(&config.https.origin)?,
             loaded.https_tls,
             package_worker,
+            loaded.operator_ui,
         )?;
         let grpc = rx_api::grpc::PlatformIngress::new(
             Arc::new(handle.clone()),

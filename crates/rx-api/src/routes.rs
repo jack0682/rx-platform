@@ -258,7 +258,7 @@ async fn ingress(State(state): State<ApiState>, request: Request, next: Next) ->
     );
     response
 }
-fn exactly_one<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
+pub(crate) fn exactly_one<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
     let mut values = headers.get_all(name).iter();
     let first = values.next()?.to_str().ok()?;
     if values.next().is_some() {
