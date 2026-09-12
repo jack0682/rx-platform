@@ -1,4 +1,5 @@
 use super::*;
+mod runtime_restart;
 const PRODUCER: &str = "rx.internal.evidence-producer.v1";
 
 impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
@@ -46,6 +47,7 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                 return reject(Reject::Unauthenticated);
             }
             let previous = tx.get(&key("producer", principal))?;
+            let mut previous_runtime_boot = None;
             if let Some(row) = &previous {
                 let old: EvidenceProducer = decode(row, PRODUCER)?;
                 let (_, mut session): (_, Session) = load(tx, "session", &old.session, SESSION)?;
@@ -59,24 +61,54 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                 {
                     return Ok(session);
                 }
+                if old.principal == *principal
+                    && old.peer_boot == peer_boot
+                    && old.journal == journal
+                    && old.authentication_binding == authentication_binding
+                    && session.id == old.session
+                    && session.principal == *principal
+                    && session.terminal.is_none()
+                    && session.active
+                    && session.runtime_boot != meta.runtime_boot
+                    && session.expires_at.clock_id == now.clock_id
+                    && meta.clock_id == now.clock_id
+                    && session.expires_at.ticks_ns > now.ticks_ns
+                {
+                    previous_runtime_boot = Some(session.runtime_boot.clone());
+                }
                 let (rev, _): (_, Session) = load(tx, "session", &old.session, SESSION)?;
                 session.active = false;
                 save(tx, "session", &session.id, Some(rev), SESSION, &session)?;
             }
-            // Changing an authenticated Host incarnation cannot preserve its old operating authority.
             let registrations = tx
                 .scan("host/")?
                 .iter()
                 .map(|r| decode::<HostRegistration>(r, HOST))
                 .collect::<Result<Vec<_>>>()?;
-            let mut touched = BTreeSet::new();
-            for host in registrations {
-                if &host.id == principal && !touched.contains(&host.cell) {
-                    touched.extend(invalidate_closure(
-                        tx,
-                        &host.cell,
-                        BlockReason::DeviceRestart,
-                    )?);
+            let runtime_only = if let Some(previous_boot) = previous_runtime_boot {
+                runtime_restart::covers_registrations(
+                    tx,
+                    meta,
+                    principal,
+                    &previous_boot,
+                    &registrations,
+                )?
+            } else {
+                false
+            };
+            // A proven P-only session replacement already has exact durable RuntimeRestart
+            // restrictions. Preserve them; this classification restores no Host registration,
+            // grant, qualification, permit, mandate or Run. Unknown changes still revoke.
+            if !runtime_only {
+                let mut touched = BTreeSet::new();
+                for host in registrations {
+                    if &host.id == principal && !touched.contains(&host.cell) {
+                        touched.extend(invalidate_closure(
+                            tx,
+                            &host.cell,
+                            BlockReason::DeviceRestart,
+                        )?);
+                    }
                 }
             }
             let session = Session {
