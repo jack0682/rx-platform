@@ -1,5 +1,6 @@
 //! One bounded sender/reconciler per authenticated Host. No native re-submit after an uncertain send.
 use crate::HostClient;
+mod diagnostic;
 mod reconciliation;
 use rx_application::{engine::authorization_delivery_id, *};
 use rx_domain::types::*;
@@ -149,6 +150,7 @@ pub struct Dispatcher {
     plan_after: Option<Id>,
     retries: BTreeMap<Id, Retry>,
     report: tokio::sync::watch::Sender<Report>,
+    diagnostic: std::sync::Mutex<diagnostic::Changes>,
 }
 impl Dispatcher {
     pub fn new(
@@ -176,6 +178,7 @@ impl Dispatcher {
             plan_after: None,
             retries: BTreeMap::new(),
             report,
+            diagnostic: std::sync::Mutex::new(diagnostic::Changes::default()),
         })
     }
     pub(crate) fn with_report(mut self, report: tokio::sync::watch::Sender<Report>) -> Self {
@@ -201,6 +204,16 @@ impl Dispatcher {
             r.attention = r.attention.saturating_add(1);
             r.last_error = Some(error.to_string());
         });
+        if let Some(line) = self
+            .diagnostic
+            .lock()
+            .ok()
+            .and_then(|mut previous| previous.next(&self.identity.principal, error))
+        {
+            // Diagnostics never change delivery/retry state, even if stderr is unavailable.
+            use std::io::Write;
+            let _ = writeln!(std::io::stderr().lock(), "{line}");
+        }
     }
     fn delayed(&self, message: &Id) -> bool {
         self.retries
