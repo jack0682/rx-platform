@@ -1,0 +1,33 @@
+[workspace]
+members = ["crates/rx-platformd", "crates/rx-domain", "crates/rx-ports", "crates/rx-storage", "crates/rx-protocol", "crates/rx-runtime", "crates/rx-application", "crates/rx-host-client", "crates/rx-api", "crates/rx-protocol-adapter", "crates/rx-package", "crates/rx-process-contract"]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98"
+publish = false
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_jcs = "0.2"
+sha2 = "0.10"
+thiserror = "2"
+uuid = { version = "1", features = ["serde"] }
+rusqlite = { version = "0.40.2", features = ["bundled", "backup"] }
+tempfile = "3"
+prost = "0.14"
+prost-types = "0.14"
+prost-reflect = "0.16"
+tonic = { version = "0.14", features = ["tls-ring"] }
+tonic-prost = "0.14"
+tonic-prost-build = "0.14"
+protoc-bin-vendored = "3"
+bytes = "1"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = "warn"

@@ -1,0 +1,12 @@
+{
+  "max_payload_bytes": 1000000,
+  "package": "rx.executor.production.v1",
+  "schema": "rx.production-binding.v1",
+  "source_sha256": {
+    "crates/rx-process-contract/src/execution.rs": "13e8b52d15a19d8f8e7139b1a4ded50f6c1edcf0a39abe5aa24ab102cd187edd",
+    "crates/rx-process-contract/src/production.rs": "61a64279aeab0bf107e45e7047c354e2ead2fc11d0383eca038b30f4278f56ae",
+    "proto/rx/executor/production/v1/production.proto": "9f78624e8e46c818e6c1d7f246d2679023810e55c940fd395bf894726c668cf4",
+    "spec/production/v1/README.md": "504901d6a015a69efb4ce5f73beebd09cb66aae4362bec2e2ce52c8ed012e316"
+  },
+  "view_schema": "rx.production-state.v1"
+}

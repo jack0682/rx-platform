@@ -1,0 +1,8 @@
+#!/bin/sh
+set -eu
+rx_repo=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+rx_workspace=$(dirname -- "$rx_repo")
+if [ -x "$rx_workspace/.tools/cargo/bin/cargo" ]; then
+  exec env CARGO_HOME="$rx_workspace/.tools/cargo" RUSTUP_HOME="$rx_workspace/.tools/rustup" "$rx_workspace/.tools/cargo/bin/cargo" "$@"
+fi
+exec cargo "$@"

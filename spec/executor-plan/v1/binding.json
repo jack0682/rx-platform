@@ -1,0 +1,13 @@
+{
+  "checkpoint_schema": "rx.executor-state.v1",
+  "max_proposal_age_ns": "100000000",
+  "package": "rx.executor.plan.v1",
+  "schema": "rx.executor-plan-binding.v1",
+  "source_sha256": {
+    "crates/rx-process-contract/src/checkpoint_change.rs": "9e8c1db7949cf9fb61fb261a3b0518c8a681815dcb2e84abdbfae2b286acf103",
+    "crates/rx-process-contract/src/execution.rs": "13e8b52d15a19d8f8e7139b1a4ded50f6c1edcf0a39abe5aa24ab102cd187edd",
+    "crates/rx-protocol/src/checkpoint_rejection.rs": "714f31dc61ffe180de0b9153fcf8c24a118a818049f25c7e59291ef729d5121c",
+    "proto/rx/executor/plan/v1/plan.proto": "1a16e0c3f9a8151e8988641025468fbc9b37c0412feda1ec1f9f3c5dcbe65bd6",
+    "spec/executor-plan/v1/README.md": "6e11fc2e24821cfd582584bc3cb8dd1dd83a6d012f9bbed8bf0fcbdad0862864"
+  }
+}

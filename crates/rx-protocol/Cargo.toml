@@ -1,0 +1,32 @@
+[package]
+name = "rx-protocol"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+rx-domain = { path = "../rx-domain" }
+prost.workspace = true
+prost-types.workspace = true
+prost-reflect.workspace = true
+tonic.workspace = true
+tonic-prost.workspace = true
+bytes.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+regex = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "sync", "time"] }
+tokio-stream = { version = "0.1", features = ["net"] }
+
+[build-dependencies]
+serde_json.workspace = true
+sha2.workspace = true
+tonic-prost-build.workspace = true
+protoc-bin-vendored.workspace = true
+
+[lints]
+workspace = true

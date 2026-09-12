@@ -1,0 +1,12 @@
+{
+  "max_payload_bytes": 1000000,
+  "observation_schema": "rx.host-process-configuration-observation.v1",
+  "package": "rx.host.configuration.v1",
+  "request_schema": "rx.host-process-configuration-request.v1",
+  "schema": "rx.host-configuration-binding.v1",
+  "source_sha256": {
+    "crates/rx-domain/src/host_configuration.rs": "fe5e6109dec60f6422753d600f9485be10f11c0ba41a7ef54a32904f2820ab06",
+    "proto/rx/host/configuration/v1/configuration.proto": "641bd1edf2038dda0b49072d48a520798bb8a6c8c463bde2de03bae9d6babdbf",
+    "spec/host-configuration/v1/README.md": "94b0f9a3d0b0166afe91c195a4a0060b18a7ca97d312063d13ff33e2cd1dd796"
+  }
+}

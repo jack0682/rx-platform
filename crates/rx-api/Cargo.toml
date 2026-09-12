@@ -1,0 +1,47 @@
+[package]
+name = "rx-api"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+rx-package = {path="../rx-package"}
+rx-application = { path = "../rx-application" }
+rx-domain = { path = "../rx-domain" }
+rx-ports = { path = "../rx-ports" }
+rx-runtime = { path = "../rx-runtime" }
+rx-storage = { path = "../rx-storage" }
+rx-protocol = { path = "../rx-protocol" }
+rx-protocol-adapter = { path = "../rx-protocol-adapter" }
+tonic.workspace = true
+tokio-stream = {version="0.1",features=["net"]}
+axum = { version = "0.8", features = ["json", "tokio", "http1"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "time", "sync"] }
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+uuid = { workspace = true, features = ["v4"] }
+argon2 = "0.5"
+rand_core = { version = "0.6", features = ["getrandom"] }
+zeroize = "1"
+thiserror.workspace = true
+hyper = { version = "=1.11.1", features = ["http1", "server"] }
+hyper-util = { version = "=0.1.20", features = ["tokio", "service"] }
+tokio-rustls = { version = "=0.26.5", default-features = false, features = ["ring", "tls12"] }
+
+[dev-dependencies]
+rx-package = {path="../rx-package"}
+ed25519-dalek = "3"
+rx-process-contract = {path="../rx-process-contract"}
+rcgen = "0.14"
+rusqlite.workspace = true
+tower = { version = "0.5", features = ["util"] }
+tempfile.workspace = true
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-manual-roots"] }
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "rx-platform-local"
+path = "src/bin/local.rs"
