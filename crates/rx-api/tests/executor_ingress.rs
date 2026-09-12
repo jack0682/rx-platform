@@ -603,7 +603,85 @@ async fn run_fixture(
         cells.open(mismatch).await.unwrap_err().code(),
         tonic::Code::FailedPrecondition
     );
+    let assignment_request = rx_protocol::assignment::InspectCell {
+        context: Some(call(&session)),
+        cell_id: "cell/a".into(),
+        binding_hash: manifest(include_str!("../../../spec/assignment/v1/binding.json")),
+    };
+    let mut assignments = rx_protocol::assignment::executor_assignment_service_client::ExecutorAssignmentServiceClient::new(channel.clone());
+    if worker_mode.is_none() {
+        assert_eq!(
+            assignments
+                .inspect(assignment_request.clone())
+                .await
+                .unwrap_err()
+                .code(),
+            tonic::Code::FailedPrecondition
+        );
+    }
     cells.open(cell_hello.clone()).await.unwrap();
+    let raw_assignment = assignments
+        .inspect(assignment_request.clone())
+        .await
+        .unwrap()
+        .into_inner();
+    let discovery: rx_process_contract::assignment::View =
+        serde_json::from_slice(&raw_assignment.payload).unwrap();
+    rx_process_contract::assignment::validate(&discovery).unwrap();
+    assert_eq!(discovery.cell.as_str(), "cell/a");
+    assert_eq!(
+        discovery.cardinality,
+        rx_process_contract::assignment::Cardinality::None
+    );
+    {
+        use sha2::Digest as _;
+        let reference = raw_assignment.reference.unwrap();
+        assert_eq!(
+            reference.sha256,
+            sha2::Sha256::digest(&raw_assignment.payload).to_vec()
+        );
+        assert_eq!(reference.size_bytes, raw_assignment.payload.len() as u64);
+        assert_eq!(reference.schema_id, rx_process_contract::assignment::SCHEMA);
+    }
+    let mut wrong_assignment = assignment_request.clone();
+    wrong_assignment.binding_hash[0] ^= 1;
+    assert_eq!(
+        assignments
+            .inspect(wrong_assignment)
+            .await
+            .unwrap_err()
+            .code(),
+        tonic::Code::FailedPrecondition
+    );
+    let mut wrong_assignment = assignment_request.clone();
+    wrong_assignment.context.as_mut().unwrap().request_key = Some(id().to_string());
+    assert_eq!(
+        assignments
+            .inspect(wrong_assignment)
+            .await
+            .unwrap_err()
+            .code(),
+        tonic::Code::InvalidArgument
+    );
+    let mut wrong_assignment = assignment_request.clone();
+    wrong_assignment.cell_id = "cell/b".into();
+    assert_eq!(
+        assignments
+            .inspect(wrong_assignment)
+            .await
+            .unwrap_err()
+            .code(),
+        tonic::Code::FailedPrecondition
+    );
+    let mut foreign_assignments = rx_protocol::assignment::executor_assignment_service_client::ExecutorAssignmentServiceClient::new(alternate_channel.clone());
+    assert_eq!(
+        foreign_assignments
+            .inspect(assignment_request.clone())
+            .await
+            .unwrap_err()
+            .code(),
+        tonic::Code::Unauthenticated
+    );
     let context = cells
         .inspect(cell::CellCall {
             context: Some(call(&session)),

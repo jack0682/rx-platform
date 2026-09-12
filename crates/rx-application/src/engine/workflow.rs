@@ -67,8 +67,6 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
         command: StartRun,
     ) -> Result<StartAttempt> {
         let run_id = &command.run;
-        let expected_cell = command.expected_cell;
-        let expected_run = command.expected_run;
         let clock = &self.clock;
         let meta = &self.installation;
         self.repository.transact(|tx| {
@@ -101,94 +99,46 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             }
             let (run_revision, mut run): (_, Run) = load(tx, "run", run_id, RUN)?;
             let (cell_revision, cell): (_, Cell) = load(tx, "cell", &run.cell, CELL)?;
-            check_revision(cell_revision, expected_cell)?;
-            check_revision(run_revision, expected_run)?;
-            run_configuration::require_current(tx, &run, &cell)?;
-            if run.state != RunState::Prepared {
-                return reject(Reject::MandateRevoked);
-            }
-            if run.pending_attempt.is_some() {
-                return reject(Reject::Busy);
-            }
-            // A scalar cell operating context cannot describe competing active purposes.
-            for row in tx.scan("run/")? {
-                let active: Run = decode(&row, RUN)?;
-                if active.cell == run.cell
-                    && active.id != run.id
-                    && active.state == RunState::Executing
-                    && active.purpose != Some(command.purpose)
-                {
-                    return reject(Reject::Busy);
-                }
-            }
-            let unit = if command.purpose == Purpose::Production {
-                BudgetUnit::PartAttempt
-            } else {
-                BudgetUnit::OperationCount
-            };
-            if command.envelope_digest != cell.configuration.envelope.sha256
-                || command.budget_unit != unit
-                || command.budget_limit.0 == 0
-                || command.budget_limit > cell.configuration.maximum_budget
-            {
-                return reject(Reject::InvalidInput);
-            }
-            if let Some(budget) = &run.budget {
-                if budget.unit() != unit
-                    || budget.limit() != command.budget_limit
-                    || run.purpose != Some(command.purpose)
-                {
-                    return reject(Reject::InvalidInput);
-                }
-            } else {
-                run.budget =
-                    Some(RunBudget::new(unit, command.budget_limit).map_err(domain_error)?);
-                run.purpose = Some(command.purpose);
-            }
-            ready(tx, &cell, &now)?;
-            qualification_activation::purpose(tx, &cell, command.purpose)?;
-            evaluate(tx, &cell, &cell.configuration.start_conditions, &now)?;
-            let executor = current_session(
+            let validated = operator_start::validate_candidate(
                 tx,
-                &cell.configuration.executor,
+                identity,
                 meta,
                 &now,
-                Role::Executor,
-                &run.cell,
+                operator_start::StartBasis {
+                    run_revision,
+                    run: &run,
+                    cell_revision,
+                    cell: &cell,
+                },
+                &command,
             )?;
-            let mut host_boots = BTreeMap::new();
-            for host in &cell.configuration.hosts {
-                let registration = prepared_host(tx, &cell, host, meta, &now)?;
-                host_boots.insert(host.clone(), registration.boot_id);
+            if run.budget.is_none() {
+                run.budget = Some(
+                    RunBudget::new(command.budget_unit, command.budget_limit)
+                        .map_err(domain_error)?,
+                );
+                run.purpose = Some(command.purpose);
             }
             let attempt = StartAttempt {
                 id: id(),
                 run: run_id.clone(),
                 cell: run.cell.clone(),
                 expected_cell_revision: cell_revision,
-                expected_run_revision: run_revision.increment().map_err(domain_error)?,
+                expected_run_revision: validated.next_run_revision,
                 epoch: cell.epoch,
                 scopes: cell.scope_epochs.clone(),
-                host_boots,
+                host_boots: validated.host_boots,
                 acknowledgments: BTreeMap::new(),
-                executor_session: executor.id,
+                executor_session: validated.executor_session,
                 actor: principal.id,
                 status: StartStatus::Arming,
                 mandate: None,
-                valid_until: TimePoint {
-                    clock_id: now.clock_id.clone(),
-                    ticks_ns: Counter(
-                        now.ticks_ns
-                            .0
-                            .checked_add(cell.configuration.start_timeout_ns.0)
-                            .ok_or(StoreError::Rejected(Reject::InvalidInput))?,
-                    ),
-                },
+                valid_until: validated.valid_until,
                 terminal: identity.terminal.clone(),
             };
             run.pending_attempt = Some(attempt.id.clone());
             save(tx, "run", &run.id, Some(run_revision), RUN, &run)?;
-            let approved_clear = qualification_activation::arm_clear(tx, &cell)?;
+            let approved_clear = validated.clear_blocks;
             for host in &cell.configuration.hosts {
                 tx.enqueue(
                     &id(),

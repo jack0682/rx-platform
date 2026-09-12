@@ -316,6 +316,11 @@ r.message("InspectRun", "context:base.CallContext#1 run_id:Id#2 binding_hash:Dig
 r.message("CompletePart", "context:base.CallContext#1 cell_id:Name#2 run_id:Id#3 part_attempt_id:Id#4 expected_run_revision:uint64#5 expected_part_revision:uint64#6 binding_hash:Digest#7")
 r.service("Production", [("Inspect", "InspectRun", "rx.executor.v1.ReadPayload"), ("CompletePart", "CompletePart", "rx.cell.v1.PartAttempt")])
 r.write()
+# Optional executor assignment discovery, independent from existing production v1.
+a = Schema("rx.executor.assignment.v1", "rx/executor/assignment/v1/assignment.proto", ("rx/contract/v1/contract.proto", "rx/executor/v1/executor.proto"))
+a.message("InspectCell", "context:base.CallContext#1 cell_id:Name#2 binding_hash:Digest#3")
+a.service("ExecutorAssignment", [("Inspect", "InspectCell", "rx.executor.v1.ReadPayload")])
+a.write()
 # Optional Host bootstrap/state read binding; no new native write surface.
 h = Schema("rx.host.read.v1", "rx/host/read/v1/read.proto", ("rx/contract/v1/contract.proto", "rx/cell/v1/cell.proto"))
 h.message("InspectHost", "call:rx.cell.v1.CellCall#1 source_ids:Name[]#2 binding_hash:Digest#3")

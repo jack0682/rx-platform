@@ -11,6 +11,7 @@ import tempfile
 import time
 import urllib.error
 import urllib.request
+import urllib.parse
 import uuid
 from pathlib import Path
 from playwright.sync_api import sync_playwright, expect
@@ -122,6 +123,22 @@ with tempfile.TemporaryDirectory(prefix='rx-operator-delivery-') as temporary:
             after=context.request.get(origin+'/api/v1/overview').json()
             assert sum(len(c['runs']) for c in after['cells'])==1
             assert all(c['cell']['value']['qualification'] is None for c in after['cells'])
+            selected_cell=next(c for c in after['cells'] if c['runs'])
+            selected_run=selected_cell['runs'][0]['value']
+            page.get_by_role('combobox').filter(has=page.locator('option[value="'+selected_run['id']+'"]')).select_option(selected_run['id'])
+            page.get_by_label('소재 시도 수량',exact=True).fill('2')
+            expect(page.get_by_text('현재 시작 요청 차단',exact=True)).to_be_visible()
+            expect(page.get_by_role('button',name='시작 내용 검토',exact=True)).to_be_disabled()
+            query=urllib.parse.urlencode({'cell':selected_cell['cell']['value']['id'],'run':selected_run['id'],'purpose':'PRODUCTION','budget_limit':'2'})
+            candidate=context.request.get(origin+'/api/v1/run/start-context?'+query).json()
+            assert not candidate['can_request'] and candidate['blocking_reason']
+            assert candidate['run']['budget'] is None and candidate['run']['pending_attempt'] is None
+            rejected=context.request.post(origin+'/api/v1/runs/start',data={'request_key':str(uuid.uuid4()),'command':candidate['request']},headers={'Origin':origin,'X-RX-Client':'browser-v1'})
+            assert not rejected.ok and rejected.status in [403,409,422],rejected.text()
+            final_overview=context.request.get(origin+'/api/v1/overview').json()
+            final_run=next(r['value'] for c in final_overview['cells'] for r in c['runs'] if r['value']['id']==selected_run['id'])
+            assert final_run['state']=='PREPARED' and final_run['budget'] is None and final_run['pending_attempt'] is None
+            page.screenshot(path=str(out/'operator-start-blocked.png'),full_page=True)
             page.set_viewport_size({'width':390,'height':844});page.screenshot(path=str(out/'operator-mobile.png'),full_page=True)
             assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')
             assert not errors and not csp and not external,(errors,csp,external)
@@ -134,8 +151,8 @@ with tempfile.TemporaryDirectory(prefix='rx-operator-delivery-') as temporary:
         assert any(m['Destination']=='/operator' and not m['RW'] for m in running['Mounts'])
         run('docker','stop','--time','15',names['service']);assert state(names['service'])['State']['ExitCode']==0
         result={'schema':'rx.operator-delivery-test.v1','status':'PASS','platform_image':p_image['Id'],'solutions_image':s_image['Id'],'bundle_manifest_sha256':pin,'bundle_files':len(manifest['files']),
-                'checks':['UI extracted from pinned S image','fresh P installation and non-root read-only runtime','same-origin direct registered-terminal mTLS login','verified server TLS and missing-client-certificate denial','real production bundle and Korean fonts; no external assets/dev server','API/asset/deep-link 404 and static method restrictions','CreateRun committed reply loss and identical request recovery after reload','one Run without qualification or native execution','unregistered service certificate cannot log in','no JS/CSP errors or mobile overflow','graceful P software stop'],
-                'limitations':['Browser ignores trust errors for the disposable test CA; Python TLS separately verifies the server certificate.','CreateRun is not StartRun/executor assignment.','S image was used as immutable asset source; its Host/controller was not started.','No physical equipment or qualification; disposable test identities/volumes only.']}
+                'checks':['UI extracted from pinned S image','fresh P installation and non-root read-only runtime','same-origin direct registered-terminal mTLS login','verified server TLS and missing-client-certificate denial','real production bundle and Korean fonts; no external assets/dev server','API/asset/deep-link 404 and static method restrictions','CreateRun committed reply loss and identical request recovery after reload','one Run without qualification or native execution','actual start-context UI and server rejection preserve unqualified Prepared Run','unregistered service certificate cannot log in','no JS/CSP errors or mobile overflow','graceful P software stop'],
+                'limitations':['Browser ignores trust errors for the disposable test CA; Python TLS separately verifies the server certificate.','Successful StartRun/native execution is not covered; the fresh installation start-context denial is checked.','S image was used as immutable asset source; its Host/controller was not started.','No physical equipment or qualification; disposable test identities/volumes only.']}
         (out/'result.json').write_text(json.dumps(result,indent=2)+'\n');print(json.dumps({'status':'PASS','bundle':pin,'files':len(manifest['files'])}))
     except Exception:
         try:(out/'platform.log').write_text(run('docker','logs',names['service']))

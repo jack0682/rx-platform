@@ -42,6 +42,7 @@ const DELIVERY: &str = "rx.internal.delivery.v1";
 
 mod access;
 mod admission;
+mod assignment;
 mod checkpoint_change;
 mod closure;
 mod configuration;
@@ -64,6 +65,7 @@ mod invalidation;
 mod lifecycle;
 mod observation;
 mod operator_peer;
+mod operator_start;
 mod package_intake;
 mod pause;
 mod procedure;

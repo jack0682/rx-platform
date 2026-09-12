@@ -217,6 +217,8 @@ fn build_router(
         .route("/api/cell/v1/cells/{cell_id}/inspect", get(cell_context))
         .route("/api/v1/cells", post(install_cell))
         .route("/api/v1/runs", post(create_run))
+        .route("/api/v1/run/start-context", get(operator_start_context))
+        .route("/api/v1/run/start-attempt", get(operator_start_attempt))
         .route("/api/v1/run/checkpoint", get(run_checkpoint))
         .route("/api/v1/run/checkpoint/artifact", get(checkpoint_artifact))
         .route("/api/v1/runs/start", post(start_run))
@@ -529,6 +531,40 @@ async fn cell(
 #[serde(deny_unknown_fields)]
 struct RunQuery {
     id: Id,
+}
+async fn operator_start_context(
+    State(s): State<ApiState>,
+    headers: HeaderMap,
+    Query(input): Query<rx_application::operator_start::ContextRequest>,
+) -> Result<Response, ApiError> {
+    match s
+        .runtime
+        .request(Command::GetOperatorStartContext {
+            identity: identity(&s, &headers)?,
+            input,
+        })
+        .await?
+    {
+        Reply::OperatorStartContext(value) => Ok(Json(value).into_response()),
+        _ => Err(mismatch()),
+    }
+}
+async fn operator_start_attempt(
+    State(s): State<ApiState>,
+    headers: HeaderMap,
+    Query(input): Query<rx_application::operator_start::AttemptRequest>,
+) -> Result<Response, ApiError> {
+    match s
+        .runtime
+        .request(Command::GetOperatorStartAttempt {
+            identity: identity(&s, &headers)?,
+            input,
+        })
+        .await?
+    {
+        Reply::OperatorStartAttempt(value) => Ok(Json(value).into_response()),
+        _ => Err(mismatch()),
+    }
 }
 async fn run_checkpoint(
     State(s): State<ApiState>,

@@ -22,6 +22,11 @@ pub mod rx {
         }
     }
     pub mod executor {
+        pub mod assignment {
+            pub mod v1 {
+                tonic::include_proto!("rx.executor.assignment.v1");
+            }
+        }
         pub mod production {
             pub mod v1 {
                 tonic::include_proto!("rx.executor.production.v1");
@@ -66,3 +71,5 @@ pub use rx::host::read::v1 as host_read;
 pub use rx::host::configuration::v1 as host_configuration;
 
 pub use rx::host::qualification::v1 as host_qualification;
+
+pub use rx::executor::assignment::v1 as assignment;

@@ -396,6 +396,10 @@ pub enum Command {
         key: Id,
         command: rx_application::intervention::AcknowledgeCase,
     },
+    ExecutorAssignment {
+        identity: Identity,
+        cell: Name,
+    },
     ProductionView {
         identity: Identity,
         run: Id,
@@ -570,6 +574,14 @@ pub enum Command {
         identity: Identity,
         cell: Name,
     },
+    GetOperatorStartContext {
+        identity: Identity,
+        input: rx_application::operator_start::ContextRequest,
+    },
+    GetOperatorStartAttempt {
+        identity: Identity,
+        input: rx_application::operator_start::AttemptRequest,
+    },
     BeginPart {
         identity: Identity,
         key: Id,
@@ -733,6 +745,7 @@ pub enum Reply {
     CaseSnapshot(Box<rx_application::intervention::CaseSnapshot>),
     CaseDetail(Box<rx_application::intervention::CaseDetail>),
     Cases(Box<rx_application::intervention::CaseList>),
+    ExecutorAssignment(Box<rx_process_contract::assignment::View>),
     ProductionView(Box<ProductionView>),
     CheckpointPreparation(Box<CheckpointPreparation>),
     ReconciliationRequests(Vec<ReconciliationRequest>),
@@ -754,6 +767,8 @@ pub enum Reply {
     ReconciliationWork(Vec<Work>),
     VersionedRun(Counter, Run),
     RuntimeRestrictions(Box<rx_application::runtime_invalidation::RuntimeRestrictions>),
+    OperatorStartContext(Box<rx_application::operator_start::StartContext>),
+    OperatorStartAttempt(Box<rx_application::operator_start::AttemptContext>),
     Part(PartAttempt),
     Activation(Activation),
     Producer(EvidenceProducer),
@@ -1471,6 +1486,10 @@ impl<R: Repository + Send + 'static, C: Clock + 'static, A: QualificationAuthori
                 .engine
                 .acknowledge_case(&identity, key.as_str(), command)
                 .map(|v| Reply::CaseDetail(Box::new(v))),
+            Command::ExecutorAssignment { identity, cell } => self
+                .engine
+                .executor_assignment(&identity, &cell)
+                .map(|v| Reply::ExecutorAssignment(Box::new(v))),
             Command::ProductionView { identity, run } => self
                 .engine
                 .production_view(&identity, &run)
@@ -1726,6 +1745,14 @@ impl<R: Repository + Send + 'static, C: Clock + 'static, A: QualificationAuthori
                 .engine
                 .runtime_restrictions(&identity, &cell)
                 .map(|v| Reply::RuntimeRestrictions(Box::new(v))),
+            Command::GetOperatorStartContext { identity, input } => self
+                .engine
+                .operator_start_context(&identity, input)
+                .map(|v| Reply::OperatorStartContext(Box::new(v))),
+            Command::GetOperatorStartAttempt { identity, input } => self
+                .engine
+                .operator_start_attempt(&identity, input)
+                .map(|v| Reply::OperatorStartAttempt(Box::new(v))),
             Command::BeginPart {
                 identity,
                 key,

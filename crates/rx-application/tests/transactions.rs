@@ -1,6 +1,8 @@
 use rx_application::*;
 #[path = "support/native_outcomes.rs"]
 mod native_outcomes_tests;
+#[path = "support/operator_start_tests.rs"]
+mod operator_start_tests;
 #[path = "support/runtime_invalidation_tests.rs"]
 mod runtime_invalidation_tests;
 use rx_domain::{condition::Condition, fault::Rejection, intent::*, types::*};
@@ -8679,3 +8681,6 @@ fn device_provenance_cannot_pass_the_legacy_process_review_even_when_actions_mat
             .any(|i| i.detail.contains("device-aware process review"))
     );
 }
+
+#[path = "support/assignment_tests.rs"]
+mod assignment_tests;

@@ -11,6 +11,8 @@ use rx_api::{
 };
 use rx_application::*;
 use rx_domain::types::*;
+#[path = "support/operator_start_http.rs"]
+mod operator_start_http;
 mod support;
 use rx_runtime::{
     application::{Application, Command, Handle, Reply},
