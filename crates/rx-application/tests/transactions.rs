@@ -1,6 +1,8 @@
 use rx_application::*;
 #[path = "support/native_outcomes.rs"]
 mod native_outcomes_tests;
+#[path = "support/runtime_invalidation_tests.rs"]
+mod runtime_invalidation_tests;
 use rx_domain::{condition::Condition, fault::Rejection, intent::*, types::*};
 use rx_ports::{Record, Repository, StoreError, StoredEvent};
 use rx_storage::SqliteRepository;
@@ -8059,6 +8061,7 @@ fn change_proposal(
     change_id: Id,
 ) -> process_change::Prepared {
     let input = process_change::Create {
+        mode: process_change::Mode::Replace,
         id: change_id,
         cell: job.request.cell.clone(),
         review: process_change::ReviewRef {
@@ -8186,6 +8189,7 @@ fn process_change_proposal_failure_is_atomic_and_lost_reply_recovers_original_pl
         f.failure.store(failure, Ordering::SeqCst);
         assert!(f.app.commit_process_change(prepared).is_err());
         let input = process_change::Create {
+            mode: process_change::Mode::Replace,
             id: cid.clone(),
             cell: job.request.cell.clone(),
             review: process_change::ReviewRef {
@@ -8340,6 +8344,7 @@ fn process_change_shared_host_closure_requires_rights_for_every_affected_cell() 
         Err(StoreError::Rejected(Rejection::Forbidden))
     ));
     let create = process_change::Create {
+        mode: process_change::Mode::Replace,
         id: id(),
         cell: c.cell,
         review: c.review,

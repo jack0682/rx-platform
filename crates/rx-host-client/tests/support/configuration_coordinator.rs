@@ -191,6 +191,7 @@ fn prepare(
             admin,
             &id(),
             process_change::Create {
+                mode: process_change::Mode::Replace,
                 id: id(),
                 cell: cfg.id.clone(),
                 review: process_change::ReviewRef {
@@ -567,6 +568,7 @@ pub async fn run(
             identity: release.clone(),
             key: id(),
             input: requalification::Begin {
+                runtime_restrictions: BTreeMap::new(),
                 id: id(),
                 change: applied.id.clone(),
                 cell: cfg.id.clone(),

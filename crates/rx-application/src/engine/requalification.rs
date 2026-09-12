@@ -1,5 +1,6 @@
 use super::*;
 use crate::requalification as q;
+mod runtime_restrictions;
 const POLICY: &str = "rx.internal.requalification-policy.v1";
 const JOB: &str = "rx.requalification-job.v1";
 const VERSION: &str = "rx.requalification-version.v1";
@@ -55,6 +56,52 @@ pub(super) fn job(tx: &mut dyn Transaction, id: &Id, cell: &Name) -> Result<q::J
     j.request.digest().map_err(StoreError::Integrity)?;
     Ok(j)
 }
+fn cohort_impact(
+    tx: &mut dyn Transaction,
+    origin: &Name,
+    cells: &BTreeSet<Name>,
+) -> Result<Digest> {
+    let mut hosts = BTreeSet::new();
+    let mut resources = BTreeSet::new();
+    for id in cells {
+        let (_, cell): (_, Cell) = load(tx, "cell", id, CELL)?;
+        hosts.extend(cell.configuration.hosts.iter().cloned());
+        resources.extend(
+            cell.configuration
+                .steps
+                .iter()
+                .flat_map(|s| s.intent.resource_set.iter().cloned()),
+        );
+    }
+    let impact = process_change::prospective_impact(tx, origin, &hosts, &resources)?;
+    if impact
+        .cells
+        .iter()
+        .map(|c| c.id.clone())
+        .collect::<BTreeSet<_>>()
+        != *cells
+    {
+        return reject(Reject::QualificationRequired);
+    }
+    canonical::digest("RX-REQUALIFICATION-IMPACT-v1", &impact).map_err(domain_error)
+}
+pub(super) fn impact_current(tx: &mut dyn Transaction, job: &q::Job) -> Result<()> {
+    let cells = job
+        .request
+        .cells
+        .iter()
+        .map(|c| c.profile.cell.clone())
+        .collect();
+    let actual = cohort_impact(tx, &job.request.origin, &cells)?;
+    if job
+        .request
+        .impact_digest
+        .is_some_and(|expected| expected != actual)
+    {
+        return reject(Reject::StaleRevision);
+    }
+    Ok(())
+}
 pub(super) fn current(tx: &mut dyn Transaction, meta: &Installation, j: &q::Job) -> Result<()> {
     if j.request.runtime_boot != meta.runtime_boot
         || policy(tx, meta)?.digest().map_err(StoreError::Integrity)? != j.request.policy_digest
@@ -70,6 +117,8 @@ pub(super) fn current(tx: &mut dyn Transaction, meta: &Installation, j: &q::Job)
     {
         return reject(Reject::StaleRevision);
     }
+    impact_current(tx, j)?;
+    runtime_restrictions::current(tx, meta, j)?;
     for t in &j.request.cells {
         let (rev, cell): (_, Cell) = load(tx, "cell", &t.profile.cell, CELL)?;
         if rev != t.expected_revision
@@ -277,6 +326,12 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                 .application
                 .as_ref()
                 .ok_or(StoreError::Integrity("application absent".into()))?;
+            let restrictions = runtime_restrictions::select(tx, meta, &input, &c)?;
+            let impact_digest = cohort_impact(
+                tx,
+                &input.cell,
+                &input.expected_cells.keys().cloned().collect(),
+            )?;
             let mut cells = Vec::new();
             let mut fences = Vec::new();
             for target in &a.cells {
@@ -322,14 +377,19 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                     blocks: cell
                         .blocks
                         .into_iter()
-                        .filter(|b| !before.contains(&b.id))
+                        .filter(|b| {
+                            !before.contains(&b.id)
+                                || input.runtime_restrictions.contains_key(&b.id)
+                        })
                         .map(|b| b.id)
                         .collect(),
                 });
             }
             let j = q::Job {
                 request: q::Request {
-                    schema: name("rx.requalification-request.v1"),
+                    schema: name("rx.requalification-request.v2"),
+                    impact_digest: Some(impact_digest),
+                    runtime_restrictions: restrictions,
                     id: input.id,
                     change: c.id,
                     change_revision: c.revision,
@@ -349,6 +409,7 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                 requested_at: now,
             };
             j.request.digest().map_err(StoreError::Invalid)?;
+            qualification_activation::bind_runtime_restrictions(tx, meta, &j)?;
             save(tx, "requalificationjob", &j.request.id, None, JOB, &j)?;
             event(tx, "rx.event.requalification-requested.v1", &j)?;
             remember(tx, &scope, fp, JOB, &j)?;

@@ -15,9 +15,23 @@ pub struct ReviewRef {
     pub review_digest: Digest,
     pub decision_revision: Counter,
 }
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum Mode {
+    #[default]
+    Replace,
+    RevalidateCurrent,
+}
+impl Mode {
+    fn is_replace(&self) -> bool {
+        *self == Self::Replace
+    }
+}
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Create {
+    #[serde(default, skip_serializing_if = "Mode::is_replace")]
+    pub mode: Mode,
     pub id: Id,
     pub cell: Name,
     pub review: ReviewRef,
@@ -142,6 +156,8 @@ pub struct ApplicationRecord {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Change {
+    #[serde(default, skip_serializing_if = "Mode::is_replace")]
+    pub mode: Mode,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub host_binding_plan: Option<rx_process_contract::host_binding_plan::Plan>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -202,6 +218,7 @@ pub enum Action {
     Apply(Transition),
 }
 pub struct Ticket {
+    pub(crate) mode: Mode,
     pub(crate) action: Action,
     pub(crate) identity: Identity,
     pub(crate) key: Id,
@@ -292,10 +309,16 @@ impl Prepared {
         if canonical::bytes(&target).map_err(|e| e.to_string())?.len() > 1_048_576 {
             return Err("expanded cell configuration exceeds1MiB".into());
         }
-        if canonical::bytes(&target).map_err(|e| e.to_string())?
-            == canonical::bytes(&ticket.job.configuration).map_err(|e| e.to_string())?
-        {
-            return Err("configuration is unchanged".into());
+        let unchanged = canonical::bytes(&target).map_err(|e| e.to_string())?
+            == canonical::bytes(&ticket.job.configuration).map_err(|e| e.to_string())?;
+        match ticket.mode {
+            Mode::Replace if unchanged => return Err("configuration is unchanged".into()),
+            Mode::RevalidateCurrent if !unchanged || ticket.job.configuration.process.is_none() => {
+                return Err(
+                    "revalidation requires the exact current compiled configuration".into(),
+                );
+            }
+            _ => {}
         }
         let host_binding_plan = host_binding_plan(&ticket, &target)?;
         Ok(Self {

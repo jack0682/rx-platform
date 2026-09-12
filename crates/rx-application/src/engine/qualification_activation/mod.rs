@@ -8,6 +8,8 @@ const BATCH: &str = "rx.qualification-activation-batch.v1";
 const TASK: &str = "rx.qualification-host-task.v1";
 #[derive(serde::Serialize, serde::Deserialize)]
 struct Owner {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    runtime_origin: Option<Digest>,
     block: Id,
     cell: Name,
     change: Id,
@@ -20,6 +22,21 @@ pub(super) fn record_blocks(
     before: &BTreeSet<Id>,
 ) -> Result<()> {
     for b in cell.blocks.iter().filter(|b| !before.contains(&b.id)) {
+        let runtime_origin = if b.reason == BlockReason::RuntimeRestart {
+            let origin = crate::runtime_invalidation::load(tx, &b.id)?
+                .ok_or(StoreError::Rejected(Reject::ContinuityUnproven))?;
+            if origin.cell != cell.configuration.id
+                || canonical::bytes(&origin.block).map_err(domain_error)?
+                    != canonical::bytes(b).map_err(domain_error)?
+            {
+                return Err(StoreError::Integrity(
+                    "runtime block owner origin differs".into(),
+                ));
+            }
+            Some(origin.digest().map_err(StoreError::Integrity)?)
+        } else {
+            None
+        };
         save(
             tx,
             "changeblockowner",
@@ -27,10 +44,80 @@ pub(super) fn record_blocks(
             None,
             "rx.change-block-owner.v1",
             &Owner {
+                runtime_origin,
                 block: b.id.clone(),
                 cell: cell.configuration.id.clone(),
                 change: change.clone(),
                 reason: b.reason,
+            },
+        )?;
+    }
+    Ok(())
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct RuntimeRestrictionBinding {
+    block: Id,
+    cell: Name,
+    change: Id,
+    review: Id,
+    request_digest: Digest,
+    origin_digest: Digest,
+}
+pub(super) fn bind_runtime_restrictions(
+    tx: &mut dyn Transaction,
+    meta: &Installation,
+    job: &q::Job,
+) -> Result<()> {
+    let request_digest = job.request.digest().map_err(StoreError::Invalid)?;
+    for origin in &job.request.runtime_restrictions {
+        let actual =
+            crate::runtime_invalidation::read_for_cell(tx, meta, &origin.cell, &origin.block.id)?
+                .ok_or(StoreError::Rejected(Reject::ContinuityUnproven))?;
+        let digest = origin.digest().map_err(StoreError::Integrity)?;
+        if actual.digest().map_err(StoreError::Integrity)? != digest {
+            return reject(Reject::StaleRevision);
+        }
+        let k = key("changeblockowner", &origin.block.id);
+        if let Some(row) = tx.get(&k)? {
+            let owner: Owner = decode(&row, "rx.change-block-owner.v1")?;
+            if owner.block != origin.block.id
+                || owner.cell != origin.cell
+                || owner.change != job.request.change
+                || owner.reason != BlockReason::RuntimeRestart
+                || owner.runtime_origin != Some(digest)
+            {
+                return reject(Reject::Forbidden);
+            }
+        } else {
+            save(
+                tx,
+                "changeblockowner",
+                &origin.block.id,
+                None,
+                "rx.change-block-owner.v1",
+                &Owner {
+                    block: origin.block.id.clone(),
+                    cell: origin.cell.clone(),
+                    change: job.request.change.clone(),
+                    reason: BlockReason::RuntimeRestart,
+                    runtime_origin: Some(digest),
+                },
+            )?;
+        }
+        save(
+            tx,
+            "runtimerestrictionbinding",
+            (&job.request.id, &origin.block.id),
+            None,
+            "rx.runtime-restriction-binding.v1",
+            &RuntimeRestrictionBinding {
+                block: origin.block.id.clone(),
+                cell: origin.cell.clone(),
+                change: job.request.change.clone(),
+                review: job.request.id.clone(),
+                request_digest,
+                origin_digest: digest,
             },
         )?;
     }
@@ -220,7 +307,7 @@ fn pending_current(tx: &mut dyn Transaction, meta: &Installation, b: &a::Batch) 
     }
     quiet(tx, &b.job)
 }
-fn owned_clear(tx: &mut dyn Transaction, change: &Id, cell: &Cell, ids: &[Id]) -> Result<()> {
+fn owned_clear(tx: &mut dyn Transaction, job: &q::Job, cell: &Cell, ids: &[Id]) -> Result<()> {
     if ids.len() > 512 || ids.iter().collect::<BTreeSet<_>>().len() != ids.len() {
         return reject(Reject::InvalidInput);
     }
@@ -236,9 +323,36 @@ fn owned_clear(tx: &mut dyn Transaction, change: &Id, cell: &Cell, ids: &[Id]) -
         let owner: Owner = decode(&row, "rx.change-block-owner.v1")?;
         if owner.block != *id
             || owner.cell != cell.configuration.id
-            || owner.change != *change
+            || owner.change != job.request.change
             || owner.reason != b.reason
         {
+            return reject(Reject::Forbidden);
+        }
+        if b.reason == BlockReason::RuntimeRestart {
+            let origin = job
+                .request
+                .runtime_restrictions
+                .iter()
+                .find(|o| o.block.id == *id && o.cell == cell.configuration.id)
+                .ok_or(StoreError::Rejected(Reject::Forbidden))?;
+            let digest = origin.digest().map_err(StoreError::Integrity)?;
+            let (_, binding): (_, RuntimeRestrictionBinding) = load(
+                tx,
+                "runtimerestrictionbinding",
+                (&job.request.id, id),
+                "rx.runtime-restriction-binding.v1",
+            )?;
+            if owner.runtime_origin != Some(digest)
+                || binding.block != *id
+                || binding.cell != cell.configuration.id
+                || binding.change != job.request.change
+                || binding.review != job.request.id
+                || binding.origin_digest != digest
+                || binding.request_digest != job.request.digest().map_err(StoreError::Integrity)?
+            {
+                return reject(Reject::Forbidden);
+            }
+        } else if owner.runtime_origin.is_some() {
             return reject(Reject::Forbidden);
         }
     }
@@ -365,6 +479,7 @@ fn active_current(tx: &mut dyn Transaction, meta: &Installation, b: &a::Batch) -
     {
         return reject(Reject::QualificationRequired);
     }
+    requalification::impact_current(tx, &b.job)?;
     approved(
         tx,
         meta,

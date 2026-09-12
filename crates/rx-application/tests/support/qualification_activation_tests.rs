@@ -808,3 +808,6 @@ fn qualification_permits_only_the_reviewed_operating_purposes() {
         Err(StoreError::Rejected(Rejection::Forbidden))
     ));
 }
+
+#[path = "runtime_requalification_tests.rs"]
+mod runtime_requalification_tests;

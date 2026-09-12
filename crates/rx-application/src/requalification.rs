@@ -171,6 +171,10 @@ pub struct CellTarget {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Request {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub impact_digest: Option<Digest>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub runtime_restrictions: Vec<crate::runtime_invalidation::RuntimeInvalidationOrigin>,
     pub schema: Name,
     pub id: Id,
     pub change: Id,
@@ -184,7 +188,27 @@ pub struct Request {
 }
 impl Request {
     pub fn digest(&self) -> Result<Digest, String> {
-        if self.schema.as_str() != "rx.requalification-request.v1"
+        if !matches!(
+            (
+                self.schema.as_str(),
+                self.impact_digest.is_some(),
+                self.runtime_restrictions.is_empty()
+            ),
+            ("rx.requalification-request.v1", false, true)
+                | ("rx.requalification-request.v2", true, _)
+        ) || self.runtime_restrictions.len() > 128
+            || self
+                .runtime_restrictions
+                .windows(2)
+                .any(|w| w[0].block.id >= w[1].block.id)
+            || self.runtime_restrictions.iter().any(|o| {
+                o.validate().is_err()
+                    || !self
+                        .cells
+                        .iter()
+                        .any(|c| c.profile.cell == o.cell && c.blocks.contains(&o.block.id))
+            })
+            || canonical::bytes(self).map_err(|e| e.to_string())?.len() > 1_048_576
             || self.cells.is_empty()
             || self.cells.len() > 64
             || self
@@ -218,6 +242,8 @@ pub struct Job {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Begin {
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub runtime_restrictions: BTreeMap<Id, Digest>,
     pub id: Id,
     pub change: Id,
     pub cell: Name,

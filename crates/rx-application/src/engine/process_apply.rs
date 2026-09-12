@@ -141,6 +141,7 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                 StoreError::Unavailable("package verifier unavailable".into()),
             )?;
             Ok(Preflight::Verify(Box::new(Ticket {
+                mode: c.mode,
                 action: Action::Apply(input),
                 identity: identity.clone(),
                 key: key_.clone(),

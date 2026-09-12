@@ -566,6 +566,10 @@ pub enum Command {
         identity: Identity,
         run: Id,
     },
+    RuntimeRestrictions {
+        identity: Identity,
+        cell: Name,
+    },
     BeginPart {
         identity: Identity,
         key: Id,
@@ -749,6 +753,7 @@ pub enum Reply {
     Work(Box<Work>),
     ReconciliationWork(Vec<Work>),
     VersionedRun(Counter, Run),
+    RuntimeRestrictions(Box<rx_application::runtime_invalidation::RuntimeRestrictions>),
     Part(PartAttempt),
     Activation(Activation),
     Producer(EvidenceProducer),
@@ -1717,6 +1722,10 @@ impl<R: Repository + Send + 'static, C: Clock + 'static, A: QualificationAuthori
                 .engine
                 .inspect_run(&identity, &run)
                 .map(|(r, v)| Reply::VersionedRun(r, v)),
+            Command::RuntimeRestrictions { identity, cell } => self
+                .engine
+                .runtime_restrictions(&identity, &cell)
+                .map(|v| Reply::RuntimeRestrictions(Box::new(v))),
             Command::BeginPart {
                 identity,
                 key,

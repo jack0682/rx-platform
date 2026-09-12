@@ -84,6 +84,9 @@ fn credentials() -> Credentials {
     }
 }
 async fn fixture() -> Fixture {
+    fixture_with_runtime_restrictions(false).await
+}
+async fn fixture_with_runtime_restrictions(restart: bool) -> Fixture {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("p.db");
     let clock = ClockSource(Arc::new(AtomicU64::new(1000)));
@@ -97,7 +100,7 @@ async fn fixture() -> Fixture {
     let writer = Writer::start(move || {
         let mut engine = Engine::open(
             SqliteRepository::open(path)?,
-            engine_clock,
+            engine_clock.clone(),
             Deny,
             id(),
             principal(
@@ -112,9 +115,10 @@ async fn fixture() -> Fixture {
                 &["cell/a", "cell/b", "cell/c"],
             ),
         )?;
+        let setup_session = if restart { id() } else { session.clone() };
         engine.authenticated_session(
             &name("admin"),
-            session.clone(),
+            setup_session.clone(),
             TimePoint {
                 clock_id: "test-clock".into(),
                 ticks_ns: Counter(u64::MAX),
@@ -122,7 +126,7 @@ async fn fixture() -> Fixture {
         )?;
         let admin = Identity {
             principal: name("admin"),
-            session,
+            session: setup_session,
             terminal: None,
         };
         engine.put_principal(&admin, setup_reader, None)?;
@@ -133,6 +137,62 @@ async fn fixture() -> Fixture {
         )?;
         engine.install_cell(&admin, setup_config)?;
         engine.install_cell(&admin, configuration("cell/b"))?;
+        if restart {
+            use rx_application::persistence as p;
+            use rx_ports::Repository;
+            engine.hold(&admin, id().as_str(), &name("cell/a"))?;
+            let installation = engine.installation.id.clone();
+            let mut repository = engine.into_repository();
+            repository.transact(|tx| {
+                let (revision, mut cell): (_, Cell) =
+                    p::load(tx, "cell", name("cell/a"), "rx.internal.cell.v1")?;
+                cell.blocks.push(Block {
+                    id: id(),
+                    created_revision: Some(Counter(revision.0 + 1)),
+                    case_id: None,
+                    reason: BlockReason::RuntimeRestart,
+                    latched: true,
+                    scopes: cell.configuration.scopes.clone(),
+                });
+                // A legacy non-latched row must never become a selectable runtime restriction.
+                cell.blocks.push(Block {
+                    id: id(),
+                    created_revision: Some(Counter(revision.0 + 1)),
+                    case_id: None,
+                    reason: BlockReason::RuntimeRestart,
+                    latched: false,
+                    scopes: cell.configuration.scopes.clone(),
+                });
+                p::save(
+                    tx,
+                    "cell",
+                    &cell.configuration.id,
+                    Some(revision),
+                    "rx.internal.cell.v1",
+                    &cell,
+                )?;
+                Ok(())
+            })?;
+            engine = Engine::open(
+                repository,
+                engine_clock,
+                Deny,
+                installation,
+                principal(
+                    "admin",
+                    &[Role::AccountAdmin],
+                    &["cell/a", "cell/b", "cell/c"],
+                ),
+            )?;
+            engine.authenticated_session(
+                &name("admin"),
+                session,
+                TimePoint {
+                    clock_id: "test-clock".into(),
+                    ticks_ns: Counter(u64::MAX),
+                },
+            )?;
+        }
         Ok(Application::new(engine))
     })
     .await
@@ -205,6 +265,158 @@ async fn login(app: &Router, principal: &str) -> String {
     let cookie = cookie.unwrap();
     assert!(cookie.contains("HttpOnly; SameSite=Strict"));
     cookie.split(';').next().unwrap().to_owned()
+}
+
+#[tokio::test]
+async fn runtime_restriction_selection_is_scoped_read_only_and_keeps_missing_origins_null() {
+    let f = fixture_with_runtime_restrictions(true).await;
+    let admin_cookie = login(&f.app, "admin").await;
+    let path = "/api/v1/runtime-restrictions?cell=cell%2Fa";
+    let (_, before, _) = send(
+        &f.app,
+        request(
+            "GET",
+            "/api/v1/cell?id=cell%2Fa",
+            Some(&admin_cookie),
+            String::new(),
+        ),
+    )
+    .await;
+    let (status, value, _) = send(
+        &f.app,
+        request("GET", path, Some(&admin_cookie), String::new()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let view: rx_application::runtime_invalidation::RuntimeRestrictions =
+        serde_json::from_value(value.clone()).unwrap();
+    assert_eq!(view.cell, name("cell/a"));
+    assert_eq!(value["revision"], before["revision"]);
+    assert_eq!(value["epoch"], before["value"]["epoch"]);
+    assert_eq!(
+        view.configuration_digest,
+        rx_application::runtime_invalidation::configuration_digest(&f.configuration).unwrap()
+    );
+    assert_eq!(view.restrictions.len(), 2);
+    assert!(
+        view.restrictions
+            .iter()
+            .all(|r| r.block.latched && r.block.reason == BlockReason::RuntimeRestart)
+    );
+    assert_eq!(
+        view.restrictions
+            .iter()
+            .filter(|r| r.origin.is_some())
+            .count(),
+        1
+    );
+    for row in value["restrictions"].as_array().unwrap() {
+        assert!(row.get("origin").is_some() && row.get("origin_digest").is_some());
+        if row["origin"].is_null() {
+            assert!(row["origin_digest"].is_null());
+        }
+    }
+    let present = view
+        .restrictions
+        .iter()
+        .find(|r| r.origin.is_some())
+        .unwrap();
+    assert_eq!(
+        present.origin_digest,
+        Some(present.origin.as_ref().unwrap().digest().unwrap())
+    );
+    assert!(!value.to_string().contains("cell/b"));
+    let (_, after, _) = send(
+        &f.app,
+        request(
+            "GET",
+            "/api/v1/cell?id=cell%2Fa",
+            Some(&admin_cookie),
+            String::new(),
+        ),
+    )
+    .await;
+    assert_eq!(before, after);
+    assert_eq!(
+        send(&f.app, request("GET", path, None, String::new()))
+            .await
+            .0,
+        StatusCode::UNAUTHORIZED
+    );
+
+    let reader_cookie = login(&f.app, "reader").await;
+    assert_eq!(
+        send(
+            &f.app,
+            request("GET", path, Some(&reader_cookie), String::new())
+        )
+        .await
+        .0,
+        StatusCode::FORBIDDEN
+    );
+    let mut reader = f.reader.clone();
+    reader.roles = [Role::Verifier].into_iter().collect();
+    f.handle
+        .call(Command::PutPrincipal {
+            identity: f.admin.clone(),
+            value: reader.clone(),
+            expected: Some(Counter(1)),
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        send(
+            &f.app,
+            request("GET", path, Some(&reader_cookie), String::new())
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    let (status, denied, _) = send(
+        &f.app,
+        request(
+            "GET",
+            "/api/v1/runtime-restrictions?cell=cell%2Fb",
+            Some(&reader_cookie),
+            String::new(),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert!(denied.get("restrictions").is_none());
+    reader.roles = [Role::Operator].into_iter().collect();
+    f.handle
+        .call(Command::PutPrincipal {
+            identity: f.admin.clone(),
+            value: reader,
+            expected: Some(Counter(2)),
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        send(
+            &f.app,
+            request("GET", path, Some(&reader_cookie), String::new())
+        )
+        .await
+        .0,
+        StatusCode::FORBIDDEN
+    );
+    let other = fixture().await;
+    assert_eq!(
+        send(
+            &other.app,
+            request("GET", path, Some(&admin_cookie), String::new())
+        )
+        .await
+        .0,
+        StatusCode::UNAUTHORIZED
+    );
+    f.handle.close();
+    f.handle.closed().await;
+    other.handle.close();
+    other.handle.closed().await;
 }
 
 #[tokio::test]

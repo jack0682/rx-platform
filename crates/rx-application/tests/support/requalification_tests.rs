@@ -48,6 +48,7 @@ fn setup_sources_count(
 }
 fn begin_input(f: &mut Fixture, c: &process_change::Change, p: &qsupport::Fixture) -> q::Begin {
     q::Begin {
+        runtime_restrictions: BTreeMap::new(),
         id: id(),
         cell: c.cell.clone(),
         change: c.id.clone(),

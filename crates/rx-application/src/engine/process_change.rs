@@ -215,6 +215,16 @@ fn plan_digest(v: &Change) -> Result<Digest> {
         ),
     )
     .map_err(domain_error)?;
+    let base = if v.mode == Mode::RevalidateCurrent {
+        if v.before != v.after {
+            return Err(StoreError::Integrity(
+                "revalidation cannot replace configuration".into(),
+            ));
+        }
+        canonical::digest("RX-PROCESS-CHANGE-MODE-v1", &(base, v.mode)).map_err(domain_error)?
+    } else {
+        base
+    };
     if let Some(plan) = &v.host_binding_plan {
         if plan.cell != v.cell
             || plan.before_configuration != v.before
@@ -285,7 +295,43 @@ pub(super) fn current(tx: &mut dyn Transaction, meta: &Installation, c: &Change)
     {
         return reject(Reject::StaleRevision);
     }
+    if c.mode == Mode::RevalidateCurrent {
+        revalidation_root_available(tx, &c.cell, &c.before, Some(&c.id))?;
+    }
     review(tx, meta, &c.cell, &c.review)?;
+    Ok(())
+}
+// A current applied root already carries the qualification lineage; never fork it.
+fn revalidation_root_available(
+    tx: &mut dyn Transaction,
+    cell: &Name,
+    configuration: &ArtifactRef,
+    own_change: Option<&Id>,
+) -> Result<()> {
+    let (_, live): (_, Cell) = load(tx, "cell", cell, CELL)?;
+    if live.configuration.process.is_none() || config_ref(&live.configuration)? != *configuration {
+        return reject(Reject::StaleRevision);
+    }
+    for row in tx.scan("processchange/")? {
+        let candidate: Change = decode(&row, CHANGE)?;
+        if own_change == Some(&candidate.id)
+            || !matches!(
+                candidate.state,
+                State::AppliedUnqualified | State::QualifiedActive
+            )
+        {
+            continue;
+        }
+        let candidate = change(tx, &candidate.id, &candidate.cell)?;
+        if candidate.application.as_ref().is_some_and(|applied| {
+            applied
+                .cells
+                .iter()
+                .any(|c| &c.cell == cell && &c.after == configuration)
+        }) {
+            return reject(Reject::Busy);
+        }
+    }
     Ok(())
 }
 pub(super) fn check_prepared(
@@ -316,6 +362,23 @@ pub(super) fn check_prepared(
     review(tx, meta, &t.job.request.cell, &r)?;
     if fingerprint(&job_impact(tx, &t.job)?)? != fingerprint(&t.impact)? {
         return reject(Reject::StaleRevision);
+    }
+    let (mode, own_change) = match &t.action {
+        Action::Propose(input) => (input.mode, None),
+        Action::Stage(input) | Action::Apply(input) => {
+            let c = change(tx, &input.change, &input.cell)?;
+            (c.mode, Some(input.change.clone()))
+        }
+    };
+    if t.mode != mode {
+        return Err(StoreError::Integrity("change ticket mode differs".into()));
+    }
+    if mode == Mode::RevalidateCurrent {
+        let before = config_ref(&t.job.configuration)?;
+        if config_ref(&p.target)? != before {
+            return reject(Reject::InvalidInput);
+        }
+        revalidation_root_available(tx, &t.job.request.cell, &before, own_change.as_ref())?;
     }
     validate_configuration(&p.target)
 }
@@ -357,6 +420,14 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                 return reject(Reject::InvalidInput);
             }
             let (job, version, decision, resolved) = review(tx, meta, &input.cell, &input.review)?;
+            if input.mode == Mode::RevalidateCurrent {
+                revalidation_root_available(
+                    tx,
+                    &input.cell,
+                    &config_ref(&job.configuration)?,
+                    None,
+                )?;
+            }
             let affected = job_impact(tx, &job)?;
             access(&principal, &affected)?;
             if tx.get(&key("processchange", &input.id))?.is_some() {
@@ -366,6 +437,7 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                 StoreError::Unavailable("package verifier unavailable".into()),
             )?;
             Ok(Preflight::Verify(Box::new(Ticket {
+                mode: input.mode,
                 action: Action::Propose(input),
                 identity: identity.clone(),
                 key: key_.clone(),
@@ -415,6 +487,7 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             let before = store_config(tx, &t.job.configuration)?;
             let after = store_config(tx, &p.target)?;
             let mut c = Change {
+                mode: input.mode,
                 host_binding_plan: p.host_binding_plan,
                 qualification_activation: None,
                 application: None,
@@ -538,6 +611,7 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                 StoreError::Unavailable("package verifier unavailable".into()),
             )?;
             Ok(Preflight::Verify(Box::new(Ticket {
+                mode: c.mode,
                 action: Action::Stage(input),
                 identity: identity.clone(),
                 key: key_.clone(),

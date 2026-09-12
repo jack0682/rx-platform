@@ -40,3 +40,5 @@ pub mod configuration_dispatch;
 pub mod requalification;
 
 pub mod qualification_activation;
+
+pub mod runtime_invalidation;

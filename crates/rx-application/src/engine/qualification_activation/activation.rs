@@ -32,7 +32,7 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             for target in &b.cells {
                 let (rev, cell): (_, Cell) = load(tx, "cell", &target.cell, CELL)?;
                 check_revision(rev, input.expected_cells[&target.cell])?;
-                owned_clear(tx, &b.change, &cell, &target.clear_blocks)?;
+                owned_clear(tx, &b.job, &cell, &target.clear_blocks)?;
             }
             fresh_hosts(tx, &b, &now, reads)?;
             let (v, d) = approved(
@@ -90,7 +90,7 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             for target in &b.cells {
                 let (rev, mut cell): (_, Cell) = load(tx, "cell", &target.cell, CELL)?;
                 check_revision(rev, input.expected_cells[&target.cell])?;
-                owned_clear(tx, &b.change, &cell, &target.clear_blocks)?;
+                owned_clear(tx, &b.job, &cell, &target.clear_blocks)?;
                 cell.qualification = Some(target.qualification.clone());
                 cell.commissioning = Some(Commissioning::Commissioned);
                 cell.mode = Some(OperatingMode::Setup);
