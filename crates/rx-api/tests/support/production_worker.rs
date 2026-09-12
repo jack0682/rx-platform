@@ -132,6 +132,18 @@ pub async fn finish(
     }
 }
 async fn drive(runtime: &Runtime, host: &Identity, operation: &Id, journal: &Id, ordinal: u64) {
+    drive_with_sequence(runtime, host, operation, journal, ordinal, ordinal * 2).await;
+}
+// A resident fixture has intervening Arm receipts between Runs. Keep the evidence
+// stream contiguous while allocating independent, monotone delivery journal sequences.
+pub(super) async fn drive_with_sequence(
+    runtime: &Runtime,
+    host: &Identity,
+    operation: &Id,
+    journal: &Id,
+    ordinal: u64,
+    delivery_sequence: u64,
+) {
     let Reply::DeliveryPlan(plan) = runtime
         .call(Command::PlanDelivery {
             identity: host.clone(),
@@ -150,7 +162,7 @@ async fn drive(runtime: &Runtime, host: &Identity, operation: &Id, journal: &Id,
         digest: work.intent.digest().unwrap(),
         invocation: Some(invocation.clone()),
         journal: plan.registration.delivery_journal,
-        sequence: Counter(ordinal * 2),
+        sequence: Counter(delivery_sequence),
         state: ReceiptState::Prepared,
     };
     runtime
@@ -178,7 +190,7 @@ async fn drive(runtime: &Runtime, host: &Identity, operation: &Id, journal: &Id,
             identity: host.clone(),
             message,
             receipt: HostReceipt {
-                sequence: Counter(ordinal * 2 + 1),
+                sequence: Counter(delivery_sequence + 1),
                 state: ReceiptState::ResultCaptured,
                 ..receipt
             },

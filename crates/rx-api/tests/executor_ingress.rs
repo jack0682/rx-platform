@@ -9,6 +9,8 @@ mod handover;
 mod operator_read;
 #[path = "support/production_worker.rs"]
 mod production_worker;
+#[path = "support/resident_cell_worker.rs"]
+mod resident_cell_worker;
 #[path = "support/service_worker.rs"]
 mod service_worker;
 mod support;
@@ -139,6 +141,11 @@ async fn durable_s_worker_handles_real_bt_requests_and_preserves_crash_boundarie
     }
 }
 #[tokio::test]
+#[ignore = "tools/test_executor_cell_e2e.sh supplies the resident S service and pinned C++ fixture"]
+async fn resident_executor_discovers_two_operator_started_runs_in_one_process_and_session() {
+    run_fixture(true, false, Some("RESIDENT_CELL"), None).await;
+}
+#[tokio::test]
 async fn branch_checkpoint_preparation_and_lost_commit_reply_use_the_frozen_wire_contract() {
     run_fixture(true, false, None, Some("BRANCH")).await;
 }
@@ -162,8 +169,10 @@ async fn run_fixture(
     std::fs::create_dir(&clock_directory).unwrap();
     let clock_file = clock_directory.join("now.json");
     publish_clock(&clock_file, 1000);
+    let resident_mode = worker_mode == Some("RESIDENT_CELL");
     let decision_mode = worker_mode.is_some_and(|m| m.starts_with("CHECKPOINT_"));
-    let production_mode = worker_mode.is_some_and(|m| m.starts_with("PRODUCTION_"));
+    let production_mode =
+        worker_mode.is_some_and(|m| m.starts_with("PRODUCTION_")) || resident_mode;
     let service_mode =
         worker_mode.is_some_and(|m| m.starts_with("SERVICE_") || m.starts_with("PRODUCTION_"));
     let mut base_configuration = support::configuration("cell/a");
@@ -283,30 +292,34 @@ async fn run_fixture(
             None,
         )?;
         engine.install_cell(&admin, config.clone())?;
-        engine.create_run(
-            &admin,
-            id().as_str(),
-            CreateRun {
-                cell: config.id.clone(),
-                recipe_digest: config.recipe.sha256,
-                site_config_digest: config.site_config_digest,
-                expected_cell: Counter(1),
-            },
-        )?;
+        if !resident_mode {
+            engine.create_run(
+                &admin,
+                id().as_str(),
+                CreateRun {
+                    cell: config.id.clone(),
+                    recipe_digest: config.recipe.sha256,
+                    site_config_digest: config.site_config_digest,
+                    expected_cell: Counter(1),
+                },
+            )?;
+        }
         let mut other = support::configuration("cell/b");
         other.executor = name("other-executor");
         other.definition.sha256 = Digest::from_bytes([51; 32]);
         engine.install_cell(&admin, other.clone())?;
-        engine.create_run(
-            &admin,
-            id().as_str(),
-            CreateRun {
-                cell: other.id,
-                recipe_digest: other.recipe.sha256,
-                site_config_digest: other.site_config_digest,
-                expected_cell: Counter(1),
-            },
-        )?;
+        if !resident_mode {
+            engine.create_run(
+                &admin,
+                id().as_str(),
+                CreateRun {
+                    cell: other.id,
+                    recipe_digest: other.recipe.sha256,
+                    site_config_digest: other.site_config_digest,
+                    expected_cell: Counter(1),
+                },
+            )?;
+        }
         if mutate {
             prepare_simulated_host(&mut engine, &admin, &config, setup_host_session)?;
         }
@@ -339,23 +352,33 @@ async fn run_fixture(
     let fingerprint =
         |cert: &Certificate| Digest::from_bytes(sha2::Sha256::digest(cert.der().as_ref()).into());
     let release = Digest::from_bytes([8; 32]);
+    let resident_audit = Arc::new(resident_cell_worker::Audit::default());
+    let runtime_port: Arc<dyn ApplicationPort> = Arc::new(LoseWorkerReply {
+        handle: handle.clone(),
+        resolve: worker_mode == Some("LOST_RESOLVE_REPLY"),
+        submit: worker_mode == Some("LOST_SUBMIT_REPLY"),
+        pause: matches!(worker_mode, Some("LOST_PAUSE_REPLY" | "SERVICE_LOST_PAUSE")),
+        pause_unavailable: worker_mode == Some("SERVICE_PAUSE_UNAVAILABLE"),
+        begin_part: worker_mode == Some("PRODUCTION_LOST_BEGIN"),
+        complete_part: worker_mode == Some("PRODUCTION_LOST_COMPLETE"),
+        reconcile: worker_mode == Some("LOST_RECONCILE_REPLY"),
+        checkpoint: checkpoint_mode.is_some() || worker_mode == Some("CHECKPOINT_LOST_REPLY"),
+        expire: worker_mode == Some("CHECKPOINT_EXPIRED"),
+        timeout: worker_mode == Some("CHECKPOINT_WAIT_TIMEOUT"),
+        clock: clock_ticks.clone(),
+        clock_file: clock_file.clone(),
+        first: std::sync::atomic::AtomicBool::new(true),
+    });
+    let runtime_port: Arc<dyn ApplicationPort> = if resident_mode {
+        Arc::new(resident_cell_worker::ObservedPort::new(
+            runtime_port,
+            resident_audit.clone(),
+        ))
+    } else {
+        runtime_port
+    };
     let ingress = PlatformIngress::new(
-        Arc::new(LoseWorkerReply {
-            handle: handle.clone(),
-            resolve: worker_mode == Some("LOST_RESOLVE_REPLY"),
-            submit: worker_mode == Some("LOST_SUBMIT_REPLY"),
-            pause: matches!(worker_mode, Some("LOST_PAUSE_REPLY" | "SERVICE_LOST_PAUSE")),
-            pause_unavailable: worker_mode == Some("SERVICE_PAUSE_UNAVAILABLE"),
-            begin_part: worker_mode == Some("PRODUCTION_LOST_BEGIN"),
-            complete_part: worker_mode == Some("PRODUCTION_LOST_COMPLETE"),
-            reconcile: worker_mode == Some("LOST_RECONCILE_REPLY"),
-            checkpoint: checkpoint_mode.is_some() || worker_mode == Some("CHECKPOINT_LOST_REPLY"),
-            expire: worker_mode == Some("CHECKPOINT_EXPIRED"),
-            timeout: worker_mode == Some("CHECKPOINT_WAIT_TIMEOUT"),
-            clock: clock_ticks.clone(),
-            clock_file: clock_file.clone(),
-            first: std::sync::atomic::AtomicBool::new(true),
-        }),
+        runtime_port,
         Configuration {
             installation: installation.clone(),
             release_digest: release,
@@ -384,6 +407,29 @@ async fn run_fixture(
             .await
             .unwrap();
     });
+    if resident_mode {
+        resident_cell_worker::run(
+            &handle,
+            &directory,
+            &configuration,
+            &installation,
+            &uri,
+            release,
+            &ca.pem(),
+            &executor.pem(),
+            &executor_key.serialize_pem(),
+            admin_session,
+            host_session,
+            &clock_file,
+            resident_audit,
+        )
+        .await;
+        stop.send(()).unwrap();
+        task.await.unwrap();
+        handle.close();
+        handle.closed().await;
+        return;
+    }
     let channel = connect(
         &uri,
         &ca.pem(),
