@@ -9,7 +9,7 @@ use std::{
     fs,
     io::Read,
     net::SocketAddr,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
 };
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -81,6 +81,8 @@ pub struct HostLink {
 #[serde(deny_unknown_fields)]
 pub struct Config {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub operator_ui: Option<OperatorUi>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub package_intake: Option<PackageIntake>,
     pub schema: Name,
     #[serde(default)]
@@ -93,6 +95,55 @@ pub struct Config {
     pub credentials: PinnedFile,
     pub https: Https,
     pub grpc: Grpc,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OperatorUi {
+    pub directory: PathBuf,
+    pub manifest: PinnedFile,
+}
+/// Resolve existing ancestors while preserving a not-yet-created directory suffix.
+/// Parent traversal is rejected rather than normalized across possibly linked directories.
+fn directory_location(path: &Path) -> std::result::Result<PathBuf, String> {
+    if !path.is_absolute()
+        || path
+            .components()
+            .any(|p| !matches!(p, Component::RootDir | Component::Normal(_)))
+    {
+        return Err(
+            "operator path comparison requires absolute directories without parent traversal"
+                .into(),
+        );
+    }
+    let mut ancestor = path.to_path_buf();
+    let mut missing = Vec::new();
+    loop {
+        match fs::symlink_metadata(&ancestor) {
+            Ok(_) => {
+                // A dangling link or non-directory ancestor is an error, not a missing suffix.
+                let mut resolved = fs::canonicalize(&ancestor).map_err(|e| e.to_string())?;
+                if !resolved.is_dir() {
+                    return Err("operator path comparison requires directory ancestors".into());
+                }
+                for component in missing.into_iter().rev() {
+                    resolved.push(component);
+                }
+                return Ok(resolved);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                missing.push(
+                    ancestor
+                        .file_name()
+                        .ok_or("directory ancestor missing")?
+                        .to_os_string(),
+                );
+                if !ancestor.pop() {
+                    return Err("directory ancestor missing".into());
+                }
+            }
+            Err(error) => return Err(error.to_string()),
+        }
+    }
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -125,6 +176,7 @@ pub struct Catalog {
     pub cells: Vec<CellConfiguration>,
 }
 pub struct Loaded {
+    pub operator_ui: Option<rx_api::operator_ui::OperatorBundle>,
     pub package_intake: Option<LoadedIntake>,
     pub config: Config,
     pub catalog: Catalog,
@@ -150,6 +202,20 @@ impl Loaded {
             return Err("invalid startup configuration".into());
         }
         rx_api::terminal_https::HttpsPolicy::new(&config.https.origin)?;
+        let operator_ui = config.operator_ui.as_ref().map(|input| {
+            let operator_location = directory_location(&input.directory)?;
+            let mut mutable_roots = vec![&config.data_directory, &config.runtime_directory];
+            if let Some(intake) = &config.package_intake {
+                mutable_roots.push(&intake.import_root);
+            }
+            for root in mutable_roots {
+                let mutable_location = directory_location(root)?;
+                if operator_location.starts_with(&mutable_location) || mutable_location.starts_with(&operator_location) {
+                    return Err("operator bundle must be separate from data, runtime and package import directories".to_owned());
+                }
+            }
+            rx_api::operator_ui::OperatorBundle::load(&input.directory, &input.manifest.path, input.manifest.sha256)
+        }).transpose()?;
         let catalog: Catalog = canonical::decode_json(&config.catalog.read(false)?)?;
         if catalog.schema.as_str() != "rx.platform-bootstrap-catalog.v1"
             || !catalog.bootstrap.active
@@ -248,6 +314,7 @@ impl Loaded {
             None
         };
         let loaded = Self {
+            operator_ui,
             package_intake,
             host_links,
             https_tls: rx_api::terminal_https::TlsMaterial {
