@@ -213,6 +213,7 @@ fn build_router(
             get(draft_bindings).post(save_draft_bindings),
         )
         .route("/api/v1/cell", get(cell))
+        .route("/api/v1/runtime-restrictions", get(runtime_restrictions))
         .route("/api/cell/v1/cells/{cell_id}/inspect", get(cell_context))
         .route("/api/v1/cells", post(install_cell))
         .route("/api/v1/runs", post(create_run))
@@ -482,6 +483,28 @@ async fn overview(State(s): State<ApiState>, headers: HeaderMap) -> Result<Respo
 #[serde(deny_unknown_fields)]
 struct CellQuery {
     id: Name,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RuntimeRestrictionsQuery {
+    cell: Name,
+}
+async fn runtime_restrictions(
+    State(s): State<ApiState>,
+    headers: HeaderMap,
+    Query(q): Query<RuntimeRestrictionsQuery>,
+) -> Result<Response, ApiError> {
+    match s
+        .runtime
+        .request(Command::RuntimeRestrictions {
+            identity: identity(&s, &headers)?,
+            cell: q.cell,
+        })
+        .await?
+    {
+        Reply::RuntimeRestrictions(value) => Ok(Json(value).into_response()),
+        _ => Err(mismatch()),
+    }
 }
 async fn cell(
     State(s): State<ApiState>,

@@ -78,12 +78,7 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             for c in &j.request.cells {
                 let (rev, cell): (_, Cell) = load(tx, "cell", &c.profile.cell, CELL)?;
                 check_revision(rev, input.expected_cells[&c.profile.cell])?;
-                owned_clear(
-                    tx,
-                    &j.request.change,
-                    &cell,
-                    &input.clear_blocks[&c.profile.cell],
-                )?;
+                owned_clear(tx, &j, &cell, &input.clear_blocks[&c.profile.cell])?;
             }
             if !requalification::fences_confirmed(tx, &j)? {
                 return reject(Reject::HostNotPrepared);
@@ -201,12 +196,7 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             for target in &t.job.request.cells {
                 let (rev, cell): (_, Cell) = load(tx, "cell", &target.profile.cell, CELL)?;
                 check_revision(rev, input.expected_cells[&target.profile.cell])?;
-                owned_clear(
-                    tx,
-                    &t.job.request.change,
-                    &cell,
-                    &input.clear_blocks[&target.profile.cell],
-                )?;
+                owned_clear(tx, &t.job, &cell, &input.clear_blocks[&target.profile.cell])?;
                 let evidence = t
                     .version
                     .report

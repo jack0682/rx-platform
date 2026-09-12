@@ -81,6 +81,7 @@ mod reconciliation;
 mod requalification;
 mod requests;
 mod run_configuration;
+mod runtime_restrictions;
 mod workflow;
 
 use access::*;
@@ -107,6 +108,7 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                 if old.id != installation_id {
                     return reject(Reject::InvalidInput);
                 }
+                let previous_installation = old.clone();
                 old.runtime_boot = runtime_boot.clone();
                 old.clock_id = now.clock_id.clone();
                 tx.put(
@@ -116,7 +118,8 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                 )?;
                 // Keep historical records, but never restore live execution authority on boot.
                 for record in tx.scan("cell/")? {
-                    let mut cell: Cell = decode(&record, CELL)?;
+                    let before: Cell = decode(&record, CELL)?;
+                    let mut cell = before.clone();
                     let qualification_change = qualification_activation::cell_change(tx, &cell)?;
                     let before_blocks = cell.blocks.iter().map(|b| b.id.clone()).collect();
                     if let Some(q) = &cell.qualification
@@ -134,6 +137,14 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                         cell.qualification = None;
                     }
                     invalidate_cell(tx, &mut cell, record.revision, BlockReason::RuntimeRestart)?;
+                    crate::runtime_invalidation::record_restart(
+                        tx,
+                        &previous_installation,
+                        &old,
+                        record.revision,
+                        &before,
+                        &cell,
+                    )?;
                     if let Some(change) = qualification_change {
                         qualification_activation::record_blocks(
                             tx,

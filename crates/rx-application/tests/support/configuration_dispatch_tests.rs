@@ -813,3 +813,6 @@ fn configuration_apply_rejects_expired_host_read_even_with_a_fresh_release_sessi
 
 #[path = "requalification_tests.rs"]
 mod requalification_tests;
+
+#[path = "process_revalidation_tests.rs"]
+mod process_revalidation_tests;
