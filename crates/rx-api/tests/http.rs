@@ -2093,7 +2093,7 @@ fn export_operator_package_fixture() {
     std::fs::write(&policy_path, &package.policy_bytes).unwrap();
     let authority_path = state.join("review-authority.json");
     private(&authority_path, &package.authority);
-    let admin = principal(
+    let mut admin = principal(
         "admin",
         &[
             Role::AccountAdmin,
@@ -2103,6 +2103,9 @@ fn export_operator_package_fixture() {
         ],
         &["cell/demo", "cell/other"],
     );
+    if std::env::var("RX_HOST_BINDING_PLAN_ENABLED").as_deref() == Ok("1") {
+        admin.roles.insert(Role::ReleaseManager);
+    }
     let installation = id();
     let mut engine = Engine::open(
         SqliteRepository::open(state.join("platform.db")).unwrap(),
@@ -2155,9 +2158,17 @@ fn export_operator_package_fixture() {
             .unwrap();
     }
     engine.install_cell(&who, cfg).unwrap();
-    engine
-        .install_cell(&who, configuration("cell/other"))
-        .unwrap();
+    let mut other = configuration("cell/other");
+    if std::env::var("RX_HOST_BINDING_PLAN_ENABLED").as_deref() == Ok("1") {
+        other.hosts = vec![name("host/other")];
+        for step in &mut other.steps {
+            step.host = name("host/other");
+        }
+        for fact in &mut other.fact_specs {
+            fact.host = name("host/other");
+        }
+    }
+    engine.install_cell(&who, other).unwrap();
     let mut repository = engine.into_repository();
     repository.transact(|_| Ok(())).unwrap();
     drop(repository);

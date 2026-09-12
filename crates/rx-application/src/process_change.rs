@@ -143,6 +143,8 @@ pub struct ApplicationRecord {
 #[serde(deny_unknown_fields)]
 pub struct Change {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host_binding_plan: Option<rx_process_contract::host_binding_plan::Plan>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub qualification_activation: Option<Id>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub application: Option<ApplicationRecord>,
@@ -167,6 +169,7 @@ pub struct Change {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum Blocker {
+    HostBindingChangeRequired,
     PreparationRequired,
     RequalificationRequired,
     ContextChanged,
@@ -231,14 +234,10 @@ pub struct Prepared {
     pub(crate) verified: Validated,
     pub(crate) target: CellConfiguration,
     pub(crate) origins: BTreeMap<Name, Name>,
+    pub(crate) host_binding_plan: Option<rx_process_contract::host_binding_plan::Plan>,
 }
 impl Prepared {
     pub fn new(ticket: Ticket, verified: Validated) -> Result<Self, String> {
-        if ticket.job.device_context.is_some() {
-            return Err(
-                "device-aware Host binding and operating-envelope application required".into(),
-            );
-        }
         if !verified.issues.is_empty()
             || !verified.report.issues.is_empty()
             || verified.report.digest()? != ticket.version.report_digest
@@ -256,7 +255,7 @@ impl Prepared {
         {
             return Err("reviewed process differs".into());
         }
-        let mut target = ticket.job.configuration.clone();
+        let mut target = crate::process_review::device_configuration(&ticket.job, None)?;
         let mut steps = Vec::new();
         let mut origins = BTreeMap::new();
         for node in rx_process_contract::validation::nodes(resolved) {
@@ -298,11 +297,13 @@ impl Prepared {
         {
             return Err("configuration is unchanged".into());
         }
+        let host_binding_plan = host_binding_plan(&ticket, &target)?;
         Ok(Self {
             ticket,
             verified,
             target,
             origins,
+            host_binding_plan,
         })
     }
 }
@@ -314,4 +315,87 @@ pub fn builder_digest() -> Digest {
         )
         .as_bytes(),
     )
+}
+
+fn host_binding_plan(
+    ticket: &Ticket,
+    target: &CellConfiguration,
+) -> Result<Option<rx_process_contract::host_binding_plan::Plan>, String> {
+    use rx_process_contract::host_binding_plan::{DevicePackage, HostTarget, Plan};
+    let Some(context) = &ticket.job.device_context else {
+        return Ok(None);
+    };
+    let mut hosts: BTreeMap<Name, HostTarget> = BTreeMap::new();
+    for step in &target.steps {
+        let h = hosts
+            .entry(step.host.clone())
+            .or_insert_with(|| HostTarget {
+                required_intents: vec![],
+                required_conditions: Default::default(),
+                device_packages: vec![],
+                other_affected_cells: Default::default(),
+            });
+        h.required_intents
+            .push(step.intent.normalized().map_err(|e| e.to_string())?);
+        h.required_conditions
+            .extend(step.condition_ids.iter().cloned());
+    }
+    for (host, h) in &mut hosts {
+        h.required_intents
+            .sort_by_cached_key(|v| v.digest().expect("normalized intent"));
+        h.required_intents
+            .dedup_by(|a, b| a.digest().expect("normalized") == b.digest().expect("normalized"));
+        for d in &context.dependencies {
+            if ticket.job.request.binding_selections.values().any(|id| {
+                d.plan
+                    .definition
+                    .candidates
+                    .get(id)
+                    .is_some_and(|c| &c.step.host == host)
+            }) {
+                h.device_packages.push(DevicePackage {
+                    manifest: d.plan.definition.object.manifest,
+                    signature: d.plan.definition.object.signature,
+                    catalog: d.plan.definition.catalog.clone(),
+                });
+            }
+        }
+        h.device_packages.sort_by_key(|p| (p.manifest, p.signature));
+        h.device_packages.dedup_by(|a, b| a == b);
+        h.other_affected_cells = ticket
+            .impact
+            .cells
+            .iter()
+            .filter(|c| c.id != target.id && c.hosts.contains(host))
+            .map(|c| c.id.clone())
+            .collect();
+    }
+    let config_ref = |v: &CellConfiguration| -> Result<ArtifactRef, String> {
+        let data = canonical::bytes(v).map_err(|e| e.to_string())?;
+        Ok(ArtifactRef {
+            schema_id: Name::new("rx.cell-configuration.v1").expect("literal"),
+            sha256: rx_package::content_digest(&data),
+            size_bytes: Counter(data.len() as u64),
+        })
+    };
+    let result = Plan {
+        schema: Name::new("rx.host-binding-plan.v1").expect("literal"),
+        installation: context.dependencies[0].job.request.installation.clone(),
+        cell: target.id.clone(),
+        device_context_digest: context.digest()?,
+        process_review_digest: ticket.version.review_digest,
+        before_configuration: config_ref(&ticket.job.configuration)?,
+        after_configuration: config_ref(target)?,
+        definition: target.definition.clone(),
+        envelope: target.envelope.clone(),
+        environment: Name::new(match target.environment {
+            crate::Environment::Simulation => "SIMULATION",
+            crate::Environment::Physical => "PHYSICAL",
+        })
+        .expect("literal"),
+        scopes: target.scopes.iter().cloned().collect(),
+        hosts,
+    };
+    result.validate()?;
+    Ok(Some(result))
 }

@@ -16,5 +16,6 @@ pub mod package_review;
 
 pub mod device_catalog;
 pub mod device_review;
+pub mod host_binding_plan;
 pub mod native_outcome;
 pub mod source_link;

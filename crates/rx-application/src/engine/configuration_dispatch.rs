@@ -101,6 +101,9 @@ pub(super) fn current_change(
     Ok(c)
 }
 pub(super) fn barrier(tx: &mut dyn Transaction, c: &Change) -> Result<()> {
+    if c.host_binding_plan.is_some() {
+        return reject(Reject::CapabilityMissing);
+    }
     let ids: BTreeSet<_> = c.impact.cells.iter().map(|c| c.id.clone()).collect();
     let p = c
         .preparation

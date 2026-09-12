@@ -142,6 +142,23 @@ pub(super) fn prospective_impact(
         host_configuration_ack_required: true,
     })
 }
+fn job_impact(tx: &mut dyn Transaction, job: &Job) -> Result<Impact> {
+    if job.device_context.is_none() {
+        return impact(tx, &job.request.cell);
+    }
+    let c = crate::process_review::device_configuration(job, None).map_err(StoreError::Invalid)?;
+    let hosts = c.steps.iter().map(|s| s.host.clone()).collect();
+    let resources = c
+        .steps
+        .iter()
+        .flat_map(|s| s.intent.resource_set.iter().cloned())
+        .collect();
+    prospective_impact(tx, &job.request.cell, &hosts, &resources)
+}
+fn change_impact(tx: &mut dyn Transaction, c: &Change) -> Result<Impact> {
+    let job = process_review::load_job(tx, &c.review.id, &c.cell)?;
+    job_impact(tx, &job)
+}
 pub(super) fn access(p: &Principal, impact: &Impact) -> Result<()> {
     if impact.cells.iter().any(|c| !p.cells.contains(&c.id)) {
         return reject(Reject::Forbidden);
@@ -163,8 +180,7 @@ pub(super) fn review(
         &r.id,
         "rx.process-review-decision.v1",
     )?;
-    if job.device_context.is_some()
-        || !process_review::context_matches(tx, meta, &job)?
+    if !process_review::context_matches(tx, meta, &job)?
         || v.checker_digest != crate::process_review::checker_digest()
         || !v.ready_for_software_approval
         || v.revision != r.revision
@@ -183,7 +199,7 @@ pub(super) fn review(
     Ok((job, v, d, resolved))
 }
 fn plan_digest(v: &Change) -> Result<Digest> {
-    canonical::digest(
+    let base = canonical::digest(
         "RX-PROCESS-CHANGE-PLAN-v1",
         &(
             &v.id,
@@ -198,7 +214,21 @@ fn plan_digest(v: &Change) -> Result<Digest> {
             v.builder_digest,
         ),
     )
-    .map_err(domain_error)
+    .map_err(domain_error)?;
+    if let Some(plan) = &v.host_binding_plan {
+        if plan.cell != v.cell
+            || plan.before_configuration != v.before
+            || plan.after_configuration != v.after
+        {
+            return Err(StoreError::Integrity(
+                "Host binding plan configuration differs".into(),
+            ));
+        }
+        plan.validate().map_err(StoreError::Integrity)?;
+        canonical::digest("RX-PROCESS-DEVICE-CHANGE-PLAN-v1", &(base, plan)).map_err(domain_error)
+    } else {
+        Ok(base)
+    }
 }
 pub(super) fn change(tx: &mut dyn Transaction, id: &Id, cell: &Name) -> Result<Change> {
     let (revision, c): (_, Change) = load(tx, "processchange", id, CHANGE)?;
@@ -251,7 +281,7 @@ pub(super) fn record(
 }
 pub(super) fn current(tx: &mut dyn Transaction, meta: &Installation, c: &Change) -> Result<()> {
     if c.builder_digest != builder_digest()
-        || fingerprint(&impact(tx, &c.cell)?)? != fingerprint(&c.impact)?
+        || fingerprint(&change_impact(tx, c)?)? != fingerprint(&c.impact)?
     {
         return reject(Reject::StaleRevision);
     }
@@ -284,7 +314,7 @@ pub(super) fn check_prepared(
         decision_revision: t.decision.revision,
     };
     review(tx, meta, &t.job.request.cell, &r)?;
-    if fingerprint(&impact(tx, &t.job.request.cell)?)? != fingerprint(&t.impact)? {
+    if fingerprint(&job_impact(tx, &t.job)?)? != fingerprint(&t.impact)? {
         return reject(Reject::StaleRevision);
     }
     validate_configuration(&p.target)
@@ -327,6 +357,8 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                 return reject(Reject::InvalidInput);
             }
             let (job, version, decision, resolved) = review(tx, meta, &input.cell, &input.review)?;
+            let affected = job_impact(tx, &job)?;
+            access(&principal, &affected)?;
             if tx.get(&key("processchange", &input.id))?.is_some() {
                 return reject(Reject::StaleRevision);
             }
@@ -383,6 +415,7 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             let before = store_config(tx, &t.job.configuration)?;
             let after = store_config(tx, &p.target)?;
             let mut c = Change {
+                host_binding_plan: p.host_binding_plan,
                 qualification_activation: None,
                 application: None,
                 id: input.id.clone(),
@@ -557,7 +590,10 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                 return reject(Reject::StaleRevision);
             }
             check_prepared(tx, meta, &now, &p)?;
-            if config_ref(&p.target)? != c.after || p.origins != c.step_origins {
+            if config_ref(&p.target)? != c.after
+                || p.origins != c.step_origins
+                || fingerprint(&p.host_binding_plan)? != fingerprint(&c.host_binding_plan)?
+            {
                 return Err(StoreError::Integrity(
                     "staged target differs from reviewed plan".into(),
                 ));
@@ -615,6 +651,9 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                 return reject(Reject::StaleRevision);
             }
             current(tx, meta, &c)?;
+            if c.host_binding_plan.is_some() {
+                return reject(Reject::CapabilityMissing);
+            }
             let affected: BTreeSet<_> = c.impact.cells.iter().map(|v| v.id.clone()).collect();
             for row in tx.scan("processchange/")? {
                 let other: Change = decode(&row, CHANGE)?;
@@ -708,7 +747,10 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             if matches!(c.state, State::AppliedUnqualified | State::QualifiedActive) {
                 return process_apply::detail(tx, meta, c, before, after);
             }
-            if fingerprint(&impact(tx, cell)?)? != fingerprint(&c.impact)?
+            if c.host_binding_plan.is_some() {
+                add(Blocker::HostBindingChangeRequired);
+            }
+            if fingerprint(&change_impact(tx, &c)?)? != fingerprint(&c.impact)?
                 || c.builder_digest != builder_digest()
             {
                 add(Blocker::ContextChanged);
