@@ -32,6 +32,7 @@ fn leaf(
         format!("RX SIMULATION delivery {label}"),
     );
     params.key_usages = vec![KeyUsagePurpose::DigitalSignature];
+    params.use_authority_key_identifier_extension = true;
     params.extended_key_usages = vec![if server {
         ExtendedKeyUsagePurpose::ServerAuth
     } else {
@@ -69,6 +70,7 @@ fn leaf(
 pub(super) fn export(out: &Path) -> Result<Bundle> {
     let mut params = CertificateParams::new(Vec::<String>::new())?;
     params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+    params.use_authority_key_identifier_extension = true;
     params.key_usages = vec![KeyUsagePurpose::KeyCertSign];
     params
         .distinguished_name

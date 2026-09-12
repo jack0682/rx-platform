@@ -3,6 +3,8 @@ use rx_application::*;
 mod native_outcomes_tests;
 #[path = "support/operator_start_tests.rs"]
 mod operator_start_tests;
+#[path = "support/producer_runtime_restart_tests.rs"]
+mod producer_runtime_restart_tests;
 #[path = "support/runtime_invalidation_tests.rs"]
 mod runtime_invalidation_tests;
 use rx_domain::{condition::Condition, fault::Rejection, intent::*, types::*};
