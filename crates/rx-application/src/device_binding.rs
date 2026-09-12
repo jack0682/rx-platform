@@ -172,77 +172,7 @@ impl Prepared {
         {
             return Err("binding proposal scope/size".into());
         }
-        let mut candidates = BTreeMap::new();
-        let mut issues = vec![];
-        for (id, s) in &ticket.input.bindings {
-            let intent = c
-                .operations
-                .get(&s.action)
-                .ok_or("selected device action absent")?
-                .clone();
-            if s.conditions.keys().collect::<BTreeSet<_>>() != c.condition_ids.iter().collect()
-                || s.handover_max_age_ns.0 == 0
-                || s.completion_postconditions.len() > 32
-            {
-                return Err("required device conditions or handover policy missing".into());
-            }
-            let old = ticket.before.steps.iter().find(|v| &v.id == id);
-            for condition in s.conditions.values().chain(&s.completion_postconditions) {
-                check_condition(condition, &ticket.before, id, &mut issues)?;
-            }
-            if !ticket.before.hosts.contains(&s.host) {
-                issues.push(issue(
-                    id,
-                    "HOST_REGISTRATION_REQUIRED",
-                    "Host is not in the current cell configuration",
-                ));
-            }
-            if intent.site_config_digest != ticket.before.site_config_digest {
-                issues.push(issue(
-                    id,
-                    "SITE_CONFIGURATION_REVIEW_REQUIRED",
-                    "Device intent refers to a different site configuration",
-                ));
-            }
-            let completion = if let Some(table) = &c.outcomes {
-                CompletionRule::NativeOutcomes {
-                    table: table.clone(),
-                    postconditions: s.completion_postconditions.clone(),
-                }
-            } else {
-                issues.push(issue(id,"COMPLETION_UNOBSERVABLE","No native outcome table; explicit recovery/completion policy review is required"));
-                CompletionRule::Unobservable
-            };
-            let step = StepBinding {
-                id: id.clone(),
-                host: s.host.clone(),
-                intent,
-                predecessors: vec![],
-                conditions: s.conditions.values().cloned().collect(),
-                completion,
-                condition_ids: s.conditions.keys().cloned().collect(),
-                condition_revision: old.map_or(Ok(Counter(1)), |v| {
-                    v.condition_revision.increment().map_err(|e| e.to_string())
-                })?,
-                handover_max_age_ns: s.handover_max_age_ns,
-            };
-            candidates.insert(
-                id.clone(),
-                Candidate {
-                    action: s.action.clone(),
-                    previous_step_digest: old
-                        .map(|v| {
-                            canonical::digest("RX-DRAFT-BINDING-STEP-v1", v)
-                                .map_err(|e| e.to_string())
-                        })
-                        .transpose()?,
-                    step,
-                },
-            );
-        }
-        if issues.len() > 128 {
-            return Err("too many unresolved binding conditions".into());
-        }
+        let (candidates, issues) = build_candidates(&ticket.input, &ticket.before, &c)?;
         Ok(Self {
             ticket,
             verified,
@@ -251,6 +181,88 @@ impl Prepared {
         })
     }
 }
+pub(crate) fn build_candidates(
+    input: &Propose,
+    before: &CellConfiguration,
+    c: &rx_process_contract::device_catalog::Catalog,
+) -> Result<(BTreeMap<Name, Candidate>, Vec<Issue>), String> {
+    let mut candidates = BTreeMap::new();
+    let mut issues = vec![];
+    for (id, s) in &input.bindings {
+        let intent = c
+            .operations
+            .get(&s.action)
+            .ok_or("selected device action absent")?
+            .clone();
+        if s.conditions.keys().collect::<BTreeSet<_>>() != c.condition_ids.iter().collect()
+            || s.handover_max_age_ns.0 == 0
+            || s.completion_postconditions.len() > 32
+        {
+            return Err("required device conditions or handover policy missing".into());
+        }
+        let old = before.steps.iter().find(|v| &v.id == id);
+        for condition in s.conditions.values().chain(&s.completion_postconditions) {
+            check_condition(condition, before, id, &mut issues)?;
+        }
+        if !before.hosts.contains(&s.host) {
+            issues.push(issue(
+                id,
+                "HOST_REGISTRATION_REQUIRED",
+                "Host is not in the current cell configuration",
+            ));
+        }
+        if intent.site_config_digest != before.site_config_digest {
+            issues.push(issue(
+                id,
+                "SITE_CONFIGURATION_REVIEW_REQUIRED",
+                "Device intent refers to a different site configuration",
+            ));
+        }
+        let completion = if let Some(table) = &c.outcomes {
+            CompletionRule::NativeOutcomes {
+                table: table.clone(),
+                postconditions: s.completion_postconditions.clone(),
+            }
+        } else {
+            issues.push(issue(
+                id,
+                "COMPLETION_UNOBSERVABLE",
+                "No native outcome table; explicit recovery/completion policy review is required",
+            ));
+            CompletionRule::Unobservable
+        };
+        let step = StepBinding {
+            id: id.clone(),
+            host: s.host.clone(),
+            intent,
+            predecessors: vec![],
+            conditions: s.conditions.values().cloned().collect(),
+            completion,
+            condition_ids: s.conditions.keys().cloned().collect(),
+            condition_revision: old.map_or(Ok(Counter(1)), |v| {
+                v.condition_revision.increment().map_err(|e| e.to_string())
+            })?,
+            handover_max_age_ns: s.handover_max_age_ns,
+        };
+        candidates.insert(
+            id.clone(),
+            Candidate {
+                action: s.action.clone(),
+                previous_step_digest: old
+                    .map(|v| {
+                        canonical::digest("RX-DRAFT-BINDING-STEP-v1", v).map_err(|e| e.to_string())
+                    })
+                    .transpose()?,
+                step,
+            },
+        );
+    }
+    if issues.len() > 128 {
+        return Err("too many unresolved binding conditions".into());
+    }
+    Ok((candidates, issues))
+}
+
 fn issue(binding: &Name, code: &str, detail: &str) -> Issue {
     Issue {
         binding: binding.clone(),

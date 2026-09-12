@@ -1,5 +1,8 @@
 //! Independently checked, signed software review evidence. Approval never creates run authority.
+mod devices;
 use crate::{CellConfiguration, Identity, package_intake::Registration};
+pub(crate) use devices::configuration as device_configuration;
+pub use devices::{DeviceContext, DeviceDependency};
 use rx_domain::{canonical, condition::Condition, types::*};
 use rx_package::{PackagePath, SignatureEnvelope, store::StoredPackage};
 use rx_process_contract::{
@@ -49,6 +52,8 @@ impl Authority {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Create {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub device_plans: Vec<rx_process_contract::compile_input::BindingPlanRef>,
     pub id: Id,
     pub intake: Id,
     pub cell: Name,
@@ -59,6 +64,8 @@ pub struct Create {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Job {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device_context: Option<DeviceContext>,
     pub request: Request,
     pub configuration: CellConfiguration,
     pub submitted_by: Name,
@@ -265,6 +272,26 @@ impl Validated {
         signature: SignatureEnvelope,
         resolved_bytes: Option<&[u8]>,
     ) -> Result<Self, String> {
+        Self::check_with_devices(
+            job,
+            stored,
+            authority,
+            report,
+            signature,
+            resolved_bytes,
+            vec![],
+        )
+    }
+    pub fn check_with_devices(
+        job: &Job,
+        stored: StoredPackage,
+        authority: &Authority,
+        report: Report,
+        signature: SignatureEnvelope,
+        resolved_bytes: Option<&[u8]>,
+        devices: Vec<crate::device_review::Validated>,
+    ) -> Result<Self, String> {
+        devices::verify_fresh(job, &stored, devices)?;
         report.validate()?;
         if report.request.digest()? != job.request.digest()?
             || authority.digest()? != job.request.verification_authority_digest
@@ -336,7 +363,7 @@ fn check_process(
     let input: CompileInput =
         canonical::decode_json(read("authoring/compile-input.json")?).map_err(|e| e.to_string())?;
     let source = input.validate()?;
-    if !input.device_sources.is_empty() {
+    if job.device_context.is_none() && !input.device_sources.is_empty() {
         return Err("device-plan compile input requires device-aware process review and Host binding validation".into());
     }
     rx_process_contract::source_link::verify(&source, process)?;
@@ -358,7 +385,8 @@ fn check_process(
     {
         return Err("signed source/bindings disagree with authoring input".into());
     }
-    let cfg = &job.configuration;
+    let candidate_configuration = devices::configuration(job, Some(&input))?;
+    let cfg = &candidate_configuration;
     let catalog = canonical::digest(
         "RX-DRAFT-BINDING-CATALOG-v1",
         &(
@@ -370,6 +398,10 @@ fn check_process(
         ),
     )
     .map_err(|e| e.to_string())?;
+    let catalog = job
+        .device_context
+        .as_ref()
+        .map_or(catalog, |c| c.catalog_digest);
     if input.cell != job.request.cell || input.catalog_digest != catalog {
         return Err("package belongs to a different cell or binding catalog".into());
     }
@@ -476,6 +508,8 @@ pub fn checker_digest() -> Digest {
         concat!(
             "RX-PLATFORM-PROCESS-CHECKER-v1\0",
             include_str!("process_review.rs"),
+            include_str!("process_review/devices.rs"),
+            include_str!("device_binding.rs"),
             include_str!("../../rx-process-contract/src/source_link.rs"),
             include_str!("../../rx-process-contract/src/validation.rs"),
             include_str!("../../rx-process-contract/src/source_validation.rs"),

@@ -182,13 +182,15 @@ impl Worker {
                 .map_err(|_| "store owner failed")?
                 .verify_owned(&object, &policy)
                 .map_err(|e| e.to_string())?;
-            let validated = rx_application::process_review::Validated::check(
+            let devices = worker.verify_process_devices(ticket.job(), &policy)?;
+            let validated = rx_application::process_review::Validated::check_with_devices(
                 ticket.job(),
                 stored,
                 &authority,
                 report,
                 signature,
                 resolved.as_deref(),
+                devices,
             )?;
             rx_application::process_review::Prepared::new(ticket, validated)
         })
@@ -227,13 +229,15 @@ impl Worker {
                 .map(rx_domain::canonical::bytes)
                 .transpose()
                 .map_err(|e| e.to_string())?;
-            let validated = rx_application::process_review::Validated::check(
+            let devices = worker.verify_process_devices(ticket.job(), &policy)?;
+            let validated = rx_application::process_review::Validated::check_with_devices(
                 ticket.job(),
                 stored,
                 &authority,
                 ticket.version().report.clone(),
                 ticket.version().signature.clone(),
                 resolved.as_deref(),
+                devices,
             )?;
             rx_application::process_review::PreparedDecision::approve(ticket, validated)
         })
@@ -362,3 +366,35 @@ impl Worker {
 }
 mod device_binding;
 mod device_review;
+
+impl Worker {
+    fn verify_process_devices(
+        &self,
+        job: &rx_application::process_review::Job,
+        policy: &rx_package::VerificationPolicy,
+    ) -> Result<Vec<rx_application::device_review::Validated>, String> {
+        let Some(context) = &job.device_context else {
+            return Ok(vec![]);
+        };
+        let authority = self.load_device_authority()?;
+        context
+            .dependencies
+            .iter()
+            .map(|d| {
+                let stored = self
+                    .store
+                    .lock()
+                    .map_err(|_| "store owner failed")?
+                    .verify_owned(&d.plan.definition.object, policy)
+                    .map_err(|e| e.to_string())?;
+                rx_application::device_review::Validated::check(
+                    &d.job,
+                    stored,
+                    &authority,
+                    d.version.report.clone(),
+                    d.version.signature.clone(),
+                )
+            })
+            .collect()
+    }
+}

@@ -163,7 +163,8 @@ pub(super) fn review(
         &r.id,
         "rx.process-review-decision.v1",
     )?;
-    if !process_review::context_matches(tx, meta, &job)?
+    if job.device_context.is_some()
+        || !process_review::context_matches(tx, meta, &job)?
         || v.checker_digest != crate::process_review::checker_digest()
         || !v.ready_for_software_approval
         || v.revision != r.revision

@@ -234,6 +234,11 @@ pub struct Prepared {
 }
 impl Prepared {
     pub fn new(ticket: Ticket, verified: Validated) -> Result<Self, String> {
+        if ticket.job.device_context.is_some() {
+            return Err(
+                "device-aware Host binding and operating-envelope application required".into(),
+            );
+        }
         if !verified.issues.is_empty()
             || !verified.report.issues.is_empty()
             || verified.report.digest()? != ticket.version.report_digest

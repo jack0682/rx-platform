@@ -39,23 +39,66 @@ pub(super) fn authority(tx: &mut dyn Transaction, meta: &Installation) -> Result
         None
     })
 }
+fn device_scope(actor: &Principal, job: &Job) -> Result<()> {
+    if job.device_context.as_ref().is_some_and(|c| {
+        c.required_cells()
+            .iter()
+            .any(|id| !actor.cells.contains(id))
+    }) {
+        return reject(Reject::Forbidden);
+    }
+    Ok(())
+}
+fn device_context_current(
+    tx: &mut dyn Transaction,
+    meta: &Installation,
+    job: &Job,
+) -> Result<bool> {
+    crate::process_review::device_configuration(job, None).map_err(StoreError::Integrity)?;
+    if let Some(context) = &job.device_context {
+        for d in &context.dependencies {
+            let plan = device_binding::read(tx, &d.plan.id, &job.request.cell)?;
+            if canonical::bytes(&plan).map_err(domain_error)?
+                != canonical::bytes(&d.plan).map_err(domain_error)?
+                || !device_binding::current(tx, &plan)?
+            {
+                return Ok(false);
+            }
+            let actual = match device_binding::approved(
+                tx,
+                meta,
+                &job.request.cell,
+                &plan.definition.input.review,
+            ) {
+                Ok(value) => value,
+                Err(StoreError::Rejected(_)) => return Ok(false),
+                Err(e) => return Err(e),
+            };
+            if canonical::bytes(&actual).map_err(domain_error)?
+                != canonical::bytes(&(&d.job, &d.version, &d.decision)).map_err(domain_error)?
+            {
+                return Ok(false);
+            }
+        }
+    }
+    Ok(true)
+}
 pub(super) fn context_matches(
     tx: &mut dyn Transaction,
     meta: &Installation,
     job: &Job,
 ) -> Result<bool> {
     let (_, cell): (_, Cell) = load(tx, "cell", &job.request.cell, CELL)?;
-    Ok(
-        package_intake::configuration_digest(&cell)? == job.request.configuration_digest
-            && canonical::digest("RX-PACKAGE-INTAKE-CELL-CONTEXT-v1", &job.configuration)
-                .map_err(domain_error)?
-                == job.request.configuration_digest
-            && authority(tx, meta)? == Some(job.request.verification_authority_digest)
-            && package_intake::current(tx, meta)?.is_some_and(|p| {
-                p.policy_fingerprint == job.request.package_policy_fingerprint
-                    && p.policy_file_digest == job.request.package_policy_file_digest
-            }),
-    )
+    Ok(device_context_current(tx, meta, job)?
+        && package_intake::configuration_digest(&cell)? == job.request.configuration_digest
+        && canonical::digest("RX-PACKAGE-INTAKE-CELL-CONTEXT-v1", &job.configuration)
+            .map_err(domain_error)?
+            == job.request.configuration_digest
+        && authority(tx, meta)? == Some(job.request.verification_authority_digest)
+        && package_intake::current(tx, meta)?.is_some_and(|p| {
+            p.policy_fingerprint == job.request.package_policy_fingerprint
+                && p.policy_file_digest == job.request.package_policy_file_digest
+        }))
 }
 pub(super) fn load_job(tx: &mut dyn Transaction, id: &Id, cell: &Name) -> Result<Job> {
     let (_, job): (_, Job) = load(tx, "processreviewjob", id, JOB)?;
@@ -65,6 +108,7 @@ pub(super) fn load_job(tx: &mut dyn Transaction, id: &Id, cell: &Name) -> Result
     if &job.request.id != id || &job.configuration.id != cell || job.request.validate().is_err() {
         return Err(StoreError::Integrity("review job identity differs".into()));
     }
+    crate::process_review::device_configuration(&job, None).map_err(StoreError::Integrity)?;
     Ok(job)
 }
 fn persist_artifact<T: Serialize>(
@@ -182,7 +226,8 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             lifecycle::require_serving(tx)?;
             let p = access(tx, identity, meta, &now, &input.cell)?;
             let (scope, fp) = request(meta, &p, "ProcessReview.Create", key_.as_str(), &input)?;
-            if let Some(old) = prior(tx, &scope, fp, JOB)? {
+            if let Some(old) = prior::<Job>(tx, &scope, fp, JOB)? {
+                device_scope(&p, &old)?;
                 return Ok(old);
             }
             let (_, receipt): (_, crate::package_intake::Receipt) = load(
@@ -209,16 +254,57 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             let authority = authority(tx, meta)?.ok_or(StoreError::Unavailable(
                 "process review authority not configured".into(),
             ))?;
+            let selected = draft_bindings::selected_catalog(
+                tx,
+                meta,
+                &cell.configuration,
+                &p,
+                &input.device_plans,
+            )?;
             if input.binding_selections.len() > 128
                 || input
                     .binding_selections
                     .values()
-                    .any(|id| !cell.configuration.steps.iter().any(|s| &s.id == id))
+                    .any(|id| !selected.steps.contains_key(id))
             {
                 return reject(Reject::InvalidInput);
             }
+            let device_context = if selected.view.device_plans.is_empty() {
+                None
+            } else {
+                let mut dependencies = vec![];
+                for reference in &selected.view.device_plans {
+                    let plan = device_binding::read(tx, &reference.id, &input.cell)?;
+                    let (job, version, decision) = device_binding::approved(
+                        tx,
+                        meta,
+                        &input.cell,
+                        &plan.definition.input.review,
+                    )?;
+                    dependencies.push(DeviceDependency {
+                        plan,
+                        job,
+                        version,
+                        decision,
+                    });
+                }
+                Some(DeviceContext {
+                    catalog_digest: selected.view.catalog_digest,
+                    dependencies,
+                })
+            };
+            let device_context_digest = device_context
+                .as_ref()
+                .map(DeviceContext::digest)
+                .transpose()
+                .map_err(StoreError::Invalid)?;
             let request_ = Request {
-                schema: name("rx.process-review-request.v1"),
+                device_context_digest,
+                schema: name(if device_context.is_some() {
+                    "rx.process-review-request.v2"
+                } else {
+                    "rx.process-review-request.v1"
+                }),
                 id: input.id.clone(),
                 intake: input.intake,
                 cell: input.cell,
@@ -232,12 +318,14 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             };
             request_.validate().map_err(StoreError::Invalid)?;
             let job = Job {
+                device_context,
                 request: request_,
                 configuration: cell.configuration,
                 submitted_by: receipt.submitted_by,
                 requested_by: p.id,
                 created_at: now,
             };
+            crate::process_review::device_configuration(&job, None).map_err(StoreError::Invalid)?;
             save(tx, "processreviewjob", &input.id, None, JOB, &job)?;
             event(tx, "rx.event.process-review-created.v1", &job)?;
             remember(tx, &scope, fp, JOB, &job)?;
@@ -256,11 +344,12 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             let now = clock.now();
             lifecycle::require_serving(tx)?;
             let p = access(tx, identity, meta, &now, &input.cell)?;
+            let job = load_job(tx, &input.review, &input.cell)?;
+            device_scope(&p, &job)?;
             let (scope, fp) = request(meta, &p, "ProcessReview.Report", key_.as_str(), &input)?;
             if let Some(old) = prior(tx, &scope, fp, VERSION)? {
                 return Ok(Preflight::Recorded(Box::new(old)));
             }
-            let job = load_job(tx, &input.review, &input.cell)?;
             if !context_matches(tx, meta, &job)?
                 || latest(tx, &input.review)?.map(|v| v.0) != input.expected
             {
@@ -288,6 +377,7 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             let now = clock.now();
             lifecycle::require_serving(tx)?;
             let p = access(tx, &t.identity, meta, &now, &t.input.cell)?;
+            device_scope(&p, &t.job)?;
             let (scope, fp) = request(meta, &p, "ProcessReview.Report", t.key.as_str(), &t.input)?;
             if let Some(old) = prior(tx, &scope, fp, VERSION)? {
                 return Ok(old);
@@ -377,8 +467,9 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
         let meta = &self.installation;
         let clock = &self.clock;
         self.repository.transact(|tx| {
-            access(tx, identity, meta, &clock.now(), cell)?;
+            let actor = access(tx, identity, meta, &clock.now(), cell)?;
             let job = load_job(tx, id, cell)?;
+            device_scope(&actor, &job)?;
             let current = latest(tx, id)?.map(|v| v.1);
             let latest_report_revision = current.as_ref().map(|v| v.revision);
             let is_latest = revision.is_none() || revision == latest_report_revision;
@@ -465,11 +556,12 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             if input.note.trim().is_empty() || input.note.chars().count() > 1000 {
                 return reject(Reject::InvalidInput);
             }
+            let job = load_job(tx, &input.review, &input.cell)?;
+            device_scope(&p, &job)?;
             let (scope, fp) = request(meta, &p, "ProcessReview.Decide", key_.as_str(), &input)?;
             if let Some(old) = prior(tx, &scope, fp, DECISION)? {
                 return Ok(DecisionPreflight::Recorded(Box::new(old)));
             }
-            let job = load_job(tx, &input.review, &input.cell)?;
             let (_, version) =
                 latest(tx, &input.review)?.ok_or(StoreError::Rejected(Reject::NotFound))?;
             if version.revision != input.report_revision
@@ -524,6 +616,7 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                 Role::Verifier,
                 false,
             )?;
+            device_scope(&p, &t.job)?;
             let (scope, fp) = request(meta, &p, "ProcessReview.Decide", t.key.as_str(), &t.input)?;
             if let Some(old) = prior(tx, &scope, fp, DECISION)? {
                 return Ok(old);
@@ -614,7 +707,7 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
         let meta = &self.installation;
         let clock = &self.clock;
         self.repository.transact(|tx| {
-            access(tx, identity, meta, &clock.now(), cell)?;
+            let actor = access(tx, identity, meta, &clock.now(), cell)?;
             let (_, receipt): (_, crate::package_intake::Receipt) = load(
                 tx,
                 "packageintakereceipt",
@@ -630,7 +723,8 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                 .map(|r| decode::<Job>(r, JOB))
                 .collect::<Result<Vec<_>>>()?;
             jobs.retain(|j| {
-                &j.request.cell == cell
+                device_scope(&actor, j).is_ok()
+                    && &j.request.cell == cell
                     && &j.request.intake == intake
                     && after.is_none_or(|id| &j.request.id > id)
             });

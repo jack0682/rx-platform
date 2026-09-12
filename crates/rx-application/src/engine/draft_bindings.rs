@@ -42,9 +42,9 @@ fn catalog(cell: &CellConfiguration) -> Result<Catalog> {
         candidates,
     })
 }
-struct SelectedCatalog {
-    view: Catalog,
-    steps: BTreeMap<Name, StepBinding>,
+pub(super) struct SelectedCatalog {
+    pub(super) view: Catalog,
+    pub(super) steps: BTreeMap<Name, StepBinding>,
     sources: BTreeMap<Name, BindingPlanRef>,
 }
 fn scope_access(actor: &Principal, cells: &[Name]) -> Result<()> {
@@ -53,7 +53,7 @@ fn scope_access(actor: &Principal, cells: &[Name]) -> Result<()> {
     }
     Ok(())
 }
-fn selected_catalog(
+pub(super) fn selected_catalog(
     tx: &mut dyn Transaction,
     meta: &Installation,
     cell: &CellConfiguration,

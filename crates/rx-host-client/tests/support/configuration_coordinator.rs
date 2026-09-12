@@ -133,6 +133,7 @@ fn prepare(
             admin,
             &id(),
             process_review::Create {
+                device_plans: vec![],
                 id: id(),
                 intake,
                 cell: cfg.id.clone(),
