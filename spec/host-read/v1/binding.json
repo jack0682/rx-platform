@@ -1,0 +1,11 @@
+{
+  "max_payload_bytes": 1000000,
+  "package": "rx.host.read.v1",
+  "schema": "rx.host-read-binding.v1",
+  "snapshot_schema": "rx.host-snapshot.v1",
+  "source_sha256": {
+    "crates/rx-domain/src/host_snapshot.rs": "3724691d369ab06bf6dbc30b71a8a25cb467291aed02e14bfd399ddb6cecc2f2",
+    "proto/rx/host/read/v1/read.proto": "66cfb6c5dde27063834398d11713006578cc83c9dfd7ec4e6f864b4f9bc7efc3",
+    "spec/host-read/v1/README.md": "e4487a9796708c75ab99926dedfd7640efaaabcf0264ed21e37abb24c7d23b2e"
+  }
+}

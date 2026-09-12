@@ -1,0 +1,6 @@
+{
+  "schema_hash_sha256": "66756d119140d436da477cce4331f34ef705900b83c338a870bdbe2ced78dd3b",
+  "manifest_file": "protocol_manifest.json",
+  "hashed_bytes": "RFC8785 JCS UTF-8, no trailing newline",
+  "validation_scope": "document artifact only; generated IDL/compiler interoperability not executed"
+}

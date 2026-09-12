@@ -1,0 +1,12 @@
+{
+  "max_payload_bytes": 1000000,
+  "observation_schema": "rx.host-qualification-observation.v1",
+  "package": "rx.host.qualification.v1",
+  "request_schema": "rx.host-qualification-request.v1",
+  "schema": "rx.host-qualification-binding.v1",
+  "source_sha256": {
+    "crates/rx-domain/src/host_qualification.rs": "3ef2c3110d9f02dbae8321d8b37a73c970a421f4809aef4a1a2f946eefe8eb9e",
+    "proto/rx/host/qualification/v1/qualification.proto": "71c0192b3684c5a73ae1b6499f78709cb088122ed7857ed5764475bda903f744",
+    "spec/host-qualification/v1/README.md": "948dd66b94eb1f147056acbdca8cf615f26aeb1a6e0310978432cbc826c3737a"
+  }
+}

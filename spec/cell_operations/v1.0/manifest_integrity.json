@@ -1,0 +1,6 @@
+{
+  "cell_manifest_sha256": "e0225c1e39b179f941d98f91daa94b387a6028e4e872b4499f20d63440d270c8",
+  "manifest_file": "protocol_manifest.json",
+  "encoding": "JCS UTF-8 without trailing newline",
+  "scope": "normative design documents, not generated-code or hardware conformance"
+}

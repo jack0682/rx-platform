@@ -1,0 +1,12 @@
+{
+  "max_payload_bytes": 1000000,
+  "package": "rx.executor.v1",
+  "schema": "rx.executor-read-binding.v1",
+  "snapshot_schema": "rx.execution-snapshot.v1",
+  "source_sha256": {
+    "crates/rx-process-contract/src/execution.rs": "13e8b52d15a19d8f8e7139b1a4ded50f6c1edcf0a39abe5aa24ab102cd187edd",
+    "crates/rx-process-contract/src/execution_validation.rs": "927081035f831b4c47c2ae7cc94e79b237d2495ec09c9e1a98dd0c706d7328b2",
+    "proto/rx/executor/v1/executor.proto": "66e51589302672ebb087c601486e30f2156cc3dcd09c731be8fec7ef70079218",
+    "spec/executor/v1/README.md": "9faf81bda60a2f155ae5d2dd20f7bec4e0ec57d6b7c2e149f473065aef6903fa"
+  }
+}

@@ -1,0 +1,23 @@
+BEGIN IMMEDIATE;
+CREATE TABLE entities (
+  key TEXT PRIMARY KEY NOT NULL,
+  revision INTEGER NOT NULL CHECK(revision > 0),
+  document BLOB NOT NULL
+) STRICT;
+CREATE TABLE requests (
+  scope BLOB PRIMARY KEY NOT NULL,
+  fingerprint BLOB NOT NULL CHECK(length(fingerprint)=32),
+  result BLOB NOT NULL
+) STRICT;
+CREATE TABLE events (
+  seq INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_id TEXT UNIQUE NOT NULL,
+  document BLOB NOT NULL
+) STRICT;
+CREATE TABLE outbox (
+  id TEXT PRIMARY KEY NOT NULL,
+  state TEXT NOT NULL CHECK(state IN ('NEW','EMIT_ENTERED','VOIDED')),
+  document BLOB NOT NULL
+) STRICT;
+PRAGMA user_version=1;
+COMMIT;

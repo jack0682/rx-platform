@@ -1,0 +1,13 @@
+BEGIN IMMEDIATE;
+CREATE TABLE control_events (
+  seq INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_id TEXT UNIQUE NOT NULL,
+  document BLOB NOT NULL
+) STRICT;
+CREATE TABLE control_entities (
+  key TEXT PRIMARY KEY NOT NULL,
+  revision INTEGER NOT NULL CHECK(revision > 0),
+  document BLOB NOT NULL
+) STRICT;
+PRAGMA user_version=3;
+COMMIT;

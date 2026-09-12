@@ -1,0 +1,183 @@
+//! Pinned, read-only Host bootstrap transport. No grant/Arm or native submission is hidden here.
+use super::*;
+use rx_domain::host_snapshot::HostSnapshot;
+use std::{io, sync::Arc};
+use tokio_rustls::{
+    TlsConnector,
+    rustls::{
+        self,
+        pki_types::{CertificateDer, PrivateKeyDer, ServerName, pem::PemObject},
+    },
+};
+impl HostClient {
+    pub async fn connect_pinned(
+        endpoint: TlsEndpoint,
+        host: Name,
+        hello: Hello,
+        server_fingerprint: Digest,
+    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        use sha2::Digest as _;
+        let origin: tonic::codegen::http::Uri = endpoint.uri.parse()?;
+        if origin.scheme_str() != Some("https") {
+            return Err("Host endpoint must use HTTPS".into());
+        }
+        // The custom connector returns an already authenticated TLS stream. Use an internal
+        // HTTP transport URI so tonic does not add a second TLS layer; keep the wire origin HTTPS.
+        let mut parts = origin.clone().into_parts();
+        parts.scheme = Some(tonic::codegen::http::uri::Scheme::HTTP);
+        let transport_uri = tonic::codegen::http::Uri::from_parts(parts)?;
+        let remote = tonic::transport::Endpoint::from(transport_uri)
+            .origin(origin)
+            .connect_timeout(std::time::Duration::from_secs(3))
+            .timeout(std::time::Duration::from_secs(3));
+        let mut roots = rustls::RootCertStore::empty();
+        for cert in CertificateDer::pem_slice_iter(&endpoint.server_ca_pem) {
+            roots.add(cert?)?;
+        }
+        let certificates = CertificateDer::pem_slice_iter(&endpoint.client_certificate_pem)
+            .collect::<Result<Vec<_>, _>>()?;
+        let key = PrivateKeyDer::from_pem_slice(&endpoint.client_key_pem)?;
+        let mut config = rustls::ClientConfig::builder()
+            .with_root_certificates(roots)
+            .with_client_auth_cert(certificates, key)?;
+        config.alpn_protocols = vec![b"h2".to_vec()];
+        let connector = TlsConnector::from(Arc::new(config));
+        let server_name = ServerName::try_from(endpoint.server_name)?;
+        let channel = remote
+            .connect_with_connector(tower::service_fn(move |uri: tonic::codegen::http::Uri| {
+                let connector = connector.clone();
+                let server_name = server_name.clone();
+                async move {
+                    let hostname = uri
+                        .host()
+                        .ok_or_else(|| io::Error::other("Host address missing"))?
+                        .trim_start_matches('[')
+                        .trim_end_matches(']');
+                    let socket =
+                        tokio::net::TcpStream::connect((hostname, uri.port_u16().unwrap_or(443)))
+                            .await?;
+                    let stream = connector.connect(server_name, socket).await?;
+                    let leaf = stream
+                        .get_ref()
+                        .1
+                        .peer_certificates()
+                        .and_then(|v| v.first())
+                        .ok_or_else(|| io::Error::other("Host certificate missing"))?;
+                    if Digest::from_bytes(sha2::Sha256::digest(leaf.as_ref()).into())
+                        != server_fingerprint
+                    {
+                        return Err(io::Error::other("Host certificate pin mismatch"));
+                    }
+                    Ok::<_, io::Error>(hyper_util::rt::TokioIo::new(stream))
+                }
+            }))
+            .await?;
+        Self::negotiate(channel, host, hello).await
+    }
+    pub async fn read_bootstrap(
+        &self,
+        cell_id: &Name,
+        sources: Vec<Name>,
+    ) -> Result<HostSnapshot, Status> {
+        use sha2::Digest as _;
+        let binding: serde_json::Value =
+            serde_json::from_slice(include_bytes!("../../../spec/host-read/v1/binding.json"))
+                .map_err(|_| Status::internal("Host binding"))?;
+        let binding_hash = sha2::Sha256::digest(
+            canonical::bytes(&binding).map_err(|_| Status::internal("Host binding bytes"))?,
+        )
+        .to_vec();
+        let reply = rx_protocol::host_read::host_read_service_client::HostReadServiceClient::new(
+            self.channel.clone(),
+        )
+        .inspect(rx_protocol::host_read::InspectHost {
+            call: Some(cell::CellCall {
+                context: Some(base::CallContext {
+                    session_id: self.session.session_id.clone(),
+                    call_id: new_id().to_string(),
+                    request_key: None,
+                    expected_revision: None,
+                }),
+                cell_id: cell_id.to_string(),
+                expected_cell_revision: None,
+            }),
+            source_ids: sources.iter().map(ToString::to_string).collect(),
+            binding_hash,
+        })
+        .await?
+        .into_inner();
+        let reference = reply
+            .reference
+            .ok_or_else(|| Status::data_loss("Host snapshot reference missing"))?;
+        if reply.payload.len() > 1_000_000
+            || reference.schema_id != "rx.host-snapshot.v1"
+            || reference.size_bytes != reply.payload.len() as u64
+            || reference.sha256 != sha2::Sha256::digest(&reply.payload).as_slice()
+        {
+            return Err(Status::data_loss("Host snapshot artifact mismatch"));
+        }
+        let snapshot: HostSnapshot = canonical::decode_json(&reply.payload)
+            .map_err(|_| Status::data_loss("Host snapshot decode"))?;
+        snapshot
+            .validate()
+            .map_err(|_| Status::data_loss("Host snapshot fields"))?;
+        if snapshot.host != self.host_id
+            || snapshot.cell != *cell_id
+            || (snapshot.sources_available
+                && snapshot
+                    .observations
+                    .iter()
+                    .map(|v| &v.source)
+                    .collect::<std::collections::BTreeSet<_>>()
+                    != sources.iter().collect())
+        {
+            return Err(Status::data_loss("Host snapshot identity/sources mismatch"));
+        }
+        Ok(snapshot)
+    }
+}
+
+impl HostClient {
+    pub async fn renew_bootstrap(
+        &self,
+        renewal: &app::host_link::Renewal,
+    ) -> Result<(app::Grant, Id), Status> {
+        let response = base::host_service_client::HostServiceClient::new(self.channel.clone())
+            .renew_grant(base::RenewGrant {
+                context: Some(self.context(&renewal.request)),
+                grant_id: renewal.grant.id.to_string(),
+                renew_seq: renewal.sequence.0,
+            })
+            .await?
+            .into_inner();
+        let mut resources = names(&response.resource_set)?;
+        resources.sort();
+        if response.grant_id != renewal.grant.id.as_str()
+            || response.owner_id != renewal.grant.owner.as_str()
+            || response.fence != renewal.grant.fence.0
+            || response.ttl_ms != renewal.grant.ttl_ms.0
+            || resources != renewal.grant.resources
+        {
+            return Err(Status::data_loss("grant renewal scope mismatch"));
+        }
+        let mut grant = renewal.grant.clone();
+        grant.valid_until = TimePoint {
+            clock_id: renewal.sent_at.clock_id.clone(),
+            ticks_ns: Counter(
+                renewal
+                    .sent_at
+                    .ticks_ns
+                    .0
+                    .checked_add(
+                        grant
+                            .ttl_ms
+                            .0
+                            .checked_mul(1_000_000)
+                            .ok_or_else(|| Status::data_loss("renewal TTL"))?,
+                    )
+                    .ok_or_else(|| Status::data_loss("renewal expiry"))?,
+            ),
+        };
+        Ok((grant, parse_id(&response.host_boot_id)?))
+    }
+}
