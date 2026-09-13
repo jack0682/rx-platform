@@ -1,0 +1,30 @@
+name: Bug report
+description: 재현 가능한 오류와 영향을 기록합니다.
+title: '[Bug] '
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: 문제와 기대 결과
+      description: 실제 동작과 기대 동작을 구분해주세요.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: 재현 절차
+      description: 최소 입력과 명령, 관찰한 결과를 적어주세요.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: 환경과 버전
+      description: 커밋, OS, 도구 버전 및 모의/실물 환경을 적어주세요.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: 검증 자료
+      description: 관련 로그를 첨부하되 토큰, 인증서, 비밀번호, 장비 접속정보는 제거해주세요. 취약점은 SECURITY.md의 비공개 채널을 이용해주세요.

@@ -39,7 +39,7 @@ GET /api/v1/package-intake/device-catalog?cell=CELL&id=INTAKE_ID
 
 ## 검증과 후속
 
-시험은 원본/대응표 불일치·경로/해시 변조·설치/환경/셀·ticket 만료, 원자 commit/응답 유실·권한·과거 receipt를 다룬다. 브라우저 통합은 실제 S JTC CLI와 외부 test signer가 만든 패키지를 실제 P Store/API로 반입하고, 다운로드한 선언이 signed package의 선언과 같은지 확인한다. 셀 구성 digest·운영 상태가 바뀌지 않는 것도 확인한다. 정확한 최종 결과는 [phase64 기록](../../../references/implementation/phase64_checks.json)에 둔다.
+시험은 원본/대응표 불일치·경로/해시 변조·설치/환경/셀·ticket 만료, 원자 commit/응답 유실·권한·과거 receipt를 다룬다. 브라우저 통합은 실제 S JTC CLI와 외부 test signer가 만든 패키지를 실제 P Store/API로 반입하고, 다운로드한 선언이 signed package의 선언과 같은지 확인한다. 셀 구성 digest·운영 상태가 바뀌지 않는 것도 확인한다. 정확한 최종 결과는 [phase64 기록](https://github.com/jack0682/rx_docs/blob/6111a7d1dcf33052f38c3e67c6585aec2b44df3c/references/implementation/phase64_checks.json)에 둔다.
 
 다음은 제조사 validator의 검증 근거와 독립 검토를 장비 package object·선언 digest에 묶고, 승인된 작업을 셀 구성 변경 계획으로 연결하는 단계다. 현재 이 화면은 선언 조회이며 장비 승인 화면을 완료한 것으로 세지 않는다. production JTC Authority/lifecycle/fencing과 실물 교정/지지·인수는 계속 미완료이며 첫 물리 셀은 NOT_COMMISSIONED다.
 

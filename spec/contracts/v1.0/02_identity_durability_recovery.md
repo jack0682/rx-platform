@@ -125,4 +125,4 @@ platform DB write가 실패하면 새로운 생산 admission/dispatch를 차단�
 
 미리 준비한 **현지 보호 반응**은 저장 불능·네트워크 단절 때도 동작해야 한다. 정지/hold/전이의 구체 내용은 profile과 장비 제어가 정한다. 이 경로는 journal commit을 기다리지 않는 I12의 명시적 예외다. 가능한 증거를 보존하고 연결 복원 후 결과 불명/기록 공백을 알린다. 소프트웨어 보호 반응은 인증된 안전 기능 자체가 아니다.
 
-정상 종료 순서는 `신규 작업 차단 → stream/작업 정리 요청 → 잔류 명령·소재 지지 확인 → torque 해제 가능 확인 → driver 종료 → journal flush`다. DHI destructor가 torque disable을 수행하므로 torque 유지가 필요한 상태에서 driver를 정상 종료하지 않는다. graceful shutdown timeout이 끝났다고 강제 종료를 자동 승인하지 않는다. 강제 kill·전원 상실의 물리 결과는 별도 장비 설계·검증 대상이다.
+정상 종료 순서는 `신규 작업 차단 → stream/작업 정리 요청 → 잔류 명령·소재 지지 확인 → torque 해제 가능 확인 → driver 종료 → journal flush`다. driver의 destructor가 torque disable을 수행하는 구성에서는 torque 유지가 필요한 상태에서 driver를 정상 종료하지 않는다. graceful shutdown timeout이 끝났다고 강제 종료를 자동 승인하지 않는다. 강제 kill·전원 상실의 물리 결과는 별도 장비 설계·검증 대상이다.

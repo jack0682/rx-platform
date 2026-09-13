@@ -39,4 +39,4 @@ phase71에서 [변경 제안·영향 검토·staging과 Host별 요구](DEVICE_C
 
 기존 UI는 API로 저장한 후보 binding과 v2 출처를 읽고 내려받을 수 있도록 decoder를 확장했다. 미해결/오래된 plan은 조작을 차단하고 이전 snapshot을 표시한다. 새로운 plan을 고르는 전용 UI는 후속이다.
 
-시험은 정확한 v2 출처·원자 저장/응답 유실·plan 갱신 후 export 거부, signed package/recompile에서의 출처 보존·변조 거부, legacy review의 명시적 거부를 다룬다. 실제 JTC package/report/impact review→P draft API→S compiler/unsigned package 연결을 실행했다. [phase68 증거](../../../references/implementation/phase68_checks.json)를 따른다. 첫 물리 셀은 NOT_COMMISSIONED다.
+시험은 정확한 v2 출처·원자 저장/응답 유실·plan 갱신 후 export 거부, signed package/recompile에서의 출처 보존·변조 거부, legacy review의 명시적 거부를 다룬다. 실제 JTC package/report/impact review→P draft API→S compiler/unsigned package 연결을 실행했다. [phase68 증거](https://github.com/jack0682/rx_docs/blob/6111a7d1dcf33052f38c3e67c6585aec2b44df3c/references/implementation/phase68_checks.json)를 따른다. 첫 물리 셀은 NOT_COMMISSIONED다.

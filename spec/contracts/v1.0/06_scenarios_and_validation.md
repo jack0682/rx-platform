@@ -25,10 +25,10 @@ P=platform, H=Host, E=executor, D=device다. P/H는 임의 시점에 중단될 �
 |---|---|---|
 | SC04 취소·완료 경합 | ① P cancel intent 저장 ② D는 이미 G 성공 또는 중단 중 ③ cancel 응답이 먼저 도착 ④ 뒤늦게 G 결과 도착 ⑤ profile와 correlation으로 양립성 평가 ⑥ quiescence/소재 인계 따로 확인 | cancel 접수만으로 CANCELED 아님. 성공 증거와 cancel 요청은 양립 가능; 모순되는 두 terminal native 결과면 DISPUTED. resource release는 별도. I04·08 |
 | SC06 관측 단절 | ① 마지막 sample seq=120 GOOD ② 관측 경로만 끊김, 명령 경로는 살아 있음 ③ H가 캐시를 반복 조회 ④ 원본 seq/age는 그대로 ⑤ freshness 만료 ⑥ readiness와 후조건 평가 차단 | 캐시 함수 호출 시각으로 age를 갱신하지 않음. 신규 증거 없는 RUNNING/UNKNOWN 왕복은 결과가 아님. I04·09 |
-| SC07 AS-02 mode | ① ReadyPose 요청 T1/H 기록 ② mode service 수락 ③ ModeStatus=ReadyPose 관측 ④ 실제 자세/안정 후조건은 아직 불충족 ⑤ 필요한 관측 대기 ⑥ 해당 rule 충족 또는 timeout/reconcile | 서비스 수락을 posture success로 매핑하는 대안 기각. mode-only rule과 자세 확보 rule은 다른 profile. I04·10 |
-| SC08 FFW/leader stream | ① session/grant/ticket OPEN ② seq 증가 sample 수용 ③ source 단절 또는 owner 변경 ④ ticket/lease/deadman 만료 ⑤ 새 sample 차단+현지 expiry reaction ⑥ 잔류 명령/지지 확인 후 인계 | 느린 buffer sample을 새 권한으로 재생하지 않음. 0속도 명령 접수와 실제 정지 분리. 휴머노이드에는 동일 torque-off 대입 금지. I05·06·08 |
-| SC09 DHI 기동·종료 | ① profile가 init/activate/destructor 효과 선언 ② 필요한 support/mode/calibration 확인 ③ lifecycle operation 기록 ④ native 초기화 또는 종료 진입 ⑤ shutdown 때 지지 인계 미확인 발견 ⑥ driver 정상 종료 보류 | healthcheck→activate 또는 shutdown timeout→torque-off 자동 승격 기각. 강제 power loss에 대한 별도 물리 보호는 후속 검증. I01·08·10·12 |
-| SC10 패키지만 존재 | ① own package 모두 포함 ② 실제 controller/mode 또는 교정 mismatch ③ admission finding 생성 ④ native dispatch 없음 ⑤ 필요한 profile/교정 수정 ⑥ 새 검증 뒤 admission | 기본 포함을 지원 완료·실행 허가로 간주하지 않음. 해당 자사 모델의 구현 의무는 유지. I10 |
+| SC07 장비 mode | ① ReadyPose 요청 T1/H 기록 ② mode service 수락 ③ ModeStatus=ReadyPose 관측 ④ 실제 자세/안정 후조건은 아직 불충족 ⑤ 필요한 관측 대기 ⑥ 해당 rule 충족 또는 timeout/reconcile | 서비스 수락을 posture success로 매핑하는 대안 기각. mode-only rule과 자세 확보 rule은 다른 profile. I04·10 |
+| SC08 이동/leader stream | ① session/grant/ticket OPEN ② seq 증가 sample 수용 ③ source 단절 또는 owner 변경 ④ ticket/lease/deadman 만료 ⑤ 새 sample 차단+현지 expiry reaction ⑥ 잔류 명령/지지 확인 후 인계 | 느린 buffer sample을 새 권한으로 재생하지 않음. 0속도 명령 접수와 실제 정지 분리. 휴머노이드에는 동일 torque-off 대입 금지. I05·06·08 |
+| SC09 driver 기동·종료 | ① profile가 init/activate/destructor 효과 선언 ② 필요한 support/mode/calibration 확인 ③ lifecycle operation 기록 ④ native 초기화 또는 종료 진입 ⑤ shutdown 때 지지 인계 미확인 발견 ⑥ driver 정상 종료 보류 | healthcheck→activate 또는 shutdown timeout→torque-off 자동 승격 기각. 강제 power loss에 대한 별도 물리 보호는 후속 검증. I01·08·10·12 |
+| SC10 패키지만 존재 | ① 선택 profile의 package 포함 ② 실제 controller/mode 또는 교정 mismatch ③ admission finding 생성 ④ native dispatch 없음 ⑤ 필요한 profile/교정 수정 ⑥ 새 검증 뒤 admission | 기본 포함을 지원 완료·실행 허가로 간주하지 않음. 실제 검증되지 않은 profile은 활성화하지 않음. I10 |
 | SC14 arm/gripper 공유 JTC | ① A가 arm trajectory 요청, resource=controller/J ② B가 gripper 요청, 같은 J ③ T1에서 충돌 검출 ④ B BUSY ⑤ A 결과와 자원 해제 확인 ⑥ B를 새로 허용하거나 애초 하나의 compound trajectory로 설계 | 논리 arm/gripper 이름이 다르니 병렬이라는 대안 기각. compound trajectory는 하나의 검증된 native goal이어야 함. I05·08 |
 
 ## 4. protocol·저장 trace
@@ -74,7 +74,7 @@ TLA+ 모델의 최소 변수는 `P_intents, P_outbox, P_results, H_receipts, H_e
 | V01 | Rust/C++ protobuf presence·unknown/duplicate field·enum·JCS/digest·schema hash golden fixture | 플랫폼+연동 | 양쪽 protocol 적합 주장 불가 |
 | V02 | 각 T1/T2/T3/Host SEND_ENTERED 전후 crash·응답 유실·중복·disk-full 주입 | 플랫폼+검증 | 재시작 보장 출시 불가 |
 | V03 | 단일 writer·fence·lease·renew replay·권한 인계·외부 native client 검출 | 연동+운영 | 자동 제어권 인계 불가 |
-| V04 | 각 own support ID/모드별 실제 driver/firmware/교정/관측/중단/기동·종료 시험 | 자사 플랫폼 담당 | 해당 profile 생산 admission 불가 |
+| V04 | 각 선택한 support ID/모드별 실제 driver/firmware/교정/관측/중단/기동·종료 시험 | 장비 연동 담당 | 해당 profile 생산 admission 불가 |
 | V05 | SC14 공유 JTC와 bus/공간 자원 충돌 확인 | 로봇·공정 | 독립 병렬 제어 허가 불가 |
 | V06 | PLC OEM I/O map·handshake·실제 feedback·boot·잔류 command·operator recovery 계약 | PLC/OEM+공정 | 문/척/가공 시작 binding 활성 불가 |
 | V07 | sample age·deadman·ticket·현지 정지/지지·CPU/GPU 부하·장치 분리 시험 | 제어+검증 | 제어 stream 성능/반응 보장 불가 |
@@ -97,4 +97,6 @@ TLA+ 모델의 최소 변수는 `P_intents, P_outbox, P_results, H_receipts, H_e
 | 다른 모델·mode·version 반례 | 04 및 본 문서 SC01–14/A–D | 문서 trace 검토 수행; 실험 아님 |
 | 대안·선택·제약·후속 검증 | 05, 조사 보고서, 본 문서 V01–11 | 근거·의무 작성 |
 
-최종 독자 검토와 수정 내역은 `review_record.md`에 남긴다. V01–V11은 현재 실행하지 않았으며 코드 착수 지시 이후의 구현/납품 검증 단계에 남는다.
+원래 독자 검토는 `review_record.md`의 고정 원문에 있다. V01–V11은 검증 의무이며 실제 이행 여부는 해당 구현 commit과 시험 근거를 별도로 대조한다. 이 문서 개정에서 전체 시험을 실행했다고 주장하지 않는다.
+
+현재 문서는 제조사 중립 문서 개정판이다. 표의 이전 설계 감사 결과는 [원래 문서](https://github.com/jack0682/rx_docs/blob/6111a7d1dcf33052f38c3e67c6585aec2b44df3c/docs/contracts/v1.0/06_scenarios_and_validation.md)의 당시 범위에만 해당하며 이번 개정의 실행 시험 결과가 아니다.

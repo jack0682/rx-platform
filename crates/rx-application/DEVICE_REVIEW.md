@@ -60,7 +60,7 @@ APPROVE는 Verifier 역할이며 package 제출자와 다른 계정이어야 한
 
 rx-platformd의 package_intake.device_review_authority에 pinned 파일을 지정한다. 없으면 장비 검토 Job을 생성할 수 없다. 개발 전용 local service에도 같은 선택 필드를 제공하지만 production trust로 기본 활성화하지 않는다. 검토 상태를 조작하는 브라우저 UI는 후속이며 이 단계의 통합 시험은 실제 API를 호출한다.
 
-실제 검증 결과는 [phase65 증거](../../../references/implementation/phase65_checks.json)를 따른다. 이 단계는 device validator의 코드/서명 공급망을 하드웨어 attestation한 것이 아니며, 신뢰 등록한 signer가 지정된 도구 결과에 서명한다는 경계다. JTC production Authority/lifecycle/fencing, 장비 검토 UI, 승인된 작업의 셀 구성 변경·qualification·물리 인수는 남아 있다. 첫 물리 셀은 NOT_COMMISSIONED다.
+실제 검증 결과는 [phase65 증거](https://github.com/jack0682/rx_docs/blob/6111a7d1dcf33052f38c3e67c6585aec2b44df3c/references/implementation/phase65_checks.json)를 따른다. 이 단계는 device validator의 코드/서명 공급망을 하드웨어 attestation한 것이 아니며, 신뢰 등록한 signer가 지정된 도구 결과에 서명한다는 경계다. JTC production Authority/lifecycle/fencing, 장비 검토 UI, 승인된 작업의 셀 구성 변경·qualification·물리 인수는 남아 있다. 첫 물리 셀은 NOT_COMMISSIONED다.
 
 phase66에서 [장비 검토 화면](https://github.com/jack0682/rx-solutions/blob/codex/initial-draft/apps/operator/DEVICE_REVIEW_UI.md)을 연결했다. 목록은 report 전체가 아닌 Summary50개를 반환하며, 상세/과거 버전 API는 유지한다. 기존 phase65 목록 소비자는 요약 형식으로 갱신해야 한다. UI는 현재 버전에 결합한 확인창과 기존 pending 요청 회수를 사용한다. 실제 구성 변경·물리 qualification은 계속 후속이다.
 

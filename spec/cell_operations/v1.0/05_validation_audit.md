@@ -1,6 +1,6 @@
-# 반례 검토·검증 의무·설계 완료 감사
+# 반례와 검증 의무
 
-상태: 설계 기준판 확정. 아래는 문서 사건 추적이며 제품 실행·형식 모델 검사·실물/안전기능 시험 결과가 아니다.
+상태: 2026-09-14 제조사 중립 문서 개정. 아래는 문서 사건 추적이며 제품 실행·형식 모델 검사·실물/안전기능 시험 결과가 아니다.
 
 ## 1. 확인할 불변식
 
@@ -57,8 +57,8 @@
 
 | 사례 | 사건 순서 | 계약에 따른 결론 |
 |---|---|---|
-| CO17 DHI 기동 반환 | ① guarded lifecycle 시작 ② source의 torque enable 내부 시도 실패/미확인 가능 ③ callback SUCCESS ④ 실제 torque/지지 evidence 부재 | 관련 조건 UNKNOWN, 생산 준비로 승격하지 않음. source의 성공 문자열을 완료 evidence로 과장하지 않음. OI02·16 |
-| CO18 Sapiens 정책 모드 | ① software startup 또는 ReadyPose/policy 요청 ② native command publishing 가능 ③ mode/status와 실제 자세/지지 따로 관측 | 출력 경계가 cell gate 밖이면 해당 binding 부적합. 기본 package는 포함하되 검증 전 자동 활성하지 않음. OI03·12·13 |
+| CO17 driver 기동 반환 | ① guarded lifecycle 시작 ② source의 torque enable 내부 시도 실패/미확인 가능 ③ callback SUCCESS ④ 실제 torque/지지 evidence 부재 | 관련 조건 UNKNOWN, 생산 준비로 승격하지 않음. source의 성공 문자열을 완료 evidence로 과장하지 않음. OI02·16 |
+| CO18 정책 기반 제어 모드 | ① software startup 또는 ReadyPose/policy 요청 ② native command publishing 가능 ③ mode/status와 실제 자세/지지 따로 관측 | 출력 경계가 cell gate 밖이면 해당 binding 부적합. 필요한 package가 설치되어도 검증 전 자동 활성하지 않음. OI03·12·13 |
 | CO19 바퀴형/족형(SR02) | ① 작업 중 base 위치 또는 전신/에너지 조건 상실 ② 필요한 local response ③ P/RPC가 없을 수 있음 ④ 현재 위치/지지/잔류 명령 재조정 | zero velocity/Damping/torque-off 이름만으로 정지·지지 보장 없음. 모델/모드/하중·환경별 기능 할당/검증 요구. OI12·14 |
 | CO20 안전 사본 GOOD | ① Mirror packet은 새 GOOD ② 실제 보호 기능이 해제/고장일 가능성 ③ 전체 기능 근거·현재 signal scope 검사 | 데이터 quality를 safety function 성능으로 채택하지 않음. 필요한 근거가 없으면 qualification/조건 불충족. OI02·12 |
 | CO21 저장 실패 | ① P/H 저장 불능 ② 새 일반 permit/production 전달 차단 ③ 현지 보호 필요 ④ 가능한 근거 보존/복원 | protection은 DB commit을 기다리지 않음. 기록 실패가 이전 물리 효과를 취소하지 않음. OI06·14 |
@@ -72,7 +72,7 @@
 
 ## 5. 원문·사실과 검증 범위
 
-CO17·18은 재확인한 source에서 나온 구체 반례다. CO14는 자사 controller inventory와 base SC14를 재사용한다. 나머지는 원문과 계약의 비동기/사람/변경 모델에 대입한 가상 사건 trace다. ‘trace에서 규칙상 어떤 결과여야 하는가’를 검토했으며 실제 장비가 그렇게 동작했다고 하지 않는다.
+CO17·18과 CO14의 원래 조사 출처는 [고정 원문](https://github.com/jack0682/rx_docs/blob/6111a7d1dcf33052f38c3e67c6585aec2b44df3c/docs/cell_operations/v1.0/05_validation_audit.md)에 보존한다. 현재 표는 해당 실패 유형을 제조사 중립적인 구성에 적용한 문서상 반례다. 새 driver source나 실물을 검증한 결과가 아니다. 나머지는 계약의 비동기/사람/변경 모델에 대입한 가상 사건 trace다. ‘trace에서 규칙상 어떤 결과여야 하는가’를 검토했으며 실제 장비가 그렇게 동작했다고 하지 않는다.
 
 정적 문서 검토에서 남기는 증거는 조건/전이/API/역할이 위 결론을 일관되게 요구하는지다. 실제 구현이 그 요구를 만족하는지는 아래 검증에서 확인해야 한다. 형식 모델 검사의 변수 후보는 cell/scope epoch, block sets, mandates, permits, cases, clearances, budgets, messages, native-entry count와 source validity다. Safety/liveness라는 형식 검증 용어를 기계 기능안전 인증과 혼동하지 않는다.
 
@@ -88,23 +88,14 @@ CO17·18은 재확인한 source에서 나온 구체 반례다. CO14는 자사 co
 | OV06 안전기능 | H01–H06에서 필요한 실제 sensor/logic/output/drive 경로·반응 시간·요구 성능/달성 근거·고장/환경/하중 | 제작팀·OEM·기능안전/현장 검증 |
 | OV07 사람 개입 | 접근/격리·인원·인수/외부 제한·reset/start·현장 UI의 사용자 검증 | 현장 운영·설치 |
 | OV08 변경/배포 | partial update·새 policy/tool·source/Host change·backup rollback, mandatory cell capability 우회 거부 | 릴리스·플랫폼·솔루션 |
-| OV09 자사 전 구성 | 13 지원 ID별 실제 mode·DHI/stream·기동/종료와 외부 직접 native 쓰기 경계 | 각 자사 플랫폼 담당 |
+| OV09 선택한 장비 구성 | 선택한 profile별 실제 mode·driver/stream·기동/종료와 외부 직접 native 쓰기 경계 | 각 장비 연동 담당 |
 | OV10 예산/실적 | PartAttempt vs activation/operation, 동일 key, 재시작 잔량, unknown/불량/취소 이력 | platform·제품 |
 | OV11 형식·적합성 | bounded 모델의 OI01–18, 구현의 대응 trace, schema/manifest와 생성 결과 적합성 | 계약·검증 |
 
-이 표는 미실행 검증 의무다. 실제 반복 횟수·판정 수치·시간을 입력 없이 채우지 않는다. 미충족된 현장 조합은 NOT_COMMISSIONED/REVALIDATION_REQUIRED로 차단한다. 공통 소프트웨어 설계의 문서 확정과 특정 납품의 기능/현장 검증을 구분한다.
+이 표는 검증 의무다. 실제 이행 여부는 해당 구현 commit과 실행 근거를 따로 대조하며 이번 문서 개정에서 재실행하지 않았다. 실제 반복 횟수·판정 수치·시간을 입력 없이 채우지 않는다. 미충족된 현장 조합은 NOT_COMMISSIONED/REVALIDATION_REQUIRED로 차단한다. 공통 소프트웨어 설계의 문서 확정과 특정 납품의 기능/현장 검증을 구분한다.
 
-## 7. 요구별 완료 감사
+## 7. 초판 감사와 현재 검토의 구분
 
-| 목표/선행 항목 | 완료를 증명할 문서상 증거 | 현재 상태 |
-|---|---|---|
-| N01 운전 조건·첫 셀 경계 | 01 §1–6의 역할·현재 사실/OPEN 입력·envelope·조건·지지 | 규범·반례·독립 검토 대조 완료 |
-| N02 작업자 개입·복구 | 03의 상태/행위/plan/SR01–03, CO02–12·16·19 | 규범·반례·독립 검토 대조 완료 |
-| N03 위험·기능·증거 | 01 H01–H06 및 SafetyFunctionSpec, 조사 S01–13 | 공통 요구/책임·빈칸 거부 규칙의 문서 검토 완료. 실제 구현 장치의 기능 할당/성능 미확정 |
-| N04 허가·무효화 | 02 mandate/permit/epoch/barrier/보류·철회·예산, OI01–18 | 규범·반례·독립 검토 대조 완료 |
-| N05 UI/binding/변경 | 03 변경 영향·사람 역할, 04 UI/Host/기본 자사 지원·호환 | 규범·반례·독립 검토 대조 완료 |
-| N06 기존 계약/반례/검증 | 04 필수 extension·typed events·원자성, CO01–28·OV01–11 | 규범·반례·독립 검토 대조 완료 |
-| 충분한 조사와 선택 이유 | 조사 보고서 S01–13, O-D01–11, current_state.json | 원문·source·대안 기록 완료 |
-| 독립 독자·무결성 | [독자 검토](review_record.md), [파일 검증](../../../references/cell_operation_research_2026-09-10/document_check.json) | 독립 검토 지적 보완·재검토 완료, 파일 검사 오류 없음 |
+N01–N06의 초판 완료 감사·독립 검토 결과는 [2026-09-10 당시 원문](https://github.com/jack0682/rx_docs/blob/6111a7d1dcf33052f38c3e67c6585aec2b44df3c/docs/cell_operations/v1.0/05_validation_audit.md)에 보존한다. 초판 감사에서 사용한 모델·지원 의무·source inventory를 현재 중립 구성의 검증 결과로 바꾸지 않는다.
 
-실제 장비 모델·신호·기구·현장 인원·위험등급·PLr·시간 수치는 목표의 공통 계약을 작성하기 위해 추측하지 않았다. 해당 입력이 있어야 허용된다는 계약과 담당/근거 요구를 확정한다. 이 감사는 그 조건부 제품 계약의 완성을 확인하며 실물 허가 발급을 완료로 표시하지 않는다.
+현재 개정은 장비 지원 정책과 적용 예시를 변경했고 공통 의미·허가·복구의 불변식과 검증 의무를 유지한다. [개정 기록](revision_2026-09-14.md)에 영향·반례·hash·호환 범위를 남겼다. 실제 모델·신호·기구·인원·보호 성능·시간 수치는 아직 확인되지 않은 profile의 입력으로 남기며 추측해 채우지 않는다.

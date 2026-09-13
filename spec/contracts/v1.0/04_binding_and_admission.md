@@ -1,12 +1,12 @@
 # 장비 binding과 실행 허용 조건
 
-규범: RX 계약 v1.0 · 입력: [자사 지원표](../../13_robotis_support_matrix.md), [이미지 명세](../../14_image_support_spec.md)
+규범: RX 계약 v1.0 · 입력: [장비 지원 정책](https://github.com/jack0682/rx_docs/blob/main/docs/13_device_support_matrix.md), [이미지 명세](https://github.com/jack0682/rx_docs/blob/main/docs/14_image_support_spec.md)
 
 ## 1. Profile의 역할
 
-공통 계약은 완료/불명/권한의 의미를 정의한다. BindingProfile은 그 의미를 **특정 모델·모드·controller·펌웨어·교정·native API**에 연결한다. ‘OMY 지원’ 같은 제품군 이름 하나로 서로 다른 controller 구성을 합치지 않는다.
+공통 계약은 완료/불명/권한의 의미를 정의한다. BindingProfile은 그 의미를 **특정 모델·모드·controller·펌웨어·교정·native API**에 연결한다. 제품군 이름 하나로 서로 다른 controller 구성을 합치지 않는다.
 
-Profile은 불변 artifact이며 내용 digest로 참조한다. 필수 항목이 없는 profile은 기본 지원 backlog에는 남지만 생산 admission에는 사용할 수 없다. 모델명만 맞고 controller/firmware/revision이 다르면 별도 profile이다.
+Profile은 불변 artifact이며 내용 digest로 참조한다. 필수 항목이 없는 profile은 해당 profile의 검증 backlog에 남으며 운영 admission에는 사용할 수 없다. 모델명만 맞고 controller/firmware/revision이 다르면 별도 profile이다.
 
 | 필수 항목 | 구체 내용 |
 |---|---|
@@ -26,31 +26,21 @@ Profile은 불변 artifact이며 내용 digest로 참조한다. 필수 항목이
 
 시간/속도/토크 값은 코드의 default를 그대로 안전 기준으로 승격하지 않는다. source에 있는 update rate도 실시간 성능 측정값이 아니다. CPU/GPU variant가 바뀌면 동일한 시간 조건을 다시 확인한다.
 
-## 2. 자사 모델·모드별 적용
+## 2. 장비 능력·제어 구성별 적용
 
-다음은 공통 계약에 대한 **필수 binding 설계 의무**다. 실제 지원 검증 완료표가 아니다. 아래 모든 ID는 solutions 기본 지원 범위이며 구현에서 선택 설치 대상으로 낮출 수 없다.
+다음은 binding을 작성할 때 검토할 **구성 유형**이다. 특정 장비가 현재 구현·검증됐다는 지원표가 아니며 모든 유형을 기본 이미지에 포함하라는 요구도 아니다. 실제 지원은 [장비 지원 정책](https://github.com/jack0682/rx_docs/blob/main/docs/13_device_support_matrix.md)에 따라 profile별로 선언한다.
 
-| 지원 ID·구성 | 계약 연결 | 필수 확인·제한 |
+| 구성 유형 | 계약 연결 | 필수 확인·제한 |
 |---|---|---|
-| OM-01 OpenManipulator-X, OM-02 OMX-F general | FINITE_ACTION trajectory + 별도 gripper action | 각 arm joint 수/순서, tool·그리퍼 결과, 취소/허용오차. 같은 physical bus 영향 별도 확인 |
-| OM-03 OMX-F AI follower | FINITE_ACTION, 필요 시 CONTROL_SESSION | gripper 포함 6개 JTC command entry. gripper를 독립 controller로 가정하지 않음 |
-| OM-04 OMX-L leader | CONTROL_SESSION + LIFECYCLE | gravity/trigger/command broadcaster, leader 관측→follower source 연결, torque·지지·deadman |
-| OM-05 OMY-3M general | FINITE_ACTION trajectory | 6 arm JTC, 별도 gripper API 있다고 추정 금지 |
-| OM-06 OMY-F3M general | FINITE_ACTION arm + 별도 gripper | 6 arm JTC와 gripper action. 장비 조합별 tool/calibration. 첫 현장 선정 완료를 뜻하지 않음 |
-| OM-07 OMY-F3M follower AI | FINITE_ACTION / CONTROL_SESSION | 7개 command entry의 공유 JTC, GPIO. SC14 직렬화/복합 trajectory 적용 |
-| OM-08 OMY-F3M leader AI | CONTROL_SESSION + LIFECYCLE | effort gravity+command broadcaster, leader 활성 자체의 토크 효과 |
-| OM-09 OMY-L100 leader | CONTROL_SESSION + LIFECYCLE | gravity/spring/broadcaster, follower 세션과 authority 인계 |
-| OM-10 L100 follower | FINITE_ACTION / CONTROL_SESSION | gripper 포함 7개 JTC entry, controller resource 공유 |
-| FFW-01 F1, FFW-02 BG2 rev2/3/4 | 양팔 FINITE_ACTION, head/lift 별도 자원 | 각 revision 별 profile. arm당 gripper 포함 8개 entry; 독립 gripper 덮어쓰기 금지 |
-| FFW-03 BH5 rev1 | arm trajectory, hand JTC/effort 모드, head/lift | arm당 7개, hand당 20 command entry를 20 독립 actuator로 해석하지 않음. controller switch는 MODE/LIFECYCLE 조건 |
-| FFW-04 F2, FFW-05 SG2 rev1 | arm/head/lift + base CONTROL_SESSION | steering 초기화와 robot manager mode, swerve base. 속도 수용은 위치·도킹 완료가 아님 |
-| FFW-06 SH5 rev1 | 위 구성 + hand/pressure observation | 손 mode·압력 데이터 provenance, 물체 지지/놓기 후조건 |
-| FFW-07 LG2 leader | 양쪽 CONTROL_SESSION + LIFECYCLE | 좌/우 serial 역할, spring/joystick/broadcaster, source 단절·소유권 변화 |
-| FFW-08 mobile-base component | CONTROL_SESSION | launch 인자·SG2 config·URDF·controller 정합성을 검증하기 전 실제 base 지원 완료 선언 금지 |
-| AS-01 AI Sapiens K1 rev1 | CONTROL_SESSION, LIFECYCLE | 23개 impedance command entry, positions/feedforward/kp/kd schema. joint-state/IMU/RC·UDP 역할·토크 효과 검증 |
-| AS-02 K1 sim2real | MODE_TRANSITION + CONTROL_SESSION | Damping/ReadyPose/Velocity mode API, warmup/권한·ONNX artifact. mode service 수락과 자세/안정 상태를 구별 |
+| 고정식 arm과 독립 gripper | FINITE_ACTION과 별도 gripper action | 실제 joint/channel 순서, tool·교정·완료·취소·허용오차, 공유 bus와 자원 |
+| arm/gripper가 같은 controller를 공유 | FINITE_ACTION 또는 CONTROL_SESSION | 논리 기능을 독립 controller로 가정하지 않음. SC14 직렬화 또는 검증된 복합 trajectory |
+| leader/follower 제어 | CONTROL_SESSION과 LIFECYCLE | source identity·deadman·권한 인계, 활성화의 토크 효과와 지지 |
+| 다중 arm·hand·head/lift | FINITE_ACTION과 MODE_TRANSITION | controller/resource 공유, command entry와 독립 actuator 수 구별 |
+| 이동 로봇 | CONTROL_SESSION, 별도 이동/도킹 작업 | 속도 접수와 위치 도착·제동·도킹 완료 구별, 주행·팔 동작의 결합 제약 |
+| 능동 균형 로봇 | MODE_TRANSITION, CONTROL_SESSION, LIFECYCLE | 자세·안정·접촉·지지·에너지, mode 수락과 물리 후조건 구별 |
+| 문·승강기·충전기·시설 제어기 | ENSURE_STATE 또는 FINITE_ACTION | 실제 상태 feedback, 사용 권한·점유·인계, 정지·재부팅·직접 조작과의 경합 |
 
-모든 DHI 계열은 현재 source의 `on_activate→start`, `stop`, destructor 효과를 검토해야 한다. 정상 종료에서 torque disable이 실행되는 경로가 있으므로 driver process를 죽이는 것을 일반적인 hold 구현으로 사용할 수 없다. 실제 배포 profile은 source commit뿐 아니라 xacro 조건과 init flag의 **전개된 값**도 포함한다.
+각 driver의 activate/start/stop/destructor가 장비에 미치는 효과를 검토해야 한다. 종료가 torque disable을 일으킬 수 있는 경우 driver process 종료를 일반적인 hold 구현으로 사용할 수 없다. 실제 배포 profile은 source commit뿐 아니라 launch 조건과 init flag의 **전개된 값**도 포함한다.
 
 ## 3. 대표 native 매핑
 
@@ -62,18 +52,18 @@ Profile은 불변 artifact이며 내용 digest로 참조한다. 필수 항목이
 
 **드라이버 기동/종료**: image health=software ready는 장비 activate 허가가 아니다. prepare에도 torque/initial pose 쓰기가 있으면 LIFECYCLE operation으로 먼저 허가한다. 초기화가 여러 native 효과로 구성되는 upstream 동작이라면 해당 sequence의 단계·결과·복구를 별도 기록 가능한 binding을 준비해야 한다. 이를 할 수 없으면 ‘1 native 호출=내부 여러 효과’의 명시적 복합 native 동작으로 선언하고 부분 결과 UNKNOWN을 허용하며 단계별 exactly-once를 주장하지 않는다.
 
-## 4. 레이저 열처리기와 타사 연결
+## 4. 시설·PLC·기존 운영 시스템 연결
 
-| 대상 | 현재 확인 | v1 연결과 미확정 |
+| 대상 | binding이 확인할 범위 | 선언하면 안 되는 가정 |
 |---|---|---|
-| 레이저 열처리 PLC | Mitsubishi Q03UDVCPU, QJ61BT11N, 아날로그 모듈·CC-Link I/O 자료 | C08 PLC binding. MC Ethernet 가능성은 실제 enable/IP/port/PLC program/주소 합의와 별개. Door/Chuck ENSURE_STATE 후보. 실제 신호 미확정 |
-| MCT-2 | Siemens SINUMERIK/SINAMICS 사진 | NCU 세부 모델·통신 옵션·OEM 프로그램 미확정. 다른 장비 FANUC HMI와 혼합하지 않음 |
-| UR5e, FR3 | 로봇 후보 | SDK/action 별 접수·결과·캐시·mode·중단 profile 필요. 첫 투입 모델 선정 완료 아님 |
-| 외부 미니컴퓨터 | 주 컴퓨터에 연결되는 부속 제어기 역할 | C08 장비로 능력/관측/boot/명령을 정의. 독립 RX worker·분산 Runtime으로 취급하지 않음 |
+| PLC와 설비 제어기 | 명령/결과 식별, 실제 feedback, 통신 설정·I/O 의미·boot·잔류 명령 | 통신 가능 또는 메모리 쓰기 성공을 작업 완료로 간주 |
+| 문·승강기·인계 장치 | 출입 권한, 점유·현재 상태·물품 지지, 사람의 직접 조작과 복구 | 기능 이름만으로 안전 interlock과 실제 센서 범위를 추정 |
+| 로봇 또는 기존 fleet manager | 접수·실행·결과 조회·취소·소유권 및 물품 인계 의미 | 상위 시스템의 accepted 응답을 최종 서비스 완료로 간주 |
+| 부속 제어기 | C08 장비의 능력·관측·boot·명령 경계 | 연결됐다는 이유로 독립 RX Runtime 또는 분산 권한이 검증됐다고 선언 |
 
-레이저 PLC의 제안 handshake는 `request_id/command/parameters → PLC accepted_id/busy/result_id/result_code + 실제 상태 feedback`이다. 이는 **OEM과 설계할 목표**이며 현재 PLC 프로그램에 존재한다고 주장하지 않는다. PLC가 숫자 ID를 쓸 수 없으면 edge/level handshake·배타 실행·ready/busy/done reset 순서를 문서화해야 한다. 그 경우 재시작 후 과거 결과 correlation이 제한될 수 있다.
+PLC의 가능한 handshake 예시는 `request_id/command/parameters → accepted_id/busy/result_id/result_code + 실제 상태 feedback`이다. 실제 장치가 제공하는 기능을 profile에서 확인해야 한다. 숫자 ID를 쓸 수 없으면 edge/level handshake·배타 실행·ready/busy/done reset 순서를 문서화한다. 그 경우 재시작 후 과거 결과 correlation이 제한될 수 있다.
 
-`door_closed`나 `chuck_clamped`는 명령 bit가 아니라 실제 상태 feedback이어야 한다. CPU 메모리 쓰기 성공, CC-Link 통신 정상, 출력 접점 ON은 물리 완료의 충분조건이 아니다. feedback의 실제 센서 범위·기계적 의미·진단 조건은 OEM 문서로 확인한다. 레이저/문/척의 안전 interlock은 RX DB 승인만으로 대체하지 않는다.
+`door_closed`나 `chuck_clamped`는 명령 bit가 아니라 실제 상태 feedback이어야 한다. 메모리 쓰기 성공, 통신 정상, 출력 접점 ON은 물리 완료의 충분조건이 아니다. feedback의 실제 센서 범위·기계적 의미·진단 조건은 해당 공급사 자료와 실물 검증으로 확인한다. 설비·문·그리퍼의 안전 interlock은 RX DB 승인만으로 대체하지 않는다.
 
 ## 5. admission과 운영 구성의 전이
 

@@ -94,7 +94,7 @@ GET은 context_current, fences_confirmed, approval_current, activation_authorize
 
 ## 검증과 한계
 
-[phase52 기록](../../../references/implementation/phase52_checks.json)을 따른다. 원장 시험은 준비/반입 원자성·응답 유실, 누락/위조/환경 불일치, NOT_RUN, 독립 검토/fence/변경 경합, version 교체와2 MiB 원본 분할/rollback/회수를 다룬다. 실제 P writer + 별도 S 모의 Host는 폴더 worker, 파일 손상/정책 변경 거부, 승인 후 Arm 거부, 재시작 후 승인 현재성 상실을 검사한다.
+[phase52 기록](https://github.com/jack0682/rx_docs/blob/6111a7d1dcf33052f38c3e67c6585aec2b44df3c/references/implementation/phase52_checks.json)을 따른다. 원장 시험은 준비/반입 원자성·응답 유실, 누락/위조/환경 불일치, NOT_RUN, 독립 검토/fence/변경 경합, version 교체와2 MiB 원본 분할/rollback/회수를 다룬다. 실제 P writer + 별도 S 모의 Host는 폴더 worker, 파일 손상/정책 변경 거부, 승인 후 Arm 거부, 재시작 후 승인 현재성 상실을 검사한다.
 
 실제 loopback HTTP 서버에서 보고서 반입·독립 승인·원본/상태 조회를 추가 검증했다. 단말 신원이 없는 Begin 요청은 거부했다. Begin의 양성 경로는 실제 writer의 등록 단말 identity로 검사했으며 신규 경로의 전용 terminal HTTPS/browser UI 시험은 후속이다. 여섯 영역의 실제 장비·공정·보호 시험을 수행했다고 주장하지 않는다.
 

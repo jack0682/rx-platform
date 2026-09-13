@@ -1,0 +1,91 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop, 'codex/**', 'feature/**', 'fix/**', 'docs/**', 'chore/**', 'release/**', 'hotfix/**', 'dependabot/**']
+  pull_request:
+    branches: [main, develop]
+    types: [opened, synchronize, reopened, edited, ready_for_review]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}-${{ github.ref == 'refs/heads/main' && github.run_id || 'latest' }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  repository:
+    name: Repository and GitFlow
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Test repository checks
+        run: python3 .github/test_repository.py
+      - name: Validate PR branch route
+        if: github.event_name == 'pull_request'
+        run: python3 tools/check_repository.py --event "$GITHUB_EVENT_PATH"
+      - name: Validate JSON, local links and contract integrity
+        run: python3 tools/check_repository.py
+      - name: Check contract baselines and SDK export regressions
+        run: |
+          python3 tools/check_contract_baselines.py
+          python3 tools/test_export_host_sdk.py
+
+  rust:
+    name: Rust
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      CARGO_TERM_COLOR: always
+      RUST_BACKTRACE: '1'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Install repository Rust toolchain
+        run: |
+          toolchain=$(python3 -c 'import tomllib; print(tomllib.load(open("rust-toolchain.toml", "rb"))["toolchain"]["channel"])')
+          rustup toolchain install "$toolchain" --profile minimal --component rustfmt --component clippy
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: ${{ runner.os }}-${{ runner.arch }}-rust-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml', 'sdk/source-lock.json') }}
+      - name: Check Rust formatting
+        run: cargo fmt --all -- --check
+      - name: Check Rust lints
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+      - name: Test Rust workspace
+        run: cargo test --workspace --all-features --locked
+
+  ci:
+    name: CI
+    if: ${{ always() }}
+    needs: [repository, rust]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require every validation job to pass
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          python3 - <<'PYTHON'
+          import json, os, sys
+          results = json.loads(os.environ["NEEDS"])
+          failed = {name: value["result"] for name, value in results.items() if value["result"] != "success"}
+          if failed:
+              sys.exit(f"Required validation jobs did not pass: {failed}")
+          print("All required validation jobs passed.")
+          PYTHON

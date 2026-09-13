@@ -161,7 +161,7 @@ HTTP 운영 API는 `/api/cell/v1/cells/{cell_id}` 아래 `inspect`, `evaluate`, 
 
 ## 9. 기존 두 이미지에 대한 영향
 
-rx-platform에는 셀 context/condition evaluator·mandate/permit/case/change·업무/API·같은 저장 transaction이 추가된다. rx-solutions에는 cell-aware Host gate, 장비별 조건/기능/복구 profile, UI와 현장 패키지가 추가된다. 자사 SDK·DHI·OpenManipulator·AI Worker·AI Sapiens 및 전이 의존성 기본 포함은 유지한다.
+rx-platform에는 셀 context/condition evaluator·mandate/permit/case/change·업무/API·같은 저장 transaction이 추가된다. rx-solutions에는 cell-aware Host gate, 장비별 조건/기능/복구 profile, UI와 현장 패키지가 추가된다. SDK·driver·전이 의존성은 선택한 장비 profile과 이미지 구성에 명시하며 특정 제조사 패키지를 공통 계약의 필수 포함 대상으로 삼지 않는다.
 
 base-only P/H/executor/UI와 cell-enforced release를 혼합해 동작시키지 않는다. base Operation.Submit/Workflow.StartRun 및 직접 Host native 쓰기를 외부에 공개해 셀 정책을 우회하는 경로는 거부한다. 필요한 base 읽기 API는 유지할 수 있으나 제어 원장 구독과 생산 시작은 새 계약을 명시적으로 지원해야 한다. 실제 SDK/ROS가 RX 밖의 쓰기를 받는다면 native authority/격리/안전기능의 검증 범위를 profile에서 해결해야 한다.
 

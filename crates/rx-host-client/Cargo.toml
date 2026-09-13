@@ -1,4 +1,5 @@
 [package]
+license.workspace = true
 name = "rx-host-client"
 version.workspace = true
 edition.workspace = true

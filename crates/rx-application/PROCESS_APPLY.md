@@ -69,4 +69,4 @@
 
 ## 검증
 
-[phase51 기록](../../../references/implementation/phase51_checks.json)에 범위별 결과를 보관한다. 원자성/응답 유실, 현재 proof 필요와 commit 중 통신 문제, 일부 Host 확인과 단말 회수, 실제 완료/인계된 과거 공정의 artifact·작업/생산 조회 및 새 Run binding을 검사한다. 별도 S 모의 Host와 실제 P writer의 mTLS 경로는 Host 응답 유실 회수 후 P 적용과 재시작 보존까지 검사한다. test-only 서명자와 모의 장비의 증거이며 실물 commissioning을 대신하지 않는다.
+[phase51 기록](https://github.com/jack0682/rx_docs/blob/6111a7d1dcf33052f38c3e67c6585aec2b44df3c/references/implementation/phase51_checks.json)에 범위별 결과를 보관한다. 원자성/응답 유실, 현재 proof 필요와 commit 중 통신 문제, 일부 Host 확인과 단말 회수, 실제 완료/인계된 과거 공정의 artifact·작업/생산 조회 및 새 Run binding을 검사한다. 별도 S 모의 Host와 실제 P writer의 mTLS 경로는 Host 응답 유실 회수 후 P 적용과 재시작 보존까지 검사한다. test-only 서명자와 모의 장비의 증거이며 실물 commissioning을 대신하지 않는다.

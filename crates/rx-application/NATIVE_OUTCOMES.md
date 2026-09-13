@@ -20,7 +20,7 @@ NOT_EXECUTED와 UNRESOLVED는 이 대응표로 만들 수 없다. native 송신 
 
 어떤 terminal 결과도 자원을 자동 해제하지 않는다. 제어/소재 지지 인계는 별도의 근거와 절차를 요구한다. 같은 작업에서 나중에 다른 terminal 결과가 확인되면 최초 outcome을 유지하고 integrity=DISPUTED, disposition=QUARANTINED 및 셀 차단을 기록한다. 결과가 불명인 상태에서 반복 조회가 있었다는 사실만으로 결론을 만들지 않는다.
 
-## ROBOTIS JTC의 S 선언
+## ROS JTC의 S 선언
 
 S의 `ros_jtc::Profile::outcome_table()`이 검증된 Profile digest와 완료 규칙을 결합한 표를 만든다. 코어에는 아래 schema 문자열이나 ROS 라이브러리 의존성을 넣지 않는다.
 
@@ -42,4 +42,4 @@ ROS의 접수/취소 요청 수용은 terminal result와 구별된다. ROS goal 
 
 시험은 표의 중복/한도/unknown 필드/불허 결론, 설치 시 profile/rule 일치, schema/code별 결과, 원본 보존·동일 batch·commit 전 실패/응답 유실·후기 모순, 현재 postcondition과 Hold를 다룬다. S 시험은 실제 JTC adapter의 native capture를 생성하고 같은 공유 타입으로 표를 해석한다. P와 S 각 경계의 검증이며 실제 로봇→전체 P 서비스의 통합 인수 시험은 아니다.
 
-JTC 장비 package authoring/factory 및 P 구성 반입을 자동 연결하는 resolver는 후속이다. 현재 생성 함수의 반환값을 검토된 구성에 연결해야 한다. 생산용 Authority, controller 세대별 fencing, native cancel 조정·복구, 물리 교정/지지와 첫 현장 인수도 남아 있다. [ROBOTIS adapter 경계](https://github.com/jack0682/rx-solutions/blob/codex/initial-draft/runtime/rx-host/ROBOTIS_JTC_ADAPTER.md)와 [phase62 검증 기록](../../../references/implementation/phase62_checks.json)을 함께 본다.
+JTC 장비 package authoring/factory 및 P 구성 반입을 자동 연결하는 resolver는 후속이다. 현재 생성 함수의 반환값을 검토된 구성에 연결해야 한다. 실제 장비 Authority, controller 세대별 fencing, native cancel 조정·복구, 물리 교정/지지와 현장 인수도 남아 있다. 현재 연동 경계는 [장비 Host 문서](https://github.com/jack0682/rx-solutions/tree/main/runtime/rx-host), 당시 시험 근거는 [초안 시점 기록](https://github.com/jack0682/rx_docs/blob/6111a7d1dcf33052f38c3e67c6585aec2b44df3c/references/implementation/phase62_checks.json)을 본다. 과거 시험을 현재 중립 구성의 검증 결과로 승격하지 않는다.

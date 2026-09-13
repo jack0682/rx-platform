@@ -105,4 +105,4 @@ ConnectionService는 인증된 HostClient/Identity를 dispatcher·observation re
 
 ## 검증 범위
 
-검증 결과는 [phase50 기록](../../../references/implementation/phase50_checks.json)에 둔다. 원장 시험은 commit 전 실패/commit 후 응답 유실, 권한 회수, 일부 Host만 확인, receipt 소실/모순, snapshot 변경 및 이전 unknown attempt를 다룬다. 실제 별도 S 모의 Host와의 mTLS 시험은 실제 P writer·검토/준비/Task를 사용해 응답 유실 후 worker 재생성·조회와 P 재시작의 보존을 검사한다. package/report 서명자는 test-only이며 실제 장비나 production signer 시험은 아니다.
+검증 결과는 [phase50 기록](https://github.com/jack0682/rx_docs/blob/6111a7d1dcf33052f38c3e67c6585aec2b44df3c/references/implementation/phase50_checks.json)에 둔다. 원장 시험은 commit 전 실패/commit 후 응답 유실, 권한 회수, 일부 Host만 확인, receipt 소실/모순, snapshot 변경 및 이전 unknown attempt를 다룬다. 실제 별도 S 모의 Host와의 mTLS 시험은 실제 P writer·검토/준비/Task를 사용해 응답 유실 후 worker 재생성·조회와 P 재시작의 보존을 검사한다. package/report 서명자는 test-only이며 실제 장비나 production signer 시험은 아니다.

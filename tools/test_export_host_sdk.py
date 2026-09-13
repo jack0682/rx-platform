@@ -7,6 +7,8 @@ with tempfile.TemporaryDirectory(prefix='rx-sdk-export-test-') as temporary:
     destination=Path(temporary)/'sdk'
     command=[sys.executable,str(root/'tools/export_host_sdk.py'),str(destination)]
     subprocess.run(command,check=True,capture_output=True)
+    for notice in ('LICENSE', 'NOTICE'):
+        assert (destination/notice).read_bytes()==(root/notice).read_bytes(), 'SDK licensing notice missing or altered'
     marker=destination/'old-generated-file.rs';marker.write_text('// obsolete generated source\n')
     lock=destination/'source-lock.json';metadata=json.loads(lock.read_text())
     metadata['files'][marker.name]=hashlib.sha256(marker.read_bytes()).hexdigest();lock.write_text(json.dumps(metadata))

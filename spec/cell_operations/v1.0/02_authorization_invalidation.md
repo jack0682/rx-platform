@@ -97,4 +97,4 @@ H의 cell_epoch와 scope별 epoch는 durable 최대값이며 후퇴할 수 없�
 
 permit purpose는 `PRODUCTION / SETUP / RECOVERY`다. SETUP도 자동으로 가벼운 동작이 되는 것은 아니며 해당 envelope의 조건·역할을 만족해야 한다. RECOVERY는 특정 case/절차/step에 결합하고 평상시 생산 조건과 다른 **명시된 대체 조건**을 적용한다. `ignore_safety=true`, 임의 guard 생략, 일반 저속이라는 이유의 자동 허용은 금지한다.
 
-읽기·기록 조회는 motion permit를 요구하지 않지만 접근권을 검사한다. 미리 할당된 현지 보호 반응은 저장/네트워크가 없어도 필요한 범위에서 동작한다. 이 예외를 생산·자동 재시작·임의 mode/torque 변경 경로로 확대하지 않는다. 정상 종료에서 지지 유지가 필요한데 DHI destructor를 호출하는 경로도 이 계약의 lifecycle 조건을 충족해야 한다.
+읽기·기록 조회는 motion permit를 요구하지 않지만 접근권을 검사한다. 미리 할당된 현지 보호 반응은 저장/네트워크가 없어도 필요한 범위에서 동작한다. 이 예외를 생산·자동 재시작·임의 mode/torque 변경 경로로 확대하지 않는다. 정상 종료에서 지지 유지가 필요한데 장비 driver의 destructor를 호출하는 경로도 이 계약의 lifecycle 조건을 충족해야 한다.
