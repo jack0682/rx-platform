@@ -23,7 +23,7 @@ class BranchPolicyTests(unittest.TestCase):
         }})
 
     def test_allowed_integration_routes(self):
-        for source in ("feature/dispatch", "fix/state", "docs/contracts", "chore/ci", "codex/work", "dependabot/cargo/update"):
+        for source in ("feature/dispatch", "fix/state", "docs/contracts", "chore/ci", "codex/work"):
             for fork in (False, True):
                 with self.subTest(source=source, fork=fork):
                     self.assertIsNone(self.route(source, "develop", fork))
@@ -46,6 +46,11 @@ class BranchPolicyTests(unittest.TestCase):
     def test_missing_payload_fails_closed(self):
         self.assertIsNotNone(CHECK.branch_error({}))
         self.assertIsNotNone(CHECK.branch_error({"pull_request": {}}))
+
+    def test_dependabot_exception_requires_repository_owned_branch(self):
+        for target in ("main", "develop"):
+            self.assertIsNone(self.route("dependabot/cargo/update", target))
+            self.assertIsNotNone(self.route("dependabot/cargo/update", target, fork=True))
 
     def test_shell_syntax_is_only_data(self):
         self.assertIsNone(self.route("feature/$(exit 99)", "develop"))
