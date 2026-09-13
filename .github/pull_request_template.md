@@ -1,16 +1,18 @@
-## Problem and outcome
+## Problem and resulting behavior
 
-Describe the problem being solved and what changes after this PR.
+Describe the concrete problem and what changes for a user or caller.
 
 ## Validation
 
-List the checks you actually ran and their results. Distinguish any physical equipment, ROS or cross-repository tests that were not performed.
+List checks actually run and their results. State any physical, ROS, container or cross-repository validation still needed.
 
 ## Related changes
 
-Link related issues and PRs in other RX repositories. For contract, manifest or SDK changes, explain their impact and how the repositories are synchronized.
+Link issues and related RX pull requests. For contracts, manifests or SDK changes, describe compatibility impact and synchronization.
 
-- [ ] The target branch follows the GitFlow routes in `CONTRIBUTING.md`.
-- [ ] I described changes affecting failure, recovery and authority boundaries, together with their validation scope.
-- [ ] No secrets or equipment connection details are included.
-- [ ] I have the right to contribute this code and have checked Apache-2.0 and applicable third-party notices.
+- [ ] The target follows the GitFlow routes in CONTRIBUTING.md.
+- [ ] Every commit has the author's DCO signoff and a verified OpenPGP signature.
+- [ ] CI and DCO will be checked on the current PR revision before merging.
+- [ ] Authority, failure and recovery impacts are explained where relevant.
+- [ ] No credentials, local assistant files or equipment connection details are included.
+- [ ] Contribution rights, Apache-2.0 and relevant third-party notices are respected.
