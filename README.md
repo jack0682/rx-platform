@@ -4,7 +4,7 @@ Rust 기반 RX core·application·저장·전송·설치복원 도구. 전체 �
 
 `rx-domain`은 순수 계약 의미와 판단을 소유한다. ROS·BT·SQLite·HTTP 의존을 두지 않는다. 실제 I/O와 저장 원자성은 바깥 adapter가 구현한다.
 
-현재는 구현 중이다. 지원 완료·현장 운전 가능 상태를 의미하지 않는다. 전체 목표와 상태는 [구현 기록](https://github.com/jack0682/rx_docs/tree/codex/initial-draft/docs/implementation)을 따른다. 장비·ROS·공정·운영 앱은 [rx-solutions](https://github.com/jack0682/rx-solutions)에 둔다.
+**구현 초안 v0.1을 2026-09-13에 마감했다.** 검증된 phase80 런타임을 인계하며 지원 완료·현장 운전 가능 상태를 뜻하지 않는다. [초안 인계·핵심 미결](https://github.com/jack0682/rx_docs/blob/codex/initial-draft/docs/implementation/draft_handoff.md)을 먼저 확인한다. 미검증 조사 처분은 `codex/investigation-wip`에 별도 보존했다. 전체 목표와 상태는 [구현 기록](https://github.com/jack0682/rx_docs/tree/codex/initial-draft/docs/implementation)을 따른다. 장비·ROS·공정·운영 앱은 [rx-solutions](https://github.com/jack0682/rx-solutions)에 둔다.
 
 로컬 실행 입구와 인증/HTTP 경계는 [rx-api](crates/rx-api/README.md)에 정리했다. `rx-platform-local`은 실제 writer/SQLite를 사용하는 개발 서비스이며 Host/장비 launcher가 없는 loopback 전용이다.
 
