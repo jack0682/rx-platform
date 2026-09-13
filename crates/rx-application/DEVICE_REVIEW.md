@@ -1,16 +1,16 @@
-# 장비 패키지 소프트웨어 검증·독립 검토
+# Device package software verification and independent review
 
-phase65. 반입한 package object와 공통 device catalog에 대해 검증 요청·서명 보고서·독립 검토 이력을 남긴다. 승인 scope는 `DEVICE_PACKAGE_SOFTWARE`다. 교정·실제 제어권·물리 거동의 qualification이나 셀 구성 적용/운전 활성화를 만들지 않는다.
+phase65. Record verification requests, signed reports and independent review history for imported package objects and common device catalogs. Approval scope is `DEVICE_PACKAGE_SOFTWARE`. It does not create qualification for calibration, actual control authority or physical behavior, nor cell configuration application/operating activation.
 
-## 하나의 검토 대상
+## One review target
 
-P가 만든 Request는 review/intake ID, 설치·셀, package manifest/signature digest, 정규화 catalog ArtifactRef, 현재 구성 digest, 반입 정책 fingerprint·원본 파일 digest, 장비 검증 authority digest를 고정한다. Job에는 현재 Store owner/registration generation도 보관한다.
+The Request created by P fixes review/intake ID, installation/cell, package manifest/signature digest, canonicalized catalog ArtifactRef, current configuration digest, intake-policy fingerprint/source-file digest and device verification authority digest. The Job also preserves the current Store owner/registration generation.
 
-Create는 현재 Engineer/Verifier가 수행하며 반입 당시 구성과 현재 구성이 같아야 한다. 구성이 바뀌었다면 원본을 현재 구성 문맥으로 다시 반입한다. 같은 request key의 결과 회수는 현재 신원·역할·셀 확인 후 원래 Job을 돌려준다. 같은 review ID를 다른 내용으로 다시 저장할 수 없다.
+Create is performed by a current Engineer/Verifier, and the configuration at intake must match the current configuration. If configuration changed, re-intake the source in the current configuration context. Recovering a result with the same request key returns the original Job after checking current identity/role/cell. The same review ID cannot be stored again with different content.
 
-## 검증 도구의 실제 검사
+## Actual checks by the verification tool
 
-`rx-device-package`는 다음 명령을 제공한다.
+`rx-device-package` provides these commands.
 
 ```text
 rx-device-package validator-identity
@@ -18,50 +18,50 @@ rx-device-package review PACKAGE POLICY REQUEST OUT_DIRECTORY
 rx-device-package review-signing-request REPORT KEY_ID OUT_FILE
 ```
 
-현재 공통 catalog가 있는 DEVICE_REFERENCE 패키지에 대해 세 검사를 수행한다.
+It currently performs three checks on DEVICE_REFERENCE packages with a common catalog.
 
-| 검사 | 실제 수행 |
+| Check | Actual work |
 |---|---|
-| CONTENT_SIGNATURE | 공통 verifier로 서명·publisher/권한·계약/target·payload·asset 검사 |
-| DEVICE_SOURCE_CONSISTENCY | S의 실제 장비 decoder로 assembly/profile/model/release/operations/outcomes/catalog 재대조 |
-| CATALOG_REQUEST_BINDING | 요청의 package/catalog·설치/셀과 실제 선언의 상관 확인 |
+| CONTENT_SIGNATURE | Common verifier checks signature/publisher/permissions/contracts/target/payload/assets |
+| DEVICE_SOURCE_CONSISTENCY | S's actual device decoder rechecks assembly/profile/model/release/operations/outcomes/catalog |
+| CATALOG_REQUEST_BINDING | Check correlations between request package/catalog/installation/cell and the actual declaration |
 
-서명/요청의 근본 상관이 틀리면 도구는 보고서 생성 자체를 거부한다. 신뢰할 원본을 취득했으나 장비 decoder가 실패하면 실패 check와 제한된 issue를 포함한 보고서를 만든다. 세 검사 모두 PASSED이고 issue가 없어야 소프트웨어 승인 후보가 된다.
+If fundamental signature/request correlations are wrong, the tool refuses to create a report at all. If trusted sources were acquired but the device decoder fails, it produces a report containing a failed check and bounded issues. All three checks must be PASSED with no issues to become a software approval candidate.
 
-보고서는 `rx.device-verification-report.v1`이며 scope enum은 DEVICE_PACKAGE_SOFTWARE만 표현한다. 물리 qualification scope나 누락된 check를 성공으로 역직렬화하지 않는다. Report는 최대128KiB/32 issue이며 원래 요청 전체를 포함한다. 도구는 개인키를 읽거나 서명 요청을 외부로 보내지 않는다.
+The report is `rx.device-verification-report.v1`, and its scope enum represents only DEVICE_PACKAGE_SOFTWARE. Physical qualification scopes or missing checks are not deserialized as success. Report is limited to 128KiB/32 issues and includes the complete original request. The tool does not read private keys or send signing requests externally.
 
-반입 정책과 검증 도구의 추가 취득 한도는 구별한다. 요청에는 P가 실제 사용한 정책 fingerprint를 유지한다. S는 동일 정책의 키/권한/target/asset을 사용하면서 최대8 payload·2MiB라는 더 작은 취득 한도를 적용한다. 더 작은 한도를 적용했다고 반입 정책의 식별자를 바꾸거나 요청의 fingerprint 대조를 생략하지 않는다. validator_policy_file_digest는 S가 읽은 원래 정책 파일의 hash다.
+Intake policy is distinct from the verification tool's additional acquisition limits. The request preserves the policy fingerprint actually used by P. S uses the same policy's keys/permissions/target/assets while applying smaller acquisition limits of 8 payloads/2MiB. Applying smaller limits does not change intake-policy identity or bypass request fingerprint comparison. validator_policy_file_digest is the hash of the original policy file read by S.
 
-보고서 서명 메시지는 `RX-DEVICE-VERIFICATION-REPORT-v1` 도메인, key ID의 canonical bytes, 보고서 canonical bytes를 결합한다. process 보고서나 package manifest의 서명을 재사용하지 않는다. 외부 signer는 signing request의 hex를 실제 bytes로 복원해 Ed25519 서명하고, 기존 SignatureEnvelope 형식의 verification.sig.json을 제공한다.
+The report signing message combines the `RX-DEVICE-VERIFICATION-REPORT-v1` domain, canonical key ID bytes and canonical report bytes. It does not reuse process-report or package-manifest signatures. The external signer decodes the signing request's hex into actual bytes, signs with Ed25519 and supplies verification.sig.json in the existing SignatureEnvelope format.
 
-## P 저장과 승인
+## P storage and approval
 
-장비 검증 authority는 process authority와 별도 설정 파일이다. schema는 `rx.device-verification-authority.v1`이며 key ID/public key별 허용 validator digest를 명시한다. 파일 pin·의미 digest를 시작 때 확인하고 report/approval worker가 다시 읽는다. 패키지가 자기 검증 키를 설치할 수 없다.
+Device verification authority uses a separate configuration file from process authority. Its schema is `rx.device-verification-authority.v1`, with allowed validator digests declared for each key ID/public key. File pins and semantic digest are checked at startup, and report/approval workers reread the file. A package cannot install its own verification key.
 
-P worker는 등록된 Store에서 원본 package를 현재 정책으로 재검증하고, 보고서 요청·catalog bytes·검증 signer/validator를 확인한다. 파일/암호 작업은 기존 단일 semaphore의 bounded worker에서 수행한다. 그 결과는 역직렬화할 수 없는 Prepared token으로 writer에 전달한다.
+The P worker revalidates the original package from the registered Store under current policy and checks report request/catalog bytes/verification signer/validator. File/cryptographic work runs in the existing bounded worker under a single semaphore. Its result is passed to the writer as a Prepared token that cannot be deserialized.
 
-writer는 현재 역할·셀·구성/registration/authority·boot/30초 ticket과 expected revision을 다시 검사한다. 보고서/서명/버전 digest·history·사건·동일 key 결과를 한 transaction에 기록한다. 새 보고서 버전은 이전 승인과 자동으로 연결되지 않는다. 과거 버전은 읽을 수 있다.
+The writer rechecks current role/cell/configuration/registration/authority/boot/30-second ticket and expected revision. It records report/signature/version digest/history/event/same-key result in one transaction. A new report version is not automatically linked to an earlier approval. Historical versions remain readable.
 
-APPROVE는 Verifier 역할이며 package 제출자와 다른 계정이어야 한다. 정확한 최신 report revision/review digest, 현재 checker digest와 모든 소프트웨어 check 통과를 요구한다. 승인 직전에 worker가 package·정책·authority·서명을 다시 검증하며, writer commit 직전에도 같은 문맥인지 확인한다. 도중 정책/보고서/역할이 바뀌면 승인하지 않는다. REJECT는 최신 대상을 명시하면 현재 authority가 철회된 상황에서도 기록할 수 있다.
+APPROVE requires the Verifier role and an account other than the package submitter. It requires the exact latest report revision/review digest, current checker digest and all software checks passing. Immediately before approval, the worker revalidates package/policy/authority/signature; immediately before writer commit, the same context is checked again. Approval does not proceed if policy/report/role changes in between. REJECT can be recorded even after current authority is revoked, provided the latest target is explicitly identified.
 
-결정과 history·event·request-key 결과는 원자 기록한다. 응답 유실 후 같은 요청은 원래 결정을 회수한다. 그 뒤 정책이 철회되었을 때 과거 결정을 회수했다고 현재 승인을 복원하지 않는다. 조회의 approval_matches_current_review는 현재 등록된 문맥·최신 보고서와의 일치이고, 실제 파일을 방금 재검증했다는 뜻은 아니다. 후속 구성 적용은 별도의 현재 원본 검증을 요구해야 한다.
+Decision, history/event/request-key result are recorded atomically. After a lost response, the same request recovers the original decision. If policy is subsequently revoked, recovering a historical decision does not restore current approval. A read's approval_matches_current_review means agreement with currently registered context/latest report, not that actual files were just revalidated. Subsequent configuration application must require separate current-source validation.
 
-## API·배포 경계
+## API and deployment boundary
 
-| 경로 | 기능 |
+| Path | Function |
 |---|---|
-| POST /api/v1/device-reviews | Job과 검증 요청 생성 |
-| GET /api/v1/device-reviews?cell=…&intake=… | 50개씩 조회·다음 cursor |
-| GET /api/v1/device-review?cell=…&id=…&revision=… | 최신 또는 과거 보고서/결정/현재성 |
-| POST /api/v1/device-review/reports | 파일 경로·report digest·expected revision으로 반입 |
-| POST /api/v1/device-review/decisions | 정확한 버전 승인/반려 |
+| POST /api/v1/device-reviews | Create Job and verification request |
+| GET /api/v1/device-reviews?cell=…&intake=… | Read pages of 50 with next cursor |
+| GET /api/v1/device-review?cell=…&id=…&revision=… | Latest or historical report/decision/currentness |
+| POST /api/v1/device-review/reports | Intake using file path/report digest/expected revision |
+| POST /api/v1/device-review/decisions | Approve/reject an exact version |
 
-모든 mutation은 기존 request_key wrapper와 현재 인증을 사용한다. HTTP와 단말 HTTPS는 같은 application을 호출한다. 새 gRPC 서비스나 frozen wire 계약은 추가하지 않았다. package-intake-context에는 별도의 device_review_authority_digest를 제공한다.
+All mutations use the existing request_key wrapper and current authentication. HTTP and terminal HTTPS invoke the same application. No new gRPC service or frozen wire contract was added. package-intake-context supplies a separate device_review_authority_digest.
 
-rx-platformd의 package_intake.device_review_authority에 pinned 파일을 지정한다. 없으면 장비 검토 Job을 생성할 수 없다. 개발 전용 local service에도 같은 선택 필드를 제공하지만 production trust로 기본 활성화하지 않는다. 검토 상태를 조작하는 브라우저 UI는 후속이며 이 단계의 통합 시험은 실제 API를 호출한다.
+Specify a pinned file in rx-platformd's package_intake.device_review_authority. Without one, device review Jobs cannot be created. The development-only local service has the same optional field, but it is not enabled as production trust by default. Browser UI for changing review state is follow-up work; integration tests in this stage invoke actual APIs.
 
-실제 검증 결과는 [phase65 증거](https://github.com/jack0682/rx_docs/blob/6111a7d1dcf33052f38c3e67c6585aec2b44df3c/references/implementation/phase65_checks.json)를 따른다. 이 단계는 device validator의 코드/서명 공급망을 하드웨어 attestation한 것이 아니며, 신뢰 등록한 signer가 지정된 도구 결과에 서명한다는 경계다. JTC production Authority/lifecycle/fencing, 장비 검토 UI, 승인된 작업의 셀 구성 변경·qualification·물리 인수는 남아 있다. 첫 물리 셀은 NOT_COMMISSIONED다.
+Actual validation results follow the [phase65 evidence](https://github.com/jack0682/rx_docs/blob/6111a7d1dcf33052f38c3e67c6585aec2b44df3c/references/implementation/phase65_checks.json). This stage does not hardware-attest the device validator's code/signing supply chain; its trust boundary is that a registered trusted signer signs the designated tool's results. JTC production Authority/lifecycle/fencing, device review UI, cell configuration changes from approved actions, qualification and physical acceptance remain outstanding. The first physical cell is NOT_COMMISSIONED.
 
-phase66에서 [장비 검토 화면](https://github.com/jack0682/rx-solutions/blob/codex/initial-draft/apps/operator/DEVICE_REVIEW_UI.md)을 연결했다. 목록은 report 전체가 아닌 Summary50개를 반환하며, 상세/과거 버전 API는 유지한다. 기존 phase65 목록 소비자는 요약 형식으로 갱신해야 한다. UI는 현재 버전에 결합한 확인창과 기존 pending 요청 회수를 사용한다. 실제 구성 변경·물리 qualification은 계속 후속이다.
+phase66 connected the [device review UI](https://github.com/jack0682/rx-solutions/blob/codex/initial-draft/apps/operator/DEVICE_REVIEW_UI.md). Lists return 50 Summaries instead of complete reports; detail/historical-version APIs remain available. Existing phase65 list consumers must update to summary format. The UI uses confirmation dialogs bound to the current version and existing pending-request recovery. Actual configuration changes/physical qualification remain follow-up work.
 
-phase67에서 현재 승인/원본을 다시 검증하는 [작업 연결 변경안](DEVICE_BINDING_PLAN.md)을 추가했다. 조건/Host·후보 자원 영향과 독립 검토를 기록하며 실제 configuration/qualification/Run은 변경하지 않는다. 후보를 공정 재검증·Host binding 변경에 결합하는 적용 절차는 후속이다.
+phase67 added [action binding change plans](DEVICE_BINDING_PLAN.md) that revalidate current approvals/sources. They record conditions/Hosts/candidate-resource impact and independent review without changing actual configuration/qualification/Runs. An application procedure connecting candidates to process revalidation/Host binding changes remains follow-up work.

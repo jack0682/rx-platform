@@ -1,11 +1,11 @@
-# 규범 원본 보존
+# Preserving the normative sources
 
-두 v1.0 폴더는 [RX 문서 저장소](https://github.com/jack0682/rx_docs)에서 복사한 기준판이다. 2026-09-14 제조사 중립 문서 개정을 반영했다. Wire 번호와 semantic version은 유지하며 문서와 manifest hash는 새 개정의 식별자로 갱신했다. 변경 근거와 호환 영향은 [개정 기록](contracts/v1.0/revision_2026-09-14.md)을 따른다.
+The two v1.0 directories contain baselines copied from the [RX documentation repository](https://github.com/jack0682/rx_docs). They incorporate the vendor-neutral documentation revision of 2026-09-14. Wire numbers and semantic versions are unchanged; document and manifest hashes were updated to identify the new revision. The rationale and compatibility impact follow the [revision record](contracts/v1.0/revision_2026-09-14.md).
 
-구현 결정과 진행 기록은 [현재 구현 문서](https://github.com/jack0682/rx_docs/tree/main/docs/implementation)를 따른다. 이 사본의 hash 일치만으로 구현 적합성이 증명되지는 않는다. 이후 수정은 문서 원본의 명시적 개정과 동기화를 통해 반영한다.
+Implementation decisions and progress follow the [current implementation documents](https://github.com/jack0682/rx_docs/tree/main/docs/implementation). Matching hashes in this copy alone do not prove implementation conformance. Subsequent changes require an explicit revision of the documentation source and synchronization.
 
-검사: python3 tools/check_contract_baselines.py
+Check: python3 tools/check_contract_baselines.py
 
-선택 Host 공정 구성 문맥 확장은 [host-configuration/v1](host-configuration/v1/README.md)에 둔다. 기존 base/cell 규범을 수정하지 않으며, native 설정 적용이나 운전 자격을 뜻하지 않는다.
+The optional Host process configuration context extension is in [host-configuration/v1](host-configuration/v1/README.md). It does not modify the existing base/cell specifications or establish native configuration application or operating qualification.
 
-선택 Host 자격 수용은 [host-qualification/v1](host-qualification/v1/README.md)에 둔다. Host 수용과 P 전역 활성화·사용자 시작을 구별한다.
+Optional Host qualification acceptance is in [host-qualification/v1](host-qualification/v1/README.md). Host acceptance is distinct from P-wide activation and a user start.

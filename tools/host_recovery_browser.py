@@ -252,29 +252,29 @@ def exercise(c: dict) -> dict:
             for directive in ["script-src 'self'", "style-src 'self'", "font-src 'self'"]:
                 assert directive in policy, f"missing production CSP directive: {directive}"
             assert "'unsafe-inline'" not in policy and "'unsafe-eval'" not in policy
-            expect(page.get_by_role("heading", name="운영 공간에 로그인", exact=True)).to_be_visible()
-            page.get_by_label("계정", exact=True).fill("release")
-            page.get_by_label("비밀번호", exact=True).fill(fixture["credentials"]["release"])
-            page.get_by_role("button", name="로그인", exact=True).click()
-            expect(page.get_by_role("button", name="로그아웃", exact=True)).to_be_visible()
+            expect(page.get_by_role("heading", name="Sign in to the operations workspace", exact=True)).to_be_visible()
+            page.get_by_label("Account", exact=True).fill("release")
+            page.get_by_label("Password", exact=True).fill(fixture["credentials"]["release"])
+            page.get_by_role("button", name="Sign in", exact=True).click()
+            expect(page.get_by_role("button", name="Sign out", exact=True)).to_be_visible()
             state["signed_in"] = True
             page.evaluate("document.fonts.ready")
-            assert page.evaluate('(font) => document.fonts.check(font, "복구 조회 연결")', '400 16px "IBM Plex Sans KR"')
+            assert page.evaluate('(font) => document.fonts.check(font, "Recovery inspection binding")', '400 16px "IBM Plex Sans KR"')
 
             def open_recovery() -> object:
-                page.get_by_role("button", name="구성", exact=True).click()
+                page.get_by_role("button", name="Configuration", exact=True).click()
                 page.get_by_role("tab", name=cell, exact=True).click()
-                panel = page.get_by_role("region", name="Host 복구 조회 연결", exact=True)
+                panel = page.get_by_role("region", name="Host recovery inspection binding", exact=True)
                 expect(panel).to_be_visible()
                 panel.get_by_role("combobox").select_option(host)
-                expect(panel.get_by_role("heading", name="현재 연결 문맥", exact=True)).to_be_visible()
+                expect(panel.get_by_role("heading", name="Current binding context", exact=True)).to_be_visible()
                 return panel
 
             panel = open_recovery()
-            expect(panel.get_by_role("button", name="복구 연결 제안 검토", exact=True)).to_be_enabled()
+            expect(panel.get_by_role("button", name="Review recovery binding proposal", exact=True)).to_be_enabled()
             screenshot("proposal-context-desktop.png")
-            panel.get_by_role("button", name="복구 연결 제안 검토", exact=True).click()
-            dialog = page.get_by_role("dialog", name="이 연결의 복구를 제안할까요?", exact=True)
+            panel.get_by_role("button", name="Review recovery binding proposal", exact=True).click()
+            dialog = page.get_by_role("dialog", name="Propose recovery for this binding?", exact=True)
             expect(dialog).to_be_visible()
             screenshot("proposal-confirmation.png")
 
@@ -300,8 +300,8 @@ def exercise(c: dict) -> dict:
                 route.abort("failed")
 
             page.route(f"**{PROPOSE}", lose_proposal, times=1)
-            dialog.get_by_role("button", name="검토한 연결 제안", exact=True).click()
-            expect(page.get_by_role("button", name="같은 요청 확인", exact=True)).to_be_enabled()
+            dialog.get_by_role("button", name="Submit reviewed binding proposal", exact=True).click()
+            expect(page.get_by_role("button", name="Check original request", exact=True)).to_be_enabled()
             original = public_requests["proposal"]
             binding = original["committed"]["view"]["binding"]
             binding_id = binding["id"]
@@ -314,7 +314,7 @@ def exercise(c: dict) -> dict:
 
             page.reload(wait_until="networkidle")
             state["accept_drop_console"] = False
-            expect(page.get_by_role("button", name="같은 요청 확인", exact=True)).to_be_enabled()
+            expect(page.get_by_role("button", name="Check original request", exact=True)).to_be_enabled()
             assert _pending(page) == original["pending"], "reload changed the pending request"
             assert sum(item["path"] == PROPOSE for item in traffic) == 1, "reload automatically posted a proposal"
             assert len(observer.get(PROPOSE, host=host, limit=50)["items"]) == 1
@@ -328,13 +328,13 @@ def exercise(c: dict) -> dict:
 
             page.route(f"**{PROPOSE}", recover_proposal, times=1)
             with page.expect_response(lambda response: _path(response.url) == PROPOSE and response.request.method == "POST") as response_info:
-                page.get_by_role("button", name="같은 요청 확인", exact=True).click()
+                page.get_by_role("button", name="Check original request", exact=True).click()
             response = response_info.value
             assert response.ok, f"same-key recovery HTTP {response.status}"
             recovered = response.json()
             assert _view(recovered, host, cell, binding_id)["requested_context_digest"] == binding["requested_context_digest"]
             assert recovered["proposal_digest"] == original["committed"]["proposal_digest"]
-            expect(page.get_by_role("button", name="같은 요청 확인", exact=True)).to_have_count(0)
+            expect(page.get_by_role("button", name="Check original request", exact=True)).to_have_count(0)
             assert _pending(page) is None and recovered_bodies == [original["raw_body"]]
             listed = observer.get(PROPOSE, host=host, limit=50)
             assert [row["view"]["binding"]["id"] for row in listed["items"]] == [binding_id]
@@ -342,9 +342,9 @@ def exercise(c: dict) -> dict:
                 "recovered_body": recovered_bodies[0], "binding": binding_id, "receipt": recovered})
 
             panel = open_recovery()
-            expect(panel.get_by_role("heading", name="승인 전 제안", exact=True)).to_be_visible()
-            panel.get_by_role("button", name="복구 조회 연결 승인 검토", exact=True).click()
-            dialog = page.get_by_role("dialog", name="이 범위의 복구 조회 연결을 승인할까요?", exact=True)
+            expect(panel.get_by_role("heading", name="Proposal awaiting approval", exact=True)).to_be_visible()
+            panel.get_by_role("button", name="Review recovery inspection binding approval", exact=True).click()
+            dialog = page.get_by_role("dialog", name="Approve the recovery inspection binding for this scope?", exact=True)
             expect(dialog).to_be_visible()
             screenshot("approval-confirmation.png")
 
@@ -360,7 +360,7 @@ def exercise(c: dict) -> dict:
 
             page.route(f"**{APPROVE}", inspect_approval, times=1)
             with page.expect_response(lambda response: _path(response.url) == APPROVE and response.request.method == "POST") as response_info:
-                dialog.get_by_role("button", name="검토한 범위 승인", exact=True).click()
+                dialog.get_by_role("button", name="Approve reviewed scope", exact=True).click()
             response = response_info.value
             assert response.ok, f"approval HTTP {response.status}"
             approved = response.json()
@@ -375,7 +375,7 @@ def exercise(c: dict) -> dict:
                 assert current["phase"] == "FENCING" and time.monotonic() < deadline and progress_count < 5
                 for process in [c["p"], c["h"]]:
                     assert docker.state(process)["State"]["Running"], "product process stopped during recovery"
-                button = panel.get_by_role("button", name="승인한 차단 요청 진행·연결 확인", exact=True)
+                button = panel.get_by_role("button", name="Advance approved fence request and check binding", exact=True)
                 expect(button).to_be_enabled()
                 with page.expect_response(lambda r: _path(r.url) == PROGRESS and r.request.method == "POST") as response_info:
                     button.click()
@@ -384,8 +384,8 @@ def exercise(c: dict) -> dict:
                 assert response.request.post_data_json == {"id": binding_id}
                 approved = response.json()
                 progress_count += 1
-            expect(panel.get_by_role("heading", name="복구 조회 연결", exact=True)).to_be_visible()
-            expect(panel.get_by_text("운전 재개 승인 필요 · 이 연결에는 작업 실행 권한이 없습니다.", exact=True)).to_be_visible()
+            expect(panel.get_by_role("heading", name="Recovery inspection binding", exact=True)).to_be_visible()
+            expect(panel.get_by_text("Approval to resume operation is required · this binding has no task execution authority.", exact=True)).to_be_visible()
             assert _pending(page) is None
             for step in current["fences"].values():
                 assert step["phase"] == "ACKNOWLEDGED" and step["acknowledgment"]["invalidation"] == step["task"]["request"]
@@ -401,9 +401,9 @@ def exercise(c: dict) -> dict:
             panel = open_recovery()
             row = panel.get_by_role("row").filter(has_text=binding_id[:8])
             expect(row).to_have_count(1)
-            row.get_by_role("button", name="기록 열기", exact=True).click()
-            expect(panel.get_by_role("heading", name="복구 조회 연결", exact=True)).to_be_visible()
-            expect(panel.get_by_text(re.compile(rf"^기록 {re.escape(binding_id)} · r[0-9]+$"))).to_be_visible()
+            row.get_by_role("button", name="Open record", exact=True).click()
+            expect(panel.get_by_role("heading", name="Recovery inspection binding", exact=True)).to_be_visible()
+            expect(panel.get_by_text(re.compile(rf"^Record {re.escape(binding_id)} · r[0-9]+$"))).to_be_visible()
             screenshot("reloaded-record-discovery.png")
             page.set_viewport_size({"width": 390, "height": 844})
             screenshot("recovery-only-mobile.png")

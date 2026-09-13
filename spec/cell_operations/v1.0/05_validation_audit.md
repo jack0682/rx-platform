@@ -1,101 +1,101 @@
-# 반례와 검증 의무
+# Counterexamples and Validation Obligations
 
-상태: 2026-09-14 제조사 중립 문서 개정. 아래는 문서 사건 추적이며 제품 실행·형식 모델 검사·실물/안전기능 시험 결과가 아니다.
+Status: 2026-09-14 vendor-neutral documentation revision. The following are documentary event traces, not product-execution, formal model-checking, physical, or safety-function test results.
 
-## 1. 확인할 불변식
+## 1. Invariants to verify
 
-| ID | 계약이 지켜야 하는 것 |
+| ID | Contract requirement |
 |---|---|
-| OI01 | 허용할 operation의 envelope/qualification/의존 hash·현재 scope가 일치한다. |
-| OI02 | 필요한 조건의 UNKNOWN을 PASS로 만들거나 미지 schema를 묵살하지 않는다. |
-| OI03 | native 생산/설정/복구 쓰기는 해당 purpose/parent의 cell-aware gate를 통과한다. |
-| OI04 | revoked mandate는 복원되지 않는다. 정상 대기의 transient 해제와 구별한다. |
-| OI05 | pending StartAttempt/Arm ack/clearance는 자체로 native 실행·접근 허가가 아니다. |
-| OI06 | operation permit는 ID/내용/Host/epoch/purpose에 결합하며 소비/만료 뒤 재사용하지 않는다. |
-| OI07 | 같은 소재의 지지 감소 작업은 공통 자원으로 충돌 처리하며 현재 상호 지지 PASS만으로 동시에 해제하지 않는다. |
-| OI08 | 관련 열린 case/인원/외부 제한을 빠뜨려 생산 재시작을 허용하지 않는다. |
-| OI09 | 알림 확인·reset 관측·작업 종료·조건 재확인·새 시작을 별도 행위로 처리한다. |
-| OI10 | 관련 변경이 이전 condition/qualification/clearance를 무효화하고 새 epoch 동기화를 요구한다. |
-| OI11 | controller/Host/P/executor 재시작·backup rollback에서 옛 mandate/permit로 자동 동작하지 않는다. |
-| OI12 | 지식상의 정합성·data GOOD·UI 표시를 실제 안전기능 성능으로 주장하지 않는다. |
-| OI13 | control stream의 허용 세션/epoch/순번과 실제 native 적용 순서를 유지한다. |
-| OI14 | DB/통신/일반 생산 조건 불능이 필요한 현지 보호 반응을 막지 않는다. |
-| OI15 | part 시도·node activation·operation 예산을 구별하고 재시작으로 사용량을 환급하지 않는다. |
-| OI16 | 지원 package 포함·문서 승인과 실제 commissioning을 구별한다. |
-| OI17 | Host의 cell/scope epoch는 후퇴하지 않으며 오래된 Arm/Fence로 block을 지우지 않는다. |
-| OI18 | P의 invalidation과 H 적용 사이 시간창을 숨기지 않고 필요한 물리 반응을 현지 기능에 할당한다. |
+| OI01 | An admitted operation's envelope/qualification/dependency hashes and current scopes match. |
+| OI02 | Do not turn required-condition UNKNOWN into PASS or silently ignore unknown schemas. |
+| OI03 | Native production/setup/recovery writes pass through the cell-aware gate for the corresponding purpose/parent. |
+| OI04 | Revoked mandates are not restored, distinct from clearing transient normal waits. |
+| OI05 | Pending StartAttempt/Arm acks/clearance do not themselves authorize native execution/access. |
+| OI06 | Operation permits bind ID/content/Host/epoch/purpose and are not reused after consumption/expiry. |
+| OI07 | Support-reducing operations on the same material conflict through common resources; current mutual-support PASS does not permit simultaneous release. |
+| OI08 | Do not permit production restart while omitting related open cases/personnel/external restrictions. |
+| OI09 | Treat notification acknowledgement, reset observation, work completion, condition revalidation, and new start as distinct actions. |
+| OI10 | Related changes invalidate prior conditions/qualification/clearance and require new-epoch synchronization. |
+| OI11 | Controller/Host/P/executor restarts/backup rollback do not automatically execute old mandates/permits. |
+| OI12 | Do not claim actual safety-function performance from epistemic consistency, data GOOD, or UI display. |
+| OI13 | Preserve authorized control-stream sessions/epochs/sequences and actual native-application order. |
+| OI14 | Failure of DB/communication/normal production conditions does not block required local protective reactions. |
+| OI15 | Distinguish part-attempt, node-activation, and operation budgets; restarts do not refund consumption. |
+| OI16 | Distinguish support-package inclusion/document approval from actual commissioning. |
+| OI17 | Host cell/scope epochs never regress, and old Arm/Fence requests never clear blocks. |
+| OI18 | Expose the interval between P invalidation and H application; allocate required physical reactions to local functions. |
 
-## 2. 정상·보류·재시작의 trace
+## 2. Normal, hold, and restart traces
 
-기호 P=platform, H=Host, E=executor, D=장비, U=작업자다. 영속 기록과 현재 관측을 구별하고 source가 모르는 사실을 추론하지 않는다.
+Notation: P=platform, H=Host, E=executor, D=device, U=operator. Distinguish durable records from current observations; do not infer facts unknown to the source.
 
-| 사례 | 사건 순서 | 계약에 따른 결론 |
+| Case | Event sequence | Contract conclusion |
 |---|---|---|
-| CO01 정상 자동 반복 | ① qualified envelope+새 StartRun ② H Arm ack ③ P mandate commit ④ part_attempt 1개 생성/예산1 소비 ⑤ 그 part의 6개 node 각각 T1/permit/결과 ⑥ 다음 part 생성 | node 6개가 소재 예산6을 소비하지 않는다. 각 native는 별도 결과/조건, 정상 run 내부에 추가 human click 없음. OI01·03·15 |
-| CO02 응답 유실·정상 효과 회수 | ① 집기 O/G native 정상 효과 ② 응답만 유실 ③ P TRANSIENT·동일 key 조회 ④ 같은 G 결과와 설명되는 물체 이동/지지 확인 ⑤ 무개입·무보호반응·동일 세대 연속성 확인 ⑥ transient 해제 후 다음 node | 원 native 재호출 없음. 실제 정상 이동이 있었다고 diagnostic 경로를 무조건 금지하지 않음. 기존 ACTIVE mandate 유지 가능. OI04·06 |
-| CO03 불명·사람 개입(SR01) | ① O SEND_ENTERED ② 조회로 지지/결과 미확인 ③ FAULT_RECOVERY와 latch/fence/철회 ④ 현장 진입 절차의 외부 근거 ⑤ 수동 조치 기록·재검증 ⑥ UNRESOLVED 처분 또는 결과 회수 | old success 조작 없음. 준비된 epoch/clearance와 새로운 RestartRun만 생산을 허용. OI04·08·09 |
-| CO04 reset 단독 | ① 안전정지로 mandate 철회 ② D reset 보고 ③ U 알림 확인 ④ 현재 조건 일부 PASS ⑤ StartIntent 없음 | 새 mandate/permit 없음. reset 또는 popup 닫힘을 start로 매핑하지 않음. OI05·09 |
-| CO05 재시작 자기 무효화 방지 | ① cases REVALIDATING/e7 ② PrepareRestart가 e8 fence ③ 잔류 명령·상태 재확인 ④ READY 전이와 전이 후 case revision/e8 clearance를 같은 commit ⑤ U RestartRun·동일 e8 Arm ⑥ P clearance소비+case종료+새mandate | clearance(e7)를 만들고 e8로 바꾸거나 READY 전이로 자기 case revision이 stale가 되는 순서를 금지. OI05·10·17 |
-| CO06 부분 Arm | ① H1 Arm ack ② H2 응답 없음 ③ P attempt ARMING ④ old request 재전송 또는 timeout | 새 mandate commit/생산 permit 없음. H1 gate 준비 자체로 생산할 수 없음. OI03·05 |
-| CO07 정상 WAIT vs 보호 반응 | ① 정상 자재 대기 FAIL/UNKNOWN ② 조건복원(변경·개입 없음) / 또는 ②′ 현지 보호반응 발생 ③ 분류 재검사 | 첫 경로만 transient 해제. ②′는 latch/철회 후 새 시작. 단어 ‘대기’만으로 분류하지 않음. OI02·04 |
+| CO01 Normal automatic repetition | ① Qualified envelope+new StartRun ② H Arm ack ③ P mandate commit ④ Create 1 part_attempt/consume 1 budget unit ⑤ Each of that part's 6 nodes has T1/permit/result ⑥ Create next part | 6 nodes do not consume 6 material-budget units. Each native action has separate results/conditions; no extra human clicks inside a normal run. OI01·03·15 |
+| CO02 Lost response/recovered normal effects | ① Normal native picking effect O/G ② Only response lost ③ P TRANSIENT/same-key lookup ④ Confirm same G result and explained object movement/support ⑤ Confirm no intervention/protective reaction and same-generation continuity ⑥ Clear transient and continue to next node | No original native repeat call. Normal physical movement alone does not categorically prohibit the diagnostic path. Existing ACTIVE mandate may continue. OI04·06 |
+| CO03 Uncertainty/human intervention (SR01) | ① O SEND_ENTERED ② Queries cannot confirm support/result ③ FAULT_RECOVERY with latch/fence/revocation ④ External evidence for site-entry procedure ⑤ Record manual actions/revalidate ⑥ UNRESOLVED disposition or recovered result | Do not fabricate prior success. Only prepared epoch/clearance and new RestartRun permit production. OI04·08·09 |
+| CO04 Reset alone | ① Safety stop revokes mandate ② D reports reset ③ U acknowledges notification ④ Some current conditions PASS ⑤ No StartIntent | No new mandate/permit. Do not map reset or popup dismissal to start. OI05·09 |
+| CO05 Prevent self-invalidation on restart | ① Cases REVALIDATING/e7 ② PrepareRestart fences e8 ③ Recheck residual commands/state ④ Atomically commit READY transition and post-transition case revisions/e8 clearance ⑤ U RestartRun/same-e8 Arm ⑥ P consumes clearance+closes cases+creates mandate | Prohibit creating clearance(e7) then changing to e8, or staling case revision through the READY transition itself. OI05·10·17 |
+| CO06 Partial Arm | ① H1 Arm ack ② H2 no response ③ P attempt ARMING ④ Old-request retransmission or timeout | No new mandate commit/production permits. H1 gate readiness alone cannot produce work. OI03·05 |
+| CO07 Normal WAIT versus protective reaction | ① Normal material wait FAIL/UNKNOWN ② Conditions recover without change/intervention / or ②′ local protective reaction occurs ③ Recheck classification | Only the first path clears transient. ②′ requires latch/revocation then new start. Do not classify solely from the word “wait.” OI02·04 |
 
-## 3. 경합·사람·소재·변경 trace
+## 3. Race, personnel, material, and change traces
 
-| 사례 | 사건 순서 | 계약에 따른 결론 |
+| Case | Event sequence | Contract conclusion |
 |---|---|---|
-| CO08 지연 invalidation | ① P가 permit 발행 ② P가 조건 상실을 알고 latch/fence 저장 ③ 통신 지연 중 old permit H 도착 ④ H local guard 또는 실제 보호 경로 반응 ⑤ fence 설치 | P DB 시각부터 즉각 물리 차단됐다고 주장하지 않음. fence 이후 old epoch 진입 금지; 필요한 반응 시간은 local 기능의 의무. OI17·18 |
-| CO09 옛 epoch replay | ① H A8/B6 설치 ② 지연 A7/B6 Fence 또는 old Arm 도착 ③ local map 검사 | STALE 거부, map snapshot replace 금지, 새 block 삭제 없음. OI17 |
-| CO10 여러 case/작업자 | ① 같은 scope에 C1/U1·C2/U2 존재 ② U1 작업 종료·C1 준비 ③ C1만 넣은 RestartRun ④ C2/외부제한 검사 | C2가 남으면 거부. 인수 기록·빈 명단만으로 U2가 떠났다고 하지 않음. OI08·09 |
-| CO11 recovery motion 필요 | ① 생산 guard 불충족·case 진행 ② plan에 명시된 상태확인/제어 operation 필요 ③ purpose RECOVERY+case/plan/step+대체guard 평가 ④ H gate | 생산 guard를 일괄 skip하지 않음. 허용된 recovery step 외 motion 불가. 필요한 현지 보호는 계속 유효. OI03·14 |
-| CO12 tool 변경과 시작 경합(SR03) | ① clearance/tool vA로 준비 ② vB 실제 적용 보고와 StartAttempt 경합 ③ 같은 cell/case revision CAS ④ 영향 closure/epoch/qualification 갱신 | 옛 target으로 mandate 최종 commit 불가. 일부 Host만 변경되면 MIXED_CONFIGURATION. OI01·10 |
-| CO13 양쪽 지지 해제 | ① G와 C 각각 support PASS ② G해제와 C해제가 서로 다른 Host에 제출 ③ P가 같은 material/support resource CAS ④ 한 요청만 예약 ⑤ 결과/현재 지지 확인 후 다음 판단 | 두 native가 서로의 옛 PASS를 보고 동시 해제하지 않음. 실제 지지 유지의 별도 기구/기능 검증 필요. OI07 |
-| CO14 공유 JTC | ① arm과 gripper가 논리적으로 다른 operation ② 같은 controller resource ③ permit 발급 예약 경합 | 직렬화 또는 검증된 하나의 native composite trajectory. 이름이 다르다는 이유의 병렬 허용 없음. base SC14+OI03 |
-| CO15 scope 독립 | ① RunA는 scope A, RunB는 검증된 독립 B ② A만 latched ③ A closure 계산·Aepoch 증가 ④ B vector/조건 유지 | 검증된 독립 B는 영향 없는 경우 계속 가능. mapping 불명은 셀 전체 차단. OI01·10·17 |
-| CO16 clearance 잘못된 재사용 | ① e8·runA·planA·cases{C1,C2} 준비 ② runB 또는 planB 또는 C2 누락으로 요청 ③ target/revision/body 비교 | 거부. 허가가 비슷한 작업의 일반 token으로 쓰이지 않음. OI05·06·08 |
+| CO08 Delayed invalidation | ① P issues permit ② P discovers condition loss and stores latch/fence ③ Old permit reaches H during communication delay ④ H local guard or actual protective path reacts ⑤ Fence installed | Do not claim immediate physical blocking from P DB time. Old-epoch entry prohibited after fence; required reaction time is a local-function obligation. OI17·18 |
+| CO09 Old-epoch replay | ① H installs A8/B6 ② Delayed A7/B6 Fence or old Arm arrives ③ Check local map | Reject STALE; no map-snapshot replacement or deletion of new blocks. OI17 |
+| CO10 Multiple cases/operators | ① C1/U1 and C2/U2 share scope ② U1 finishes/C1 prepared ③ RestartRun lists only C1 ④ Check C2/external restrictions | Reject while C2 remains. Handover records/empty lists do not establish U2's departure. OI08·09 |
+| CO11 Recovery motion required | ① Production guard unmet/case active ② Plan requires explicit observation/control operation ③ Evaluate purpose RECOVERY+case/plan/step+alternative guards ④ H gate | Do not skip all production guards. No motion outside permitted recovery steps. Required local protection remains active. OI03·14 |
+| CO12 Tool-change/start race (SR03) | ① Prepared with clearance/tool vA ② Actual vB-application report races StartAttempt ③ Same cell/case revision CAS ④ Update impact closure/epochs/qualification | Cannot finally commit mandate against old target. Partial Host changes yield MIXED_CONFIGURATION. OI01·10 |
+| CO13 Release of both supports | ① G and C each support PASS ② G release and C release submitted to different Hosts ③ P CAS on same material/support resource ④ Only one request reserves ⑤ Decide next action after result/current-support checks | Native actions do not simultaneously release using each other's stale PASS. Separate mechanical/functional validation of maintained support is required. OI07 |
+| CO14 Shared JTC | ① Arm/gripper are logically distinct operations ② Same controller resource ③ Permit-reservation race | Serialize or use one validated native composite trajectory. Different names do not permit parallelism. base SC14+OI03 |
+| CO15 Independent scopes | ① RunA uses A; RunB uses validated independent B ② Only A latched ③ Compute A closure/increment Aepoch ④ Retain B vector/conditions | Validated independent B may continue if unaffected. Unknown mapping blocks the entire cell. OI01·10·17 |
+| CO16 Incorrect clearance reuse | ① Prepare e8/runA/planA/cases{C1,C2} ② Request runB, planB, or omit C2 ③ Compare targets/revisions/body | Reject. Authorization is not a general token for similar work. OI05·06·08 |
 
-## 4. 장비 차이·상실·버전 trace
+## 4. Device differences, loss, and version traces
 
-| 사례 | 사건 순서 | 계약에 따른 결론 |
+| Case | Event sequence | Contract conclusion |
 |---|---|---|
-| CO17 driver 기동 반환 | ① guarded lifecycle 시작 ② source의 torque enable 내부 시도 실패/미확인 가능 ③ callback SUCCESS ④ 실제 torque/지지 evidence 부재 | 관련 조건 UNKNOWN, 생산 준비로 승격하지 않음. source의 성공 문자열을 완료 evidence로 과장하지 않음. OI02·16 |
-| CO18 정책 기반 제어 모드 | ① software startup 또는 ReadyPose/policy 요청 ② native command publishing 가능 ③ mode/status와 실제 자세/지지 따로 관측 | 출력 경계가 cell gate 밖이면 해당 binding 부적합. 필요한 package가 설치되어도 검증 전 자동 활성하지 않음. OI03·12·13 |
-| CO19 바퀴형/족형(SR02) | ① 작업 중 base 위치 또는 전신/에너지 조건 상실 ② 필요한 local response ③ P/RPC가 없을 수 있음 ④ 현재 위치/지지/잔류 명령 재조정 | zero velocity/Damping/torque-off 이름만으로 정지·지지 보장 없음. 모델/모드/하중·환경별 기능 할당/검증 요구. OI12·14 |
-| CO20 안전 사본 GOOD | ① Mirror packet은 새 GOOD ② 실제 보호 기능이 해제/고장일 가능성 ③ 전체 기능 근거·현재 signal scope 검사 | 데이터 quality를 safety function 성능으로 채택하지 않음. 필요한 근거가 없으면 qualification/조건 불충족. OI02·12 |
-| CO21 저장 실패 | ① P/H 저장 불능 ② 새 일반 permit/production 전달 차단 ③ 현지 보호 필요 ④ 가능한 근거 보존/복원 | protection은 DB commit을 기다리지 않음. 기록 실패가 이전 물리 효과를 취소하지 않음. OI06·14 |
-| CO22 백업/재부팅 | ① P backup에 e5, H는 e9 ② P복원 후 H Inspect/원장 대조 ③ max보다 새 epoch/fence ④ 상태/qualification/case 재검토 | e6을 일방적으로 강요하거나 옛 permit 재생하지 않음. peer 이력을 못 읽으면 준비 완료 아님. OI11·17 |
-| CO23 구버전 우회 | ① cell-enforced 배포 ② base-only UI/Host가 StartRun/Authorize 직접 호출 ③ mandatory feature/endpoint 정책 검사 | UPGRADE_REQUIRED/권한 오류, fallback native 동작 없음. old journal에 cell event를 silent skip하지 않음. OI03·16 |
-| CO24 run 재시작 예산 | ① run 예산10, part 시도4 소비 ② 불명/개입 후 새 mandate ③ 동일 run의 남은 예산 조회 ④ 같은 part continuation 또는 신규 part5 | 사용량4 보존. 같은 part의 node는 추가 part 소비 없음. unknown를 환급해 무제한 생산하지 않음. OI15 |
-| CO25 정상 종료·driver 소멸 | ① shutdown 요청 ② driver destructor가 torque disable 가능 ③ 소재/중력 지지 아직 필요 ④ lifecycle 조건 검사 | 종료/컨테이너 재시작 정책이 기구 지지 조건을 우회하지 않음. 강제 전원 상실은 별도 physical protection 범위. OI03·14·16 |
-| CO26 비운전 종료 | ① 재시작 계획 없이 운전 포기 ② PrepareClose로 작업/인원/제한 근거 확인 ③ REMAIN_OUT_OF_SERVICE clearance ④ close와 별도 latch 생성 atomic | 가짜 run/plan 요구 없음. Arm 호출/생산 허용 없음. 다른 사례 제한 유지. OI05·08 |
-| CO27 recovery 재시도 key 변경 | ① case/plan/step/visit1이 O에 연결 ② 같은 slot을 새 key로 제출 ③ 영속 unique slot 조회 | 같은 의도면 O 회수, 다른 의도면 충돌. visit2는 plan edge·근거/상태/한도 검사. OI03·06 |
-| CO28 오래된 UI의 실제 변화 보고 | ① clearance 준비 뒤 실제 수동 조작/접근 발생 ② 옛 case revision으로 보고 ③ 신뢰된 사실/evidence와 latch 먼저 기록 ④ 단계 CAS 충돌 반환 | 오래된 revision이라는 이유로 실제 변화가 버려지지 않음. 새 허용 전이는 없고 재시작 준비 무효. OI08·09·10 |
+| CO17 Driver startup return | ① Guarded lifecycle starts ② Source-internal torque-enable attempt may fail/be unconfirmed ③ Callback SUCCESS ④ No actual torque/support evidence | Related conditions UNKNOWN; no promotion to production readiness. Do not exaggerate source success strings into completion evidence. OI02·16 |
+| CO18 Policy-based control mode | ① Software startup or ReadyPose/policy request ② Native command publishing possible ③ Observe mode/status separately from actual pose/support | A binding whose output boundary bypasses the cell gate is nonconforming. Required packages may be installed without automatic activation before validation. OI03·12·13 |
+| CO19 Wheeled/legged models (SR02) | ① Base position or whole-body/energy conditions lost during work ② Required local response ③ P/RPC may be absent ④ Reconcile current location/support/residual commands | zero velocity/Damping/torque-off names do not guarantee stopping/support. Require function allocation/validation by model/mode/load/environment. OI12·14 |
+| CO20 Safety mirror GOOD | ① Mirror packet freshly GOOD ② Actual protective function may be disabled/faulty ③ Check whole-function evidence/current signal scope | Do not treat data quality as safety-function performance. Without required evidence, qualification/conditions are unsatisfied. OI02·12 |
+| CO21 Storage failure | ① P/H cannot persist ② Block new normal permits/production dispatch ③ Local protection required ④ Preserve/recover available evidence | Protection does not wait for DB commit. Record failure does not cancel prior physical effects. OI06·14 |
+| CO22 Backup/reboot | ① P backup at e5, H at e9 ② After P restore, inspect H/compare journals ③ New epoch/fence above maximum ④ Review state/qualification/cases | Do not unilaterally impose e6 or replay old permits. Unreadable peer history means preparation is incomplete. OI11·17 |
+| CO23 Old-version bypass | ① Cell-enforced deployment ② Base-only UI/Host directly invokes StartRun/Authorize ③ Check mandatory feature/endpoint policy | UPGRADE_REQUIRED/authority error, no fallback native action. Do not silently skip cell events in the old journal. OI03·16 |
+| CO24 Run-restart budget | ① Run budget 10, 4 part attempts consumed ② New mandate after uncertainty/intervention ③ Retrieve remaining budget of same run ④ Continue same part or create part 5 | Preserve consumption 4. Nodes of the same part consume no additional part unit. Unknown outcomes are not refunded to permit unlimited production. OI15 |
+| CO25 Graceful shutdown/driver destruction | ① Shutdown requested ② Driver destructor may disable torque ③ Material/gravity support still required ④ Check lifecycle conditions | Shutdown/container-restart policy must not bypass mechanical-support conditions. Forced power loss belongs to separate physical-protection scope. OI03·14·16 |
+| CO26 Non-operational closure | ① Abandon operation without a restart plan ② PrepareClose verifies work/personnel/restriction evidence ③ REMAIN_OUT_OF_SERVICE clearance ④ Atomically close/create separate latch | No fictitious run/plan required. No Arm call/production permission. Preserve other-case restrictions. OI05·08 |
+| CO27 Recovery retry with changed key | ① case/plan/step/visit1 binds O ② Submit same slot with new key ③ Query persistent unique slot | Same intent retrieves O; different intent conflicts. visit2 checks plan edges/evidence/state/limits. OI03·06 |
+| CO28 Actual-change report from stale UI | ① Actual manual manipulation/access occurs after clearance preparation ② Report with old case revision ③ First record trusted fact/evidence/latch ④ Return step-CAS conflict | Actual change is not discarded because revision is old. No newly permitted transition; restart preparation invalidated. OI08·09·10 |
 
-## 5. 원문·사실과 검증 범위
+## 5. Original sources, facts, and validation scope
 
-CO17·18과 CO14의 원래 조사 출처는 [고정 원문](https://github.com/jack0682/rx_docs/blob/6111a7d1dcf33052f38c3e67c6585aec2b44df3c/docs/cell_operations/v1.0/05_validation_audit.md)에 보존한다. 현재 표는 해당 실패 유형을 제조사 중립적인 구성에 적용한 문서상 반례다. 새 driver source나 실물을 검증한 결과가 아니다. 나머지는 계약의 비동기/사람/변경 모델에 대입한 가상 사건 trace다. ‘trace에서 규칙상 어떤 결과여야 하는가’를 검토했으며 실제 장비가 그렇게 동작했다고 하지 않는다.
+Original research sources for CO17, CO18, and CO14 are preserved in the [immutable original](https://github.com/jack0682/rx_docs/blob/6111a7d1dcf33052f38c3e67c6585aec2b44df3c/docs/cell_operations/v1.0/05_validation_audit.md). Current tables apply those failure types as documentary counterexamples to vendor-neutral configurations. They are not validation of new driver sources or physical equipment. Remaining entries are hypothetical event traces applied to the contract's asynchronous/human/change model. They review “what outcome the rules require in a trace,” not how actual equipment behaved.
 
-정적 문서 검토에서 남기는 증거는 조건/전이/API/역할이 위 결론을 일관되게 요구하는지다. 실제 구현이 그 요구를 만족하는지는 아래 검증에서 확인해야 한다. 형식 모델 검사의 변수 후보는 cell/scope epoch, block sets, mandates, permits, cases, clearances, budgets, messages, native-entry count와 source validity다. Safety/liveness라는 형식 검증 용어를 기계 기능안전 인증과 혼동하지 않는다.
+Static-document-review evidence concerns whether conditions, transitions, APIs, and roles consistently require these conclusions. The validations below must establish whether implementations satisfy them. Candidate formal-model variables are cell/scope epochs, block sets, mandates, permits, cases, clearances, budgets, messages, native-entry counts, and source validity. Formal-verification terms safety/liveness are distinct from machine functional-safety certification.
 
-## 6. 후속 구현·현장 검증 의무
+## 6. Subsequent implementation/site-validation obligations
 
-| 검증 | 필요한 증거·판정 | 적용 범위/담당 |
+| Validation | Required evidence/decision | Scope/responsibility |
 |---|---|---|
-| OV01 조건 evaluator | UNKNOWN/FAIL/ANY·ALL·모순·빈 조건·unit/schema/age의 golden fixture | platform·Host 계약 구현 |
-| OV02 permit/fence 경합 | 발급·소비·철회·Arm·epoch rollback·lost ack 각 commit 경계의 fault test, native 진입 추적 | platform/Host, base V01–03 확장 |
-| OV03 재시작 | PrepareRestart target epoch·clearance·case revision·all-host barrier·late event·복수 case trace | platform·운영 |
-| OV04 native 복구 의미 | controller별 continue/entry/없음, 이미 수행된 물리 효과·현재 지지·잔류 명령 | OEM·로봇/장비 연동 |
-| OV05 소재 지지 | 지지/착좌/파지의 감지 한계·상실 거동, 양쪽 해제 충돌·support resource와 실제 보호 | 기구·로봇·PLC·설치 |
-| OV06 안전기능 | H01–H06에서 필요한 실제 sensor/logic/output/drive 경로·반응 시간·요구 성능/달성 근거·고장/환경/하중 | 제작팀·OEM·기능안전/현장 검증 |
-| OV07 사람 개입 | 접근/격리·인원·인수/외부 제한·reset/start·현장 UI의 사용자 검증 | 현장 운영·설치 |
-| OV08 변경/배포 | partial update·새 policy/tool·source/Host change·backup rollback, mandatory cell capability 우회 거부 | 릴리스·플랫폼·솔루션 |
-| OV09 선택한 장비 구성 | 선택한 profile별 실제 mode·driver/stream·기동/종료와 외부 직접 native 쓰기 경계 | 각 장비 연동 담당 |
-| OV10 예산/실적 | PartAttempt vs activation/operation, 동일 key, 재시작 잔량, unknown/불량/취소 이력 | platform·제품 |
-| OV11 형식·적합성 | bounded 모델의 OI01–18, 구현의 대응 trace, schema/manifest와 생성 결과 적합성 | 계약·검증 |
+| OV01 Condition evaluator | Golden fixtures for UNKNOWN/FAIL/ANY/ALL, contradictions, empty conditions, unit/schema/age | Platform/Host contract implementation |
+| OV02 Permit/fence races | Fault tests at each commit boundary for issuance, consumption, revocation, Arm, epoch rollback, lost acks; native-entry traces | Platform/Host; extends base V01–03 |
+| OV03 Restart | PrepareRestart target epochs, clearances, case revisions, all-Host barriers, late events, multiple-case traces | Platform/operations |
+| OV04 Native recovery semantics | Per-controller continue/from-entry/none; effects already performed, current support, residual commands | OEM/robot/device integration |
+| OV05 Material support | Detection limits/loss behavior for support/seating/grasp, dual-release conflicts, support resources, actual protection | Mechanics/robotics/PLC/installation |
+| OV06 Safety functions | Actual sensor/logic/output/drive paths required by H01–H06; reaction times, required performance/achievement evidence, faults/environments/loads | Manufacturing team/OEM/functional-safety/site validation |
+| OV07 Human intervention | Access/isolation, personnel, handover/external restrictions, reset/start, site-UI user validation | Site operations/installation |
+| OV08 Change/deployment | Partial updates, new policies/tools, source/Host changes, backup rollback, rejection of mandatory-cell-capability bypass | Release/platform/solutions |
+| OV09 Selected device configurations | Actual mode/driver/stream/startup/shutdown and external direct-native-write boundaries per selected profile | Each device integration owner |
+| OV10 Budgets/results | PartAttempt versus activation/operation, identical keys, restart remaining budgets, uncertainty/defect/cancel history | Platform/product |
+| OV11 Formal verification/conformance | OI01–18 in bounded models, corresponding implementation traces, schema/manifest/generated-output conformance | Contract/validation |
 
-이 표는 검증 의무다. 실제 이행 여부는 해당 구현 commit과 실행 근거를 따로 대조하며 이번 문서 개정에서 재실행하지 않았다. 실제 반복 횟수·판정 수치·시간을 입력 없이 채우지 않는다. 미충족된 현장 조합은 NOT_COMMISSIONED/REVALIDATION_REQUIRED로 차단한다. 공통 소프트웨어 설계의 문서 확정과 특정 납품의 기능/현장 검증을 구분한다.
+This table defines validation obligations. Check actual fulfillment separately against implementation commits and execution evidence; these were not rerun by this documentation revision. Do not fill actual repetition counts, thresholds, or durations without inputs. Block unfulfilled site combinations as NOT_COMMISSIONED/REVALIDATION_REQUIRED. Distinguish finalizing common software-design documents from functional/site validation of a particular delivery.
 
-## 7. 초판 감사와 현재 검토의 구분
+## 7. Distinguishing the first-edition audit from current review
 
-N01–N06의 초판 완료 감사·독립 검토 결과는 [2026-09-10 당시 원문](https://github.com/jack0682/rx_docs/blob/6111a7d1dcf33052f38c3e67c6585aec2b44df3c/docs/cell_operations/v1.0/05_validation_audit.md)에 보존한다. 초판 감사에서 사용한 모델·지원 의무·source inventory를 현재 중립 구성의 검증 결과로 바꾸지 않는다.
+First-edition N01–N06 completion-audit/independent-review results are preserved in the [original dated 2026-09-10](https://github.com/jack0682/rx_docs/blob/6111a7d1dcf33052f38c3e67c6585aec2b44df3c/docs/cell_operations/v1.0/05_validation_audit.md). Do not relabel its models, support obligations, or source inventory as validation of the current neutral configuration.
 
-현재 개정은 장비 지원 정책과 적용 예시를 변경했고 공통 의미·허가·복구의 불변식과 검증 의무를 유지한다. [개정 기록](revision_2026-09-14.md)에 영향·반례·hash·호환 범위를 남겼다. 실제 모델·신호·기구·인원·보호 성능·시간 수치는 아직 확인되지 않은 profile의 입력으로 남기며 추측해 채우지 않는다.
+The vendor-neutral revision changed device-support policy/application examples while preserving common semantic, authorization, and recovery invariants and validation obligations. The [revision record](revision_2026-09-14.md) records impacts, counterexamples, hashes, and compatibility scope. Actual model, signals, mechanics, personnel, protective performance, and timing values remain inputs for profiles not yet verified; do not fill them by guessing.

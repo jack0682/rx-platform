@@ -1,97 +1,97 @@
-# 비운전 사건 종료
+# Non-operating case closure
 
-2026-09-11. `PrepareClose`와 `CloseWithoutRestart`의 application 경로 및 개발 HTTP를 구현했다. 사건 종료 뒤에도 `OUT_OF_SERVICE` latched block을 남긴다. 생산 재시작, 장비 정지 완료, 격리 조작의 성공을 이 종료로 판정하지 않는다.
+2026-09-11. Application paths and development HTTP for `PrepareClose` and `CloseWithoutRestart` are implemented. An `OUT_OF_SERVICE` latched block remains after case closure. Closure does not establish production restart, device stop completion or successful isolation actions.
 
-규범 근거는 [셀 개입·복구 §7](../../spec/cell_operations/v1.0/03_intervention_recovery_change.md)와 [프로토콜](../../spec/cell_operations/v1.0/04_protocol_integration_ui.md)의 비운전 종료다. 규범 파일·wire manifest를 변경하지 않았다. 아래 정책 형식은 구현 내부의 검증 입력이며 새로운 규범 wire 계약으로 승격하지 않는다.
+Normative sources are non-operating closure in [cell intervention/recovery §7](../../spec/cell_operations/v1.0/03_intervention_recovery_change.md) and the [protocol](../../spec/cell_operations/v1.0/04_protocol_integration_ui.md). Normative files/wire manifests are unchanged. The policy format below is an internal implementation validation input, not a new normative wire contract.
 
-## 흐름과 책임
+## Flow and responsibilities
 
 ```mermaid
 sequenceDiagram
-    participant L as 복구 책임자
-    participant P as 권위 Runtime
-    participant D as 저장소
-    L->>P: PrepareClose(셀·사건 버전, 근거 ID)
-    P->>P: 절차 정책·인원 인수·현재 억제 조건 확인
-    P->>D: 한 번 소비할 clearance와 원래 응답 저장
+    participant L as Recovery lead
+    participant P as Authoritative Runtime
+    participant D as Store
+    L->>P: PrepareClose(cell/case revisions, evidence IDs)
+    P->>P: Check procedure policy, personnel handover and current containment conditions
+    P->>D: Store single-use clearance and original response
     P-->>L: REMAIN_OUT_OF_SERVICE clearance
-    L->>P: CloseWithoutRestart(같은 사건 집합, clearance)
-    P->>P: 현재 권한·버전·시간·근거 재검사
-    P->>D: clearance 소비 + 사건 종료 + OUT_OF_SERVICE 차단
-    P-->>L: 저장된 종료 결과
+    L->>P: CloseWithoutRestart(same case cohort, clearance)
+    P->>P: Recheck current authority, revisions, time and evidence
+    P->>D: Consume clearance + close cases + OUT_OF_SERVICE block
+    P-->>L: Stored closure result
 ```
 
-Close는 영향 셀의 epoch를 올리고 기존 권한을 철회하는 공통 invalidation을 사용한다. 새로운 Fence 전달은 등록하지만 ArmCell·native reset·이동·취소 명령을 만들지 않는다. 이 새로운 Fence 응답까지 받았다는 뜻도 아니다. 종료 전에 확인한 현재 Fence와 별도로, 남아 있는 물리 위험의 억제·격리 근거는 외부 절차와 실제 관측이 제공해야 한다.
+Close uses shared invalidation that increments impacted cell epochs and revokes existing authority. It registers new Fence delivery but creates no ArmCell/native reset/motion/cancel commands. It does not mean that these new Fence responses have been received either. Separately from the current Fence checked before closure, external procedures and actual observations must supply evidence for containment/isolation of remaining physical hazards.
 
-## 입력 정책
+## Input policy
 
-`closure::Policy` (`rx.close-policy.v1`)는 다음을 고정한다.
+`closure::Policy` (`rx.close-policy.v1`) fixes:
 
-| 항목 | 의미 |
+| Item | Meaning |
 |---|---|
-| cell, procedure | 원 사건 셀과 정확한 Procedure Policy artifact |
-| external_procedure, dependencies | 운전 제외 상태를 유지할 외부 절차 및 검증 근거 |
-| contexts | 영향받는 각 셀의 definition/envelope와 억제·격리·잔여 제한 조건 |
-| maximum_validity_ns | 준비 clearance의 최대 수명 |
+| cell, procedure | Origin case cell and exact Procedure Policy artifact |
+| external_procedure, dependencies | External procedure and verification evidence for remaining out of service |
+| contexts | Definition/envelope and containment/isolation/residual-restriction conditions for each impacted cell |
+| maximum_validity_ns | Maximum lifetime of prepared clearance |
 
-Engineer가 입력해도 `QualificationAuthority::verify_close_policy`가 승인하지 않으면 등록하지 않는다. 기본 구현은 항상 거부한다. 등록할 때와 준비·소비할 때 현재 verifier와 구성 binding을 검사한다. Procedure Policy의 verifier도 다시 확인한다. API에 사용자가 채우는 승인 boolean은 없다.
+Even Engineer input is not registered unless approved by `QualificationAuthority::verify_close_policy`. The default implementation always rejects it. Current verifier and configuration binding are checked at registration, preparation and consumption. The Procedure Policy verifier is rechecked too. The API has no user-supplied approval boolean.
 
-정책은 기존 procedure digest에 하나만 결합한다. 다른 내용을 같은 digest에 덮어쓰지 못한다. 새 종료 정책을 도입할 때는 새 절차 버전과 사건 binding이 필요하다. 그 변경·재연결 워크플로는 후속 구현이다. 실제 release/package verifier, 서명 신뢰 설정, 현장 외부 절차 승인 완료를 뜻하지 않는다.
+Only one policy binds to an existing procedure digest. Different content cannot overwrite the same digest. A new closure policy requires a new procedure version and case binding. The change/rebinding workflow is follow-up implementation. This does not establish completion of an actual release/package verifier, signing trust configuration or field external-procedure approval.
 
-## 준비 조건
+## Preparation conditions
 
-- 현재 인증된 RecoveryLead가 모든 대상 사건의 lead이며 전체 영향 셀에 접근할 수 있어야 한다. 준비자와 소비자는 현재 같은 lead다. 담당자 인계는 이 API로 생략하지 않는다.
-- 셀 CAS와 사건별 CAS가 필수다. 비어 있거나 중복된 사건 집합을 거부한다. 현재 지원하는 cohort는 같은 원 셀의 사건들이다. 그 셀의 공유 자원으로 연결된 영향 셀 전체를 검사한다.
-- 각 사건은 REVALIDATING이고 기록된 참여자가 있어야 한다. 전원 작업 종료, 현재 인원 확인, 인수 완료가 필요하다. 빈 명단은 사람 없음으로 바꾸지 않는다.
-- 승격에 성공한 PERSONNEL_ACCOUNTED/HANDOVER_ACCEPTED의 record ID를 Progress에 보존한다. 그 기록의 실제 lead·명단·Reported 상태·관측 시각·유효기간과 마지막 물리 변화 이후인지 확인한다.
-- 현재 각 Host의 해당 epoch/boot/journal Fence 확인과 정책의 조건 PASS가 필요하다. 조건은 기존 P의 source generation, quality, age, uncertainty, schema/unit 평가를 사용한다.
-- 조건 근거는 취득 불확실성을 뺀 가장 이른 취득 시각도 마지막 물리 변화 이후여야 한다. 호출자가 제시하는 근거 ID 집합은 실제 인원/인수 record ID와 평가에 사용한 관측 ID의 집합에 정확히 일치해야 한다. 임의 ID 추가·누락·중복을 거부한다.
-- 유효시간은 정책 TTL, 현재 인증 세션, 절차 보고 최대 age/유효기간, 실제 조건 근거의 만료 중 가장 이른 시각이다. 새 보고나 새 근거가 있다고 기존 clearance 수명을 늘리지 않는다.
+- The currently authenticated RecoveryLead must lead every target case and have access to all impacted cells. Preparer and consumer are currently the same lead. This API does not bypass lead handover.
+- Cell CAS and per-case CAS are required. Empty or duplicate case cohorts are rejected. Currently supported cohorts contain cases from the same origin cell. Every impacted cell connected through that cell's shared resources is checked.
+- Each case must be REVALIDATING and have recorded participants. All participants must have ended work, current personnel accounting and handover must be complete. An empty roster is not interpreted as no people present.
+- Progress preserves the record IDs of PERSONNEL_ACCOUNTED/HANDOVER_ACCEPTED reports that successfully advanced state. Check those records' actual lead/roster/Reported status/observation time/validity and whether they follow the latest physical change.
+- Each current Host must have confirmed the Fence for its relevant epoch/boot/journal, and policy conditions must PASS. Conditions use P's existing source generation, quality, age, uncertainty and schema/unit evaluation.
+- Even the earliest acquisition time after subtracting acquisition uncertainty must follow the latest physical change. Caller-supplied evidence IDs must exactly match the union of actual personnel/handover record IDs and observation IDs used for evaluation. Arbitrary additions, omissions and duplicates are rejected.
+- Validity ends at the earliest of policy TTL, current authentication session, procedure report maximum age/validity and actual condition-evidence expiry. A new report or evidence does not extend existing clearance lifetime.
 
-clearance는 case revisions, 전체 영향 셀 revision/definition/envelope/epoch, policy refs, 정확한 evidence IDs, 준비자·시각·유효시간에 결합된다. 준비만으로 사건 상태나 허가를 확대하지 않는다. run/restart plan을 요구하지 않는다.
+Clearance binds case revisions, every impacted cell's revision/definition/envelope/epoch, policy refs, exact evidence IDs, preparer/time/validity. Preparation alone does not expand case state or permissions. It does not require a run/restart plan.
 
-## 소비 트랜잭션
+## Consumption transaction
 
-1. 현재 역할과 사건·영향 셀 접근권을 확인한 뒤 idempotency key를 조회한다.
-2. 셀/사건 CAS, 같은 cohort·준비자, 미소비 clearance와 만료를 검사한다.
-3. 정책·절차·참여자·Fence·조건을 다시 평가한다. 준비 때와 셀 context, policy ref, evidence ID가 다르면 소비하지 않는다.
-4. 전체 영향 셀을 invalidation하고 별도 OUT_OF_SERVICE 차단을 만든다.
-5. 대상 사건이 만들었던 차단만 제거한다. 다른 열린 사건이 참조하는 차단은 유지한다. 기존 OUT_OF_SERVICE나 다른 원인의 차단도 제거하지 않는다.
-6. 대상 사건만 CLOSED로 바꾸고 open_case membership에서 제거한다.
-7. clearance 소비, 종료 영수증, 상태·제어 원장 사건, 원래 요청 응답을 같은 저장 트랜잭션에 기록한다.
+1. Check current role and case/impacted-cell access before looking up the idempotency key.
+2. Check cell/case CAS, the same cohort/preparer, unconsumed clearance and expiry.
+3. Reevaluate policy/procedure/participants/Fence/conditions. Do not consume if cell context, policy refs or evidence IDs differ from preparation.
+4. Invalidate all impacted cells and create a separate OUT_OF_SERVICE block.
+5. Remove only blocks created by the target cases. Preserve blocks referenced by other open cases. Existing OUT_OF_SERVICE blocks or blocks from other causes are not removed either.
+6. Change only target cases to CLOSED and remove them from open_case membership.
+7. Record clearance consumption, closure receipt, state/control-journal events and original request response in the same storage transaction.
 
-저장 전 장애는 전체 rollback이다. 저장 후 응답 유실은 동일 key/body로 원래 결과를 회수한다. 다른 body를 같은 key로 보내면 충돌이다. 준비 요청을 재전송하면 원래 준비 결과가 반환된다. 이미 소비된 clearance가 다시 사용 가능해졌다는 뜻은 아니며 새 소비는 현재 저장 상태를 검사한다.
+A pre-persistence failure rolls back everything. A lost post-persistence response is recovered with the same key/body. A different body with the same key conflicts. Replaying a preparation request returns the original preparation result. This does not make a consumed clearance usable again; new consumption checks current stored state.
 
-사건 CLOSED는 원 operation의 UNKNOWN/UNRESOLVED를 성공·취소로 바꾸지 않는다. 자원 quarantine/holder도 해제하지 않는다. 이를 유지한 상태의 비운전 종료에는 별도로 검증된 외부 억제 조건이 필요하다. 논리 block을 물리 격리 장치로 표시하지 않는다.
+Case CLOSED does not convert the original operation's UNKNOWN/UNRESOLVED into success/cancellation. It does not release resource quarantine/holders either. Non-operating closure preserving these states requires separately verified external containment conditions. Logical blocks are not presented as physical isolation devices.
 
-## 늦은 보고와 저장 호환
+## Late reports and storage compatibility
 
-외부 물리 변화 보고는 이전 인원 확인·인수 ID 및 확인 상태를 무효화한다. 이전 entry 역시 해당 전이 규칙에 따라 다시 확인해야 한다.
+External physical-change reports invalidate previous personnel/handover IDs and confirmation state. Previous entry also requires reconfirmation under the relevant transition rules.
 
-이미 저장된 같은 ProcedureRecord가 다른 요청 key로 다시 도착하면 사실을 중복 기록하거나 과거 WorkStarted 전이를 재실행하지 않는다. 현재 사건과 기존 record를 반환하고 단계 승격은 STALE_REVISION으로 거부한다. 같은 요청 key의 재전송은 기존 영수증을 그대로 반환한다.
+If the same already-stored ProcedureRecord arrives with another request key, it does not duplicate the fact or replay a historical WorkStarted transition. It returns the current case and existing record, rejecting stage advancement with STALE_REVISION. Replay with the same request key returns the existing receipt unchanged.
 
-CLOSED 사건의 새 비물리 보고는 기록만 남기고 재검증 상태로 자동 승격하지 않는다. 새 물리 변화 보고는 사실·차단·open_case membership을 다시 기록한다. 새 작업 시작이면 ESCALATED로 남겨 실제 활동을 누락하지 않는다. 이전 종료 영수증과 OUT_OF_SERVICE 차단은 역사와 현재 제한으로 보존된다.
+A new nonphysical report for a CLOSED case is recorded without automatically advancing to revalidation. A new physical-change report records the fact, blocks and open_case membership again. New work starts leave the case ESCALATED so actual activity is not omitted. Previous closure receipts and OUT_OF_SERVICE blocks are preserved as history and current restrictions.
 
-Progress의 새 인원/인수 record ID는 optional/default-none으로 읽는다. 이전 저장 데이터에서 단순 true 값을 보고 성공한 record ID를 추정하지 않는다. 종료하려면 해당 기록을 새로 확인해야 한다.
+The new personnel/handover record IDs in Progress are read as optional/default-none. Successful record IDs are not inferred from simple true values in earlier stored data. Closure requires fresh verification of those records.
 
-## 연결 상태와 한계
+## Connection status and limitations
 
-| 경계 | 현재 상태 |
+| Boundary | Current status |
 |---|---|
-| application / 단일 Runtime writer | 준비·소비·권한·원자성 연결 |
-| 개발 HTTP | POST `/api/v1/cases/close-preparations`, `/api/v1/cases/close-without-restart` |
-| 요청 형식 | 기존 `{request_key, command}`; `closure::PrepareClose` / `CloseWithoutRestart` |
-| 개발 HTTP 결과 | Clearance 또는 전체 영향 셀을 포함한 종료 Receipt |
-| UI 상태 표시 | OUT_OF_SERVICE를 ‘운전 제외 · 별도 재검증 필요’로 표시 |
-| 전용 종료 화면 / 일반 operator service peer | 미구현 |
-| frozen gRPC PrepareClose/CloseWithoutRestart | 아직 활성화하지 않음. CellContext projection은 연결됨. 인간 세션·등록 단말과 서비스 호출의 binding을 연결한 뒤 활성화할 예정 |
-| 무진입 진단 종료 / 빈 참여자 절차 | 미구현; 명시적인 무진입 근거가 없으면 거부 |
-| scope 불명 / configuration_changed 사건 | 현재 거부; 실제 영향 확정 및 새 구성 qualification 연결 필요 |
-| RestartRun / recovery plan / native cancel | 이 경로와 별도, 후속 |
-| 제품 이미지 / 현장 commissioning | 이 기능 시험으로 완료 표시하지 않음 |
+| Application / single Runtime writer | Preparation/consumption/authority/atomicity connected |
+| Development HTTP | POST `/api/v1/cases/close-preparations`, `/api/v1/cases/close-without-restart` |
+| Request format | Existing `{request_key, command}`; `closure::PrepareClose` / `CloseWithoutRestart` |
+| Development HTTP result | Clearance or closure Receipt including all impacted cells |
+| UI status display | OUT_OF_SERVICE shown as 'Out of service · separate revalidation required' |
+| Dedicated closure UI / general operator service peer | Not implemented |
+| Frozen gRPC PrepareClose/CloseWithoutRestart | Not enabled yet. CellContext projection is connected. Planned after binding human sessions/registered terminals to service calls |
+| No-entry diagnostic closure / empty-participant procedure | Not implemented; rejected without explicit no-entry evidence |
+| Scope-uncertain / configuration_changed cases | Currently rejected; actual impact determination and new-configuration qualification must be connected |
+| RestartRun / recovery plan / native cancel | Separate from this path; follow-up work |
+| Product images / field commissioning | Not marked complete by these feature tests |
 
-모든 정상 경로 시험은 simulation authority와 합성 조건을 사용했다. 레이저 장비의 실제 격리/인원 확인/신호 목록은 여전히 미확정이며 실장비를 제어하지 않았다.
+All successful-path tests used a simulation authority and synthetic conditions. Actual laser-equipment isolation/personnel accounting/signal lists remain undefined, and no real equipment was controlled.
 
-## 검증 범위
+## Validation scope
 
-`transactions.rs`의 non_operating_close 및 closed_case 시험은 준비/소비 rollback·응답 유실·동일 key·한 번 소비, 다른 사건 차단 유지, 만료, 사건/epoch/관측/source/공유 범위 변화, 역할 철회, 누락/임의 근거, 새 작업, UNKNOWN와 자원 보존, 종료 후 보고를 확인한다. 개발 HTTP 시험은 권한·필수 CAS·미확인 절차·가짜 clearance 거부와 셀 무변경을 확인한다. 성공적인 종료 HTTP 브라우저 플로와 다중 원 셀 cohort 시험은 수행하지 않았다.
+The non_operating_close and closed_case tests in `transactions.rs` verify preparation/consumption rollback, lost responses, same keys, single consumption, preservation of other cases' blocks, expiry, case/epoch/observation/source/shared-scope changes, role revocation, missing/arbitrary evidence, new work, preservation of UNKNOWN/resources and post-closure reports. Development HTTP tests verify authority, required CAS, rejection of unverified procedures/fake clearances and unchanged cells. A successful closure HTTP browser flow and multi-origin-cell cohort tests were not performed.

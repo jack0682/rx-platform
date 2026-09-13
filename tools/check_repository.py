@@ -15,6 +15,55 @@ import subprocess
 from urllib.parse import unquote, urlsplit
 
 
+KOREAN_TEXT = re.compile(r"[\u1100-\u11ff\u3130-\u318f\uac00-\ud7af]")
+
+
+def is_ai_artifact(relative):
+    parts = [part.lower() for part in relative.parts]
+    if not parts:
+        return False
+    name = parts[-1]
+    if name in {"agents.md", "agents.override.md", "claude.md", "claude.local.md",
+                "codex.md", "gemini.md", "skill.md", ".cursorrules",
+                ".windsurfrules", ".clinerules"} or name.startswith(".aider"):
+        return True
+    if any(part in {".claude", ".codex", ".agents", ".cursor", ".windsurf",
+                    ".continue", ".roo", ".clinerules"} for part in parts):
+        return True
+    for index, part in enumerate(parts[:-1]):
+        if part == ".github" and parts[index + 1] in {
+            "copilot-instructions.md", "instructions", "prompts", "agents", "chatmodes"
+        }:
+            return True
+    return False
+
+
+def content_policy_errors(root, files, policy):
+    if policy.get("schema") != "rx.repository-content-policy.v1":
+        return ["Unsupported repository content policy schema"]
+    if policy.get("language") not in {"en", "mixed"} or policy.get("exclude_ai_artifacts") is not True:
+        return ["Repository content policy must declare its language and exclude AI artifacts"]
+    errors = []
+    for path in files:
+        relative = path.relative_to(root)
+        if is_ai_artifact(relative):
+            errors.append(f"{relative}: AI assistant artifacts must remain local and untracked")
+        if policy["language"] == "en":
+            if KOREAN_TEXT.search(str(relative)):
+                errors.append(f"{relative}: use an English filename")
+            if not path.is_file():
+                continue
+            try:
+                text = path.read_text(encoding="utf-8")
+            except UnicodeDecodeError:
+                continue
+            match = KOREAN_TEXT.search(text)
+            if match:
+                line = text.count("\n", 0, match.start()) + 1
+                errors.append(f"{relative}:{line}: translate Korean text into English")
+    return errors
+
+
 def read_json(path):
     return json.loads(path.read_text(encoding="utf-8"))
 
@@ -112,8 +161,13 @@ def branch_error(event):
 
 
 def check(root):
-    files = [p for p in repository_files(root) if p.is_file()]
+    paths = repository_files(root)
+    files = [p for p in paths if p.is_file()]
     errors, json_count, link_count, siblings = [], 0, 0, 0
+    try:
+        errors.extend(content_policy_errors(root, paths, read_json(root / ".github/repository-policy.json")))
+    except (OSError, ValueError) as error:
+        errors.append(f"Repository content policy: {error}")
     for name in ("LICENSE", "NOTICE"):
         if not (root / name).is_file():
             errors.append(f"Required project license file is missing: {name}")

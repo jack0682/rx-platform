@@ -1,5 +1,5 @@
-# 이전 규범 검토 기록
+# Prior Normative Review Record
 
-2026-09-10 독립 문서 검토는 [고정 원문](https://github.com/jack0682/rx_docs/blob/6111a7d1dcf33052f38c3e67c6585aec2b44df3c/docs/contracts/v1.0/review_record.md)에 변경 없이 보존한다. 이 기록은 당시 문서 사건 추적과 독자 검토이며, 코드·실물·성능·기능안전 검증 결과가 아니다.
+The independent documentation review dated 2026-09-10 is preserved unchanged in the [immutable original](https://github.com/jack0682/rx_docs/blob/6111a7d1dcf33052f38c3e67c6585aec2b44df3c/docs/contracts/v1.0/review_record.md). It records documentary event traces and reader review at that time, not code, physical, performance, or functional-safety validation.
 
-현재 revision의 변경과 호환 영향은 [2026-09-14 문서 개정](revision_2026-09-14.md)을 따른다. 이전 검토 완료를 개정된 제조사 중립 구성의 새 검토·시험 완료로 승계하지 않는다.
+Changes and compatibility impact for the vendor-neutral revision are in the [2026-09-14 documentation revision](revision_2026-09-14.md). Prior review completion does not carry over as completed new review/testing of the revised vendor-neutral configuration. Subsequent translation-only changes are recorded in the [English translation revision](translation_revision_2026-09-14.md).
