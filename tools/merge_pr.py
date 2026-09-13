@@ -39,6 +39,16 @@ def require_checks(repository, number, head):
                 raise ValueError("CI must belong to this PR, exact head and repository workflow")
 
 
+def require_ready_pr(pr):
+    # The PR-only update ruleset can report "blocked" even for its permitted
+    # PR actor. Exact checks are required separately; GitHub makes the final
+    # authorization decision without bypassing the quality ruleset.
+    if (pr["state"] != "open" or pr["draft"] or pr["base"]["ref"] not in ("main", "develop")
+            or pr.get("mergeable") is not True
+            or pr.get("mergeable_state") not in ("clean", "blocked")):
+        raise ValueError("PR must be open, ready, conflict-free and current with its base")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("number", type=int)
@@ -49,17 +59,21 @@ def main():
         raise ValueError("Invalid repository or PR number")
     prefix = f"repos/{repository}"
     pr = api(f"{prefix}/pulls/{args.number}")
-    if (pr["state"] != "open" or pr["draft"] or pr["base"]["ref"] not in ("main", "develop")
-            or pr.get("mergeable") is not True or pr.get("mergeable_state") != "clean"):
-        raise ValueError("PR must be open, ready, conflict-free and current with all repository rules")
+    require_ready_pr(pr)
     head = pr["head"]["sha"]
     require_checks(repository, args.number, head)
     actor = api("user")
     signoff = args.signoff or f"{actor['name'] or actor['login']} <{actor['id']}+{actor['login']}@users.noreply.github.com>"
     if not re.fullmatch(r"[^<>\r\n]+ <[^<>\s]+>", signoff):
         raise ValueError("Sign-off must be your GitHub web commit Name <email>")
+    current = api(f"{prefix}/pulls/{args.number}")
+    require_ready_pr(current)
+    if (current["head"]["sha"] != head or current["base"]["ref"] != pr["base"]["ref"]
+            or current["base"]["sha"] != pr["base"]["sha"]):
+        raise ValueError("PR head or base changed during verification; rerun after checks finish")
     # GitHub checks the SHA atomically and enforces the live rules. This endpoint
-    # has no administrator override. Merge commits preserve GitFlow ancestry.
+    # has no administrator override. Strict required checks cover a later base
+    # race. Merge commits preserve GitFlow ancestry.
     result = api(f"{prefix}/pulls/{args.number}/merge", {
         "sha": head, "merge_method": "merge",
         "commit_title": f"Merge pull request #{args.number}: {pr['title']}",

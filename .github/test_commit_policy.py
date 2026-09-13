@@ -156,6 +156,70 @@ class HookTests(unittest.TestCase):
 
 
 class GitHubVerificationTests(unittest.TestCase):
+    def test_merge_ready_states_keep_unsafe_states_closed(self):
+        pr = {"state": "open", "draft": False, "base": {"ref": "develop"},
+              "mergeable": True, "mergeable_state": "blocked"}
+        for state in ("blocked", "clean"):
+            pr["mergeable_state"] = state
+            merge_pr.require_ready_pr(pr)
+        for state in ("behind", "dirty", "unknown", "unstable", "draft", None):
+            pr["mergeable_state"] = state
+            with self.subTest(state=state), self.assertRaises(ValueError):
+                merge_pr.require_ready_pr(pr)
+        pr["mergeable_state"] = "blocked"
+        for field, value in (("state", "closed"), ("draft", True), ("mergeable", False), ("mergeable", None)):
+            with self.subTest(field=field, value=value), self.assertRaises(ValueError):
+                merge_pr.require_ready_pr({**pr, field: value})
+
+    def test_blocked_pr_still_requires_checks_and_preserves_server_enforcement(self):
+        head, base = "a" * 40, "b" * 40
+        pr = {"state": "open", "draft": False, "base": {"ref": "develop", "sha": base},
+              "head": {"sha": head}, "title": "A checked change", "mergeable": True,
+              "mergeable_state": "blocked"}
+        calls = []
+        def api(path, payload=None):
+            calls.append((path, payload))
+            if path == "user":
+                return {"id": 1, "login": "maintainer", "name": "Maintainer"}
+            if path.endswith("/pulls/1"):
+                return pr
+            if payload:
+                raise ValueError("GitHub rejected an unsatisfied repository rule")
+            self.fail(f"Unexpected API request: {path}")
+        with patch.object(sys, "argv", ["merge_pr.py", "1"]), patch.object(merge_pr, "api", api):
+            with patch.object(merge_pr, "require_checks", side_effect=ValueError("DCO failed")):
+                with self.assertRaisesRegex(ValueError, "DCO failed"):
+                    merge_pr.main()
+                self.assertFalse(any(payload for _, payload in calls))
+            calls.clear()
+            with patch.object(merge_pr, "require_checks") as checks:
+                with self.assertRaisesRegex(ValueError, "GitHub rejected"):
+                    merge_pr.main()
+                repository = json.loads((ROOT / "repository-settings.json").read_text())["repository"]
+                checks.assert_called_once_with(repository, 1, head)
+                payloads = [payload for _, payload in calls if payload]
+                self.assertEqual(len(payloads), 1)
+                self.assertEqual(payloads[0]["sha"], head)
+                self.assertEqual(payloads[0]["merge_method"], "merge")
+                self.assertNotIn("admin", payloads[0])
+
+    def test_merge_rechecks_base_and_head_after_checks(self):
+        head, base = "a" * 40, "b" * 40
+        pr = {"state": "open", "draft": False, "base": {"ref": "develop", "sha": base},
+              "head": {"sha": head}, "title": "A checked change", "mergeable": True,
+              "mergeable_state": "blocked"}
+        actor = {"id": 1, "login": "maintainer", "name": "Maintainer"}
+        variants = [{**pr, "head": {"sha": "c" * 40}},
+                    {**pr, "base": {"ref": "develop", "sha": "c" * 40}},
+                    {**pr, "base": {"ref": "main", "sha": base}}]
+        for changed in variants:
+            with self.subTest(changed=changed), patch.object(sys, "argv", ["merge_pr.py", "1"]), \
+                    patch.object(merge_pr, "require_checks"), \
+                    patch.object(merge_pr, "api", side_effect=[pr, actor, changed]) as api:
+                with self.assertRaisesRegex(ValueError, "PR head or base changed"):
+                    merge_pr.main()
+                self.assertEqual(api.call_count, 3)
+
     def test_check_requires_verified_openpgp_and_exact_commit(self):
         sha = "a" * 40
         message = "Subject\n\nSigned-off-by: Author <a@example.com>\n"
