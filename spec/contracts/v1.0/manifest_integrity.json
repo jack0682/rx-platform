@@ -1,6 +1,7 @@
 {
-  "schema_hash_sha256": "66756d119140d436da477cce4331f34ef705900b83c338a870bdbe2ced78dd3b",
+  "schema_hash_sha256": "3499dff92023509d4daaded3bb9d89a822c948a9b2c025e954262c9bef9d5afe",
   "manifest_file": "protocol_manifest.json",
   "hashed_bytes": "RFC8785 JCS UTF-8, no trailing newline",
-  "validation_scope": "document artifact only; generated IDL/compiler interoperability not executed"
+  "validation_scope": "Document byte integrity and vendor-neutral policy revision; not hardware or distributed conformance",
+  "document_revision": "2026-09-14-neutral.1"
 }

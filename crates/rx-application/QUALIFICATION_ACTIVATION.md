@@ -87,7 +87,7 @@ application은 `qualification_activation`의 issuance/host_tasks/activation 모�
 
 ## 검증과 남은 범위
 
-[phase54 기록](../../../references/implementation/phase54_checks.json)을 따른다. 원장 시험은 발급/활성화 원자성·응답 유실, 같은 ID, 미확정 Lookup, 현재 문맥 재검사, policy 회수, receipt 소실, 부분 Host 수용, manual Hold 보존, Runtime 재시작 및 v1 목적 추론 거부를 다룬다. fence 후 동일 lease 갱신과 Host cohort/부분 Arm 거부도 검사한다.
+[phase54 기록](https://github.com/jack0682/rx_docs/blob/6111a7d1dcf33052f38c3e67c6585aec2b44df3c/references/implementation/phase54_checks.json)을 따른다. 원장 시험은 발급/활성화 원자성·응답 유실, 같은 ID, 미확정 Lookup, 현재 문맥 재검사, policy 회수, receipt 소실, 부분 Host 수용, manual Hold 보존, Runtime 재시작 및 v1 목적 추론 거부를 다룬다. fence 후 동일 lease 갱신과 Host cohort/부분 Arm 거부도 검사한다.
 
 별도 S 모의 Host, 실제 P writer/worker, 등록 단말 HTTPS에서 발급·수용 응답 유실·활성화/같은 key 회수를 확인한다. 활성화까지 native effect는0개다. 그 뒤 별도의 작업자 StartRun, 실제 Arm/prepare/authorize, native 성공 근거와 인계 관측, 자원 해제 및 Run 완료를 연결해 독립 file-device log의 effect1개를 확인한다. 실제 장비 동작이나 물리 인수를 의미하지 않는다.
 

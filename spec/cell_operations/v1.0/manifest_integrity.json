@@ -1,6 +1,7 @@
 {
-  "cell_manifest_sha256": "e0225c1e39b179f941d98f91daa94b387a6028e4e872b4499f20d63440d270c8",
+  "cell_manifest_sha256": "0c167639b3d048f6717819f9cc9b92bba8c3a11a4c41c7068d3a04c44e7be0ea",
   "manifest_file": "protocol_manifest.json",
   "encoding": "JCS UTF-8 without trailing newline",
-  "scope": "normative design documents, not generated-code or hardware conformance"
+  "scope": "Document byte integrity and vendor-neutral policy revision; not hardware or distributed conformance",
+  "document_revision": "2026-09-14-neutral.1"
 }

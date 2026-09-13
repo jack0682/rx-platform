@@ -53,7 +53,7 @@ Detail의 context_current는 현재 구성/builder/영향과의 일치, device_a
 | GET /api/v1/device-binding-plan?cell=…&id=… | before·후보·영향·미해결 항목·현재성 |
 | POST /api/v1/device-binding-plan/impact-review | 정확한 revision/digest에 대한 독립 영향 검토 |
 
-계획 편집/영향 검토 UI와 실제 적용 endpoint는 후속이다. 통합 시험은 실제 S JTC package/report/approval을 거친 P 개발 API에서 수행한다. 현재 동작과 시험 결과는 [phase67 기록](../../../references/implementation/phase67_checks.json)에 둔다.
+계획 편집/영향 검토 UI와 실제 적용 endpoint는 후속이다. 통합 시험은 실제 S JTC package/report/approval을 거친 P 개발 API에서 수행한다. 현재 동작과 시험 결과는 [phase67 기록](https://github.com/jack0682/rx_docs/blob/6111a7d1dcf33052f38c3e67c6585aec2b44df3c/references/implementation/phase67_checks.json)에 둔다.
 
 ## 다음 연결
 

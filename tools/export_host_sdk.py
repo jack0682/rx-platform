@@ -44,7 +44,7 @@ with tempfile.TemporaryDirectory(prefix=destination.name+'.export-',dir=destinat
         for entry in ['Cargo.toml','build.rs','src','migrations']:
             source=root/'crates'/member/entry
             if source.exists(): copy_checked(source,target/entry)
-    for folder in ['proto','spec']:copy_checked(root/folder,staged/folder)
+    for folder in ['proto','spec','LICENSE','NOTICE']:copy_checked(root/folder,staged/folder)
     files=inventory(staged)
     (staged/'source-lock.json').write_text(json.dumps({'schema':'rx.host-sdk.v1','files':files},indent=2,sort_keys=True)+'\n')
     previous=scratch/'previous'

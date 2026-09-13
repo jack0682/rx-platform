@@ -1,6 +1,6 @@
 # 계약 설계 결정 기록
 
-범위: RX 계약 v1.0 · 상태: v1.0 설계 결정 확정 · [방법 조사](../../../references/contract_research_2026-09-10/research_report.md)
+범위: RX 계약 v1.0 · 상태: v1.0 설계 결정 확정 · [방법 조사](https://github.com/jack0682/rx_docs/blob/6111a7d1dcf33052f38c3e67c6585aec2b44df3c/references/contract_research_2026-09-10/research_report.md)
 
 ## 1. 결정 기준
 
@@ -28,7 +28,7 @@
 | A03 | broker·Temporal/Restate/DBOS를 첫 셀 필수로 추가하지 않음 | 장기 주문/다수 셀/다수 소비자 요구와 운영 조직이 생기면 C02 위 또는 C04 외부에서 평가 |
 | A04 | 산업 표준은 계층별 binding/외부 표현으로 사용 | OPC/PackML/VDA5050을 모든 로봇·CNC·stream에 일괄 적용하지 않음 |
 | A05 | 고속 stream은 solutions 내부, 세션·판정만 platform에 기록 | Rust RPC를 1kHz actuator 제어 loop로 확대하려면 별도 실시간 설계 필요 |
-| A06 | 모든 자사 플랫폼 기본 포함, 모델·모드별 실행 조건 별도 | 검증 부족을 이유로 자사 지원 의무를 제거하지 않으며 미검증 모델 자동 활성도 금지 |
+| A06-R1 | 장비별 profile·의존성 선택, 동일한 admission 조건 적용 | 2026-09-14 개인 프로젝트의 제조사 중립화로 이전 포함 정책을 대체. 미검증 모델 자동 활성 금지는 유지 |
 
 ## 3. 결정 변경 조건
 
@@ -39,3 +39,5 @@
 ## 4. 후속 검증을 남기는 이유
 
 설계 기준판은 **어떤 근거가 있어야 실행을 허용하는지**를 확정한다. 아직 없는 PLC 신호·모델 교정·정지 성능을 임의로 결정하면 설계 완료가 아니라 사실 조작이 된다. 남은 binding 조건은 [검증 목록](06_scenarios_and_validation.md)의 담당 역할·산출물·영향 범위로 관리한다. 이 미확정은 공통 계약의 결론을 미루는 이유가 아니며 해당 binding의 납품 범위를 제한하는 조건이다.
+
+현재 문서는 제조사 중립 문서 개정판이다. 표의 이전 설계 감사 결과는 [원래 문서](https://github.com/jack0682/rx_docs/blob/6111a7d1dcf33052f38c3e67c6585aec2b44df3c/docs/contracts/v1.0/05_decisions.md)의 당시 범위에만 해당하며 이번 개정의 실행 시험 결과가 아니다.

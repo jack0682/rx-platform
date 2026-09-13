@@ -1,8 +1,8 @@
 # 규범 원본 보존
 
-두 v1.0 폴더는 RX 설계 작업 공간에서 복사한 기준판이다. 본문과 protocol manifest는 수정하지 않는다. 원문 상대 링크에는 원래 설계 작업 공간의 구조가 남아 있다.
+두 v1.0 폴더는 [RX 문서 저장소](https://github.com/jack0682/rx_docs)에서 복사한 기준판이다. 2026-09-14 제조사 중립 문서 개정을 반영했다. Wire 번호와 semantic version은 유지하며 문서와 manifest hash는 새 개정의 식별자로 갱신했다. 변경 근거와 호환 영향은 [개정 기록](contracts/v1.0/revision_2026-09-14.md)을 따른다.
 
-구현 결정과 진행 기록은 workspace의 docs/implementation을 따른다. 이 보존본의 hash 일치만으로 구현 적합성이 증명되지는 않는다.
+구현 결정과 진행 기록은 [현재 구현 문서](https://github.com/jack0682/rx_docs/tree/main/docs/implementation)를 따른다. 이 사본의 hash 일치만으로 구현 적합성이 증명되지는 않는다. 이후 수정은 문서 원본의 명시적 개정과 동기화를 통해 반영한다.
 
 검사: python3 tools/check_contract_baselines.py
 

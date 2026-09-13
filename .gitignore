@@ -1,4 +1,7 @@
 /target/
+/.claude/
+/.tools/
+/.archive/
 /var/
 /.env
 *.db
