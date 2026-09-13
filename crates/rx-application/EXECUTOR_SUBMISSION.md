@@ -1,87 +1,87 @@
-# 실행기의 유한 작업 제출과 현재 작업 조회
+# Executor finite-operation submission and current operation reads
 
-상태: 실제 E→P mTLS admission과 P→H dispatcher/모의 장비 경로를 연결했다. 전체 BT worker, 연속 제어, 복구 제출, 현장 qualification 또는 제품 배포 완료를 뜻하지 않는다.
+Status: actual E → P mTLS admission and the P → H dispatcher/simulated-device path are connected. This does not mean completion of the full BT worker, continuous control, recovery submission, field qualification or product deployment.
 
-## 외부 요청
+## External request
 
-`Cell.SubmitOperation`은 현재 인증된 executor session과 CellDefinition 협상을 요구한다. adapter는 frozen cell/base 메시지를 해석해 `ExecutorSubmitRequest`로 전달한다.
+`Cell.SubmitOperation` requires a currently authenticated executor session and CellDefinition negotiation. The adapter interprets frozen cell/base messages and forwards an `ExecutorSubmitRequest`.
 
-| 입력 | 검사 |
+| Input | Check |
 |---|---|
-| 외부 CellCall와 nested base CallContext | session ID, call ID, request key가 같아야 함. base expected_revision은 양쪽 모두 absent |
-| cell ID | 현재 계정 셀 범위·협상한 definition·실제 executor 배정, run 소속과 일치 |
-| run / activation / slot | P의 실제 activation mapping과 일치. 새 작업의 main slot과 검증된 step intent를 확인 |
-| part_attempt_id | activation의 실제 part 관계와 일치. PRODUCTION/SETUP 규칙은 기존 domain 검사 적용 |
-| parent mandate | 신규 slot은 현재 run mandate, 기존 slot은 그 작업에 기록된 permit parent와 일치 |
-| expected_cell_revision / expected_run_revision | 필수 양수. 새 slot을 할당할 때 두 CAS를 같은 T1에서 확인 |
-| intent | 기존 strict codec 및 domain normalization. profile/site/program/parameter/resource/완료·취소 규칙 포함 |
+| Outer CellCall and nested base CallContext | Session ID, call ID and request key must match. base expected_revision must be absent in both |
+| cell ID | Must match current account cell scope/negotiated definition/actual executor assignment and run membership |
+| run / activation / slot | Match P's actual activation mapping. Check the main slot and verified step Intent for a new operation |
+| part_attempt_id | Match the activation's actual part relationship. Existing domain checks apply PRODUCTION/SETUP rules |
+| parent mandate | Match the current run mandate for a new slot; match the permit parent recorded for the operation for an existing slot |
+| expected_cell_revision / expected_run_revision | Required positive values. Check both CAS values in the same T1 when allocating a new slot |
+| intent | Existing strict codec and domain normalization, including profile/site/program/parameter/resource/completion/cancellation rules |
 
-현재 공개 제출은 run mandate에 속한 유한 작업 경로다. `RecoveryStepRef` 및 연속 `CONTROL_SESSION` 제출은 해당 수명주기 구현 전까지 거부한다. 이를 일반 finite 작업으로 낮추어 처리하지 않는다. 원래 연속 제어·복구 구현 요구는 그대로 남는다.
+Current public submission is the finite-operation path under a run mandate. `RecoveryStepRef` and continuous `CONTROL_SESSION` submissions are rejected until their lifecycles are implemented. They are not downgraded to ordinary finite operations. Original continuous-control/recovery implementation requirements remain outstanding.
 
-## 인증·중복 회수·새 admission
+## Authentication, duplicate recovery and new admission
 
-1. writer가 현재 executor session/역할/협상한 셀/배정을 다시 확인한다.
-2. run/activation/part/cell 관계를 대조하고 전체 typed 요청 payload와 key를 비교한다. mandate 및 두 CAS도 업무 fingerprint에 포함한다. 인증용 session/call trace ID는 제외한다.
-3. 같은 key/body면 저장된 작업을 회수한다. 다른 body면 KEY_CONFLICT/ALREADY_EXISTS다. 이 회수는 native 재실행이나 새 permit 발급이 아니다.
-4. 새 key의 기존 slot은 Work/Operation/Permit의 ID·run·cell·activation·part·slot·intent/parent 관계를 검사한 뒤 기존 작업을 회수한다.
-5. 새 slot에는 현재 RunMandate/qualification/block/조건·관측/예산·Host/grant/resource/CAS 검사를 적용한다. 기존 trusted composition 경로와 같은 `submit_transition`을 사용한다.
-6. Work·slot·permit·resource·outbox·요청 결과·원장·checkpoint와 [최초 접수 확인서](ADMISSION_RECEIPT.md)를 한 T1에 commit한다.
+1. The writer rechecks current executor session/role/negotiated cell/assignment.
+2. Compare run/activation/part/cell relationships and the complete typed request payload/key. Mandate and both CAS values are included in the business fingerprint; authentication session/call trace IDs are excluded.
+3. The same key/body recovers the stored operation. A different body yields KEY_CONFLICT/ALREADY_EXISTS. Recovery is neither native reexecution nor a new permit issuance.
+4. An existing slot with a new key recovers the existing operation after checking Work/Operation/Permit ID/run/cell/activation/part/slot/intent/parent relationships.
+5. New slots undergo current RunMandate/qualification/block/conditions/observations/budget/Host/grant/resource/CAS checks. They use the same `submit_transition` as the existing trusted-composition path.
+6. Work/slot/permit/resource/outbox/request result/journal/checkpoint and the [initial admission receipt](ADMISSION_RECEIPT.md) commit in one T1.
 
-새 작업과 별도로 추가 접수 경로를 만들지 않았다. 공개 base Operation.Submit은 이 설치에서 활성화하지 않아 cell/parent/조건 검사를 우회할 수 없다. Cell.SubmitOperation의 유실 응답은 같은 cell request로 회수하며, base Operation.Lookup을 다른 method의 cache 조회로 전용하지 않는다.
+No additional admission path was created separately from new operation creation. Public base Operation.Submit is not enabled in this installation, so it cannot bypass cell/parent/condition checks. Lost Cell.SubmitOperation responses are recovered through the same cell request; base Operation.Lookup is not repurposed as another method's cache read.
 
-## 응답의 의미
+## Response semantics
 
-공개 응답은 T1과 함께 저장된 최초 ADMITTED Receipt다. 이후 Host PREPARED/SEND_ENTERED/완료가 빨리 도착했어도 최초 응답의 stage·revision·journal 위치를 그 후의 상태로 바꾸지 않는다.
+The public response is the initial ADMITTED Receipt stored with T1. Even if subsequent Host PREPARED/SEND_ENTERED/completion arrives quickly, the initial response's stage/revision/journal position is not changed to that later state.
 
-P application은 T1 뒤 immutable receipt를 읽어 반환한다. 이 마지막 읽기나 전송이 실패해도 이미 commit한 T1은 취소되지 않는다. caller는 같은 key/body를 보존해 회수한다. 테스트는 실제 commit 후 첫 응답을 유실시켜 이 경로를 확인한다.
+P application reads and returns the immutable receipt after T1. Failure of this final read or transmission does not undo the already committed T1. The caller preserves the same key/body for recovery. Tests verify this path by losing the first response after actual commit.
 
-현재 `Operation.Get`은 해당 executor의 현재 접근권·셀 협상을 확인하고 P에 저장된 OperationView를 반환한다. read 자체가 Native Reconcile, cancel, 자원 release 또는 재실행을 일으키지 않는다.
+Current `Operation.Get` checks the executor's current access and cell negotiation and returns the OperationView stored in P. The read itself does not cause Native Reconcile, cancellation, resource release or reexecution.
 
 ## OperationView
 
-phase·execution knowledge·outcome·integrity·disposition·evidence IDs를 각각 보존한다. Work의 intent와 Operation에 고정된 digest가 다르면 DATA_LOSS로 거부한다. 유한 작업에 연속 control state를 임의 기본값으로 채우지 않는다.
+Phase, execution knowledge, outcome, integrity, disposition and evidence IDs are preserved separately. If Work's Intent differs from the digest fixed in Operation, the read is rejected with DATA_LOSS. Continuous-control state is not filled with arbitrary defaults for finite operations.
 
-- UNKNOWN은 결과 없음/불명과 격리 상태로 표시하며 FAILED나 성공으로 바꾸지 않는다.
-- SUCCEEDED여도 인계 근거가 없으면 RELEASED로 표시하지 않는다.
-- 나중에 모순된 증거가 도착하면 기존 outcome을 지우지 않고 DISPUTED/QUARANTINED와 함께 전달한다.
-- Reason은 추가적인 불명/무결성 문제를 알린다. OK만으로 성공을 판단하지 않으며 실제 결과는 outcome에서 읽는다.
-- 현재 P의 cancel 수명주기·연속 제어 상태 모델은 아직 구현되지 않았다. 해당 wire 기능을 제공한다고 표시하지 않는다.
+- UNKNOWN is shown as absent/unknown result and quarantine state; it is not changed to FAILED or success.
+- Even SUCCEEDED is not shown as RELEASED without handover evidence.
+- Later contradictory evidence does not erase the existing outcome; it is delivered with DISPUTED/QUARANTINED.
+- Reason conveys additional uncertainty/integrity problems. OK alone is not a success judgment; the actual result is read from outcome.
+- P's current cancellation lifecycle/continuous-control state model is not yet implemented. It is not presented as providing those wire features.
 
-## 실제 통신 시험
+## Actual transport tests
 
 ```mermaid
 sequenceDiagram
-  participant E as 원격 실행기 시험 client
-  participant P as P ingress와 단일 writer
+  participant E as Remote executor test client
+  participant P as P ingress and single writer
   participant D as P dispatcher
-  participant H as 별도 프로세스의 모의 Host
-  E->>P: Session/Cell 협상
-  Note over P: fixture의 명시적 operator 시작
+  participant H as Simulated Host in a separate process
+  E->>P: Session/Cell negotiation
+  Note over P: Explicit operator start in fixture
   D->>H: Arm
-  H-->>P: 준비 확인
+  H-->>P: Readiness confirmation
   E->>P: BeginPart / ResolveActivation / SubmitOperation
-  Note over P: 첫 Submit 응답을 T1 후 유실
-  E->>P: 같은 key/body 재요청
-  P-->>E: 원래 ADMITTED Receipt
+  Note over P: Lose first Submit response after T1
+  E->>P: Retry same key/body
+  P-->>E: Original ADMITTED Receipt
   D->>H: Prepare / Authorize
-  Note over H: 첫 Authorize 응답을 실제 모의 제출 후 유실
-  D->>H: Receipt/Reconcile 조회
-  H-->>P: 원본 결과 증거
+  Note over H: Lose first Authorize response after actual simulated submission
+  D->>H: Receipt/Reconcile read
+  H-->>P: Original result evidence
   E->>P: Operation.Get
-  P-->>E: 결과와 자원 상태
-  Note over P,H: 별도 인계 근거 확인 후 release / part 완료
+  P-->>E: Result and resource state
+  Note over P,H: Release / part completion after separate handover evidence checks
 ```
 
-`tools/test_host_e2e.sh`의 새 세 번째 시나리오는 E→P와 P→H 양쪽에 실제 TLS를 사용한다. E의 첫 Submit 응답과 H의 첫 Authorize 응답을 각각 commit/실제 모의 제출 후 잃게 한다. 두 part에 Authorize 호출·모의 효과가 각각 두 번만 발생하고, 같은 key의 Receipt가 동일하며, P 결과 조회·인계·예산 소진 후 Run 완료까지 이어지는지 확인한다.
+The new third scenario in `tools/test_host_e2e.sh` uses actual TLS for both E → P and P → H. E's first Submit response and H's first Authorize response are lost after commit/actual simulated submission, respectively. It verifies that Authorize calls and simulated effects each occur only twice for two parts, same-key Receipts are identical, and P result reads/handover/budget exhaustion lead through Run completion.
 
-모의 효과 수는 P의 outcome만으로 추정하지 않고 별도 Host가 기록한 `device/effects.jsonl`에서 확인한다. 공개 wire에서 성공이 보인 뒤 내부 상태를 확인할 때는 다른 시점의 snapshot을 동일 시각이라고 가정하지 않는다.
+Simulated effect counts are read from `device/effects.jsonl` written by the separate Host, not inferred only from P outcomes. When inspecting internal state after success appears on the public wire, snapshots from different times are not assumed to represent the same instant.
 
-operator assignment/start, 초기 qualification/ready fact, 자원 인계·part 완료의 후속 호출은 아직 명시적 test composition 경로다. 새 client는 test-only Rust client이며 제품 C++ BT worker를 대신하지 않는다. 실제 현장의 작업자 단말·로봇·PLC·지그·그리퍼를 검증한 시험이 아니다.
+Operator assignment/start, initial qualification/ready facts and subsequent resource-handover/part-completion calls still use explicit test-composition paths. The new client is a test-only Rust client and does not replace the product C++ BT worker. This is not validation of actual field operator terminals, robots, PLCs, fixtures or grippers.
 
-## 추가 반례와 남은 연결
+## Additional counterexamples and remaining connections
 
-core 시험은 잘못된 mandate/part/cell revision, T1 직전 실패·commit 후 응답 유실, 바뀐 같은 key, 새 key의 기존 slot, Hold 뒤 원래 Receipt 회수와 역할 회수 거부를 검증한다. API 시험은 중첩 context 불일치, 다른 run/part/parent, stale run CAS, 새로운 call trace ID로 동일 요청 회수와 base Submit 우회 거부를 검증한다. projection 시험은 UNKNOWN·결론 후 인계·후발 모순의 독립 상태를 대조한다.
+Core tests verify incorrect mandate/part/cell revision, failure immediately before T1/lost response after commit, changed same-key bodies, existing slots with new keys, original Receipt recovery after Hold and rejection after role revocation. API tests verify nested-context mismatch, another run/part/parent, stale run CAS, same-request recovery with a new call trace ID and rejection of base Submit bypass. Projection tests compare the independent states for UNKNOWN, handover after conclusion and late contradiction.
 
-P branch/wait 및 CommitCheckpoint의 release schema/CAS, C++ Frame·유한 작업/Pause/인계 worker·영속 pending key, artifact 확보는 후속 단계에서 연결했다. S 분기/대기 worker도 연결했다. 남은 것은 전체 재시작, 전체 공개 원장, cancel/recovery/control-session, 서비스 liveness, 장기 run 용량/index, UI·자사 두 이미지·설치/복원/인수다. 이 유한 작업 경로를 전체 제품 지원 또는 현장 자동 복구 완료로 확대하지 않는다.
+P branch/wait and CommitCheckpoint release schema/CAS, C++ Frame/finite-operation/Pause/handover workers/durable pending keys and artifact acquisition were connected in later stages. S branch/wait workers are connected too. Remaining work is complete restart, the complete public journal, cancel/recovery/control-session, service liveness, long-run capacity/indexing, UI, the project's two images and installation/restoration/acceptance. This finite-operation path is not expanded into a claim of complete product support or field automatic recovery.
 
-S의 영속 유한 worker가 실제 C++ 요청을 이 P 제출 경로에 연결한다. [요청 journal과 worker](https://github.com/jack0682/rx-solutions/blob/codex/initial-draft/runtime/rx-executor/JOURNAL_AND_WORKER.md)는 local 응답 유실/재시작 경계와 아직 미완료인 전체 daemon·나머지 요청을 구별한다.
+S's durable finite-operation worker connects actual C++ requests to this P submission path. The [request journal and worker](https://github.com/jack0682/rx-solutions/blob/codex/initial-draft/runtime/rx-executor/JOURNAL_AND_WORKER.md) distinguishes local lost-response/restart boundaries from the incomplete full daemon/remaining requests.

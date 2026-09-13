@@ -1,26 +1,26 @@
-# RX 패키지 내용·신뢰 검증
+# RX package content and trust verification
 
-장비·공정·UI 패키지의 공통 외형과 내용 신뢰 경계다. Rust 라이브러리이며 ROS·장비 SDK·P 업무 engine에 의존하지 않는다. S에는 SDK의 일부로 같은 구현을 수출한다.
+The shared package envelope and content trust boundary for device, process, and UI packages. This Rust library has no ROS, device SDK, or P business-engine dependency. The same implementation is exported to S as part of the SDK.
 
-`VerifiedPackage`는 **서명·내용·타깃·의존성 검증을 통과한 immutable bytes**다. 코드 품질·장비 동작·현장 qualification이나 native 실행 권한을 뜻하지 않는다. 검증 함수는 프로세스나 스크립트를 실행하지 않는다.
+`VerifiedPackage` means **immutable bytes that passed signature, content, target, and dependency verification**. It does not establish code quality, device behavior, site qualification, or native execution authority. Verification functions do not execute processes or scripts.
 
-## 구성
+## Structure
 
-- `manifest.json`: schema/package/version/publisher, 두 계약 hash·package ABI, target, entry, permissions, dependencies, assets, files.
-- `manifest.sig.json`: signer key ID와 Ed25519 detached signature.
-- 나머지는 file inventory에 정확한 path/SHA-256/size/executable 의미로 등록한다. 대형 ONNX·지도 등의 자료는 독립적으로 검증한 ArtifactRef dependency로 연결할 수 있다.
+- `manifest.json`: schema/package/version/publisher, two contract hashes and package ABI, target, entry, permissions, dependencies, assets, files.
+- `manifest.sig.json`: signer key ID and Ed25519 detached signature.
+- All remaining files are registered in the inventory with exact path/SHA-256/size/executable semantics. Large ONNX models, maps, and similar materials may be connected through independently verified ArtifactRef dependencies.
 
-signature는 `RX-PACKAGE-MANIFEST-v1` domain, key ID, 정규화한 manifest bytes에 결합한다. key 이름만 바꾸어 같은 공개키의 다른 권한 등록을 이용하지 못한다. package digest는 정규화한 manifest의 SHA-256이며, 서명 교체와 내용 identity를 구별한다.
+The signature binds the `RX-PACKAGE-MANIFEST-v1` domain, key ID, and canonical manifest bytes. Renaming a key cannot exploit another permission registration for the same public key. The package digest is the SHA-256 of the canonical manifest, distinguishing signature replacement from content identity.
 
-JCS를 쓰며 files/targets/permissions/dependencies/assets/profile 목록은 의미상 set 순서를 정규화한다. 중복·case alias·self dependency·모호한 entry 역할은 거부한다. 버전은 SemVer이고 build metadata로 같은 버전을 다르게 포장하지 않는다.
+JCS is used, and semantically set-like files/targets/permissions/dependencies/assets/profile lists have normalized ordering. Duplicates, case aliases, self-dependencies, and ambiguous entry roles are rejected. Versions use SemVer; build metadata cannot repackage the same version as something different.
 
-target의 ros_distribution=None은 ROS 런타임을 요구하지 않는다는 뜻이다. ROS가 설치된 이미지에서도 사용할 수 있다. ROS를 요구하는 패키지는 배포판을 명시하고 일치 여부를 검증한다. 비의존 패키지를 ROS 버전에 불필요하게 결합하지 않는다.
+A target with ros_distribution=None does not require a ROS runtime. It may still be used in an image with ROS installed. Packages requiring ROS specify a distribution and verify the match. ROS-independent packages are not unnecessarily coupled to a ROS version.
 
-Ed25519 검증은 [ed25519-dalek](https://docs.rs/ed25519-dalek/3.0.0/ed25519_dalek/)의 `verify_strict`를 사용한다. 이 라이브러리 사용과 자체 시험은 외부 보안 감사나 납품 보안 인수를 대신하지 않는다.
+Ed25519 verification uses `verify_strict` from [ed25519-dalek](https://docs.rs/ed25519-dalek/3.0.0/ed25519_dalek/). Use of this library and its own tests do not replace an external security audit or delivery security acceptance.
 
-## 권한과 의존성
+## Permissions and dependencies
 
-| 요청 | 허용 package 종류 |
+| Request | Allowed package kinds |
 |---|---|
 | ArtifactRead | Device/Process/UI |
 | ObservationRead(schema) | Device/Process |
@@ -28,33 +28,33 @@ Ed25519 검증은 [ed25519-dalek](https://docs.rs/ed25519-dalek/3.0.0/ed25519_da
 | NativeEndpoint(role) | Device |
 | UiPanelRead(topic) | UI |
 
-요청은 종류별 규칙과 signer의 허용 집합 모두에 속해야 한다. 이 검사는 실행 권한을 실제 부여하는 OS sandbox/broker가 아니다. endpoint role의 실제 장치/주소 binding, site 승인·Host grant/permit은 별도다. UI/공정의 요청을 native 접근 권한으로 승격하지 않는다.
+A request must satisfy both kind-specific rules and the signer's allowed set. This check is not an OS sandbox/broker that actually grants execution authority. Actual device/address bindings for endpoint roles, site approval, and Host grants/permits are separate. UI/process requests are not promoted into native access authority.
 
-의존성은 이름·정확한 버전·종류·manifest digest로 고정한다. 전이 closure에서도 같은 이름의 다른 버전·root 재유입·cycle을 거부한다. 기존 VerifiedPackage도 현재 target/contract와 signer trust를 다시 확인한다. 이전에 검증됐다는 이유로 회수된 key를 신뢰하지 않는다. 현재 graph 한도는 깊이32/총1,024개다.
+Dependencies are pinned by name, exact version, kind, and manifest digest. The transitive closure also rejects different versions of the same name, reintroduction of the root, and cycles. Existing VerifiedPackage objects are rechecked against current target/contracts and signer trust. Prior verification is not a reason to trust a revoked key. Current graph limits are depth 32/1,024 total packages.
 
-asset catalog는 신뢰된 composition 경계에서 제공해야 한다. 임의 API 사용자에게 policy, trust key 또는 asset 검증 결과를 받아서는 안 된다.
+The asset catalog must be supplied by a trusted composition boundary. Arbitrary API users must not supply policy, trust keys, or asset verification results.
 
-## 파일 취득
+## File acquisition
 
-`directory::verify_directory`는 [cap-std](https://docs.rs/cap-std/latest/cap_std/fs/struct.Dir.html)의 지정 디렉토리 capability에서 읽는다. 부모 이동·절대 경로·Windows reserved name·역슬래시·case/hierarchy 충돌을 금지한다. symlink를 따르지 않고 regular file만 받는다. Unix 파일 열기는 nonblocking으로 설정하여 FIFO 교체에 의한 무기한 open을 피한다.
+`directory::verify_directory` reads through a designated directory capability from [cap-std](https://docs.rs/cap-std/latest/cap_std/fs/struct.Dir.html). Parent traversal, absolute paths, Windows reserved names, backslashes, and case/hierarchy conflicts are forbidden. It does not follow symlinks and accepts only regular files. Unix opens are nonblocking to avoid indefinite open calls after FIFO replacement.
 
-파일/디렉토리 수·깊이·전체 byte를 제한하고, 검증 후에는 원본 path가 아닌 소유한 bytes를 사용한다. 원본 파일이 나중에 바뀌어도 VerifiedPackage는 바뀌지 않는다. 메모리에 보관하는 패키지이므로 대형 asset streaming/store는 별도 구현 대상이다.
+File/directory counts, depth, and total bytes are bounded. After verification, owned bytes are used rather than source paths. Later changes to source files do not change VerifiedPackage. Packages are held in memory; streaming/storage for large assets requires separate implementation.
 
-## 보관·로컬 검증 정책
+## Storage and local verification policy
 
-검증된 bytes의 독점 소유 보관소와 현재 정책 재검증을 [STORE.md](STORE.md)에 정리했다. P 이미지의 오프라인 가져오기 도구와 S의 서명 도구가 같은 policy loader를 사용한다. 저장 결과는 CONTENT_VERIFIED_NOT_ADMITTED이며 승인·활성화가 아니다.
+Exclusive storage of verified bytes and revalidation under current policy are documented in [STORE.md](STORE.md). P image offline import tools and S signing tools use the same policy loader. The storage result is CONTENT_VERIFIED_NOT_ADMITTED, not approval or activation.
 
-단일 ABI 정책은 `rx.package-verification-policy.v1`을 유지한다. 장비 참조 패키지 ABI v2와 공정 패키지 ABI v1을 같은 보관소에 반입할 때는 `rx.package-verification-policy.v2`와 명시적인 `additional_package_abis`를 사용한다. 기본 ABI는 `contracts.package_abi`이며 추가 목록은 1–8개, 중복이나 기본 ABI의 재기재를 허용하지 않는다. v1 문서는 추가 ABI를 허용하지 않고 v2 문서는 빈 목록을 허용하지 않는다.
+Single-ABI policy retains `rx.package-verification-policy.v1`. To import device reference packages with ABI v2 and process packages with ABI v1 into the same store, use `rx.package-verification-policy.v2` with explicit `additional_package_abis`. The default ABI is `contracts.package_abi`; the additional list contains 1–8 entries and permits neither duplicates nor repetition of the default ABI. A v1 document does not permit additional ABIs, and a v2 document does not permit an empty list.
 
-예를 들어 기본 ABI가 `rx.package-abi.v2`인 정책에 `additional_package_abis: ["rx.package-abi.v1"]`을 지정할 수 있다. 이 목록은 ABI 호환성의 허용 범위만 넓힌다. 두 계약 hash, manifest 종류·schema, target, signer의 종류·권한, 내용·서명 검사는 그대로 적용된다. 추가 ABI가 없는 정책의 fingerprint는 기존 값과 같으며, 추가 목록의 변경은 fingerprint를 바꾼다. 서로 다른 패키지를 받을 때마다 운영 정책을 교체할 필요는 없지만, 정책 자체의 변경은 기존 현재성 검사를 따른다.
+For example, a policy whose default ABI is `rx.package-abi.v2` may specify `additional_package_abis: ["rx.package-abi.v1"]`. This list broadens only the allowed ABI compatibility range. The two contract hashes, manifest kind/schema, target, signer kinds/permissions, and content/signature checks still apply. A policy without additional ABIs retains its existing fingerprint; changes to the additional list change the fingerprint. Receiving different packages no longer requires replacing operational policy each time, but changes to the policy itself remain subject to existing currentness checks.
 
-## 미완료 경계
+## Incomplete boundaries
 
-- 실제 DeviceFamily/Profile·ProcessSource·UI descriptor의 semantic validation과 실행 연결.
-- production trust key 공급/회수·signing service와 독립 검증 보고서.
-- 사용자/셀별 stage 접수는 [반입 API](../rx-application/PACKAGE_INTAKE.md)에 연결했다. 공정의 서명된 검토 자료·소프트웨어 승인도 [검토 API](../rx-application/PROCESS_REVIEW.md)에 연결했다. Device/UI·절차 검증과 install/activate, site permission 승인, OS process sandbox/FD broker는 미완료다.
-- 이미지/패키지 혼합 배포·변경 영향·qualification과 업데이트/복원.
+- Semantic validation and execution integration for actual DeviceFamily/Profile, ProcessSource, and UI descriptors.
+- Production trust-key provisioning/revocation, signing services, and independent verification reports.
+- Per-user/cell stage intake connects through the [intake API](../rx-application/PACKAGE_INTAKE.md). Signed process review materials and software approval also connect through the [review API](../rx-application/PROCESS_REVIEW.md). Device/UI/procedure validation, install/activate, site permission approval, and OS process sandbox/FD broker remain incomplete.
+- Mixed image/package deployment, change impact, qualification, and update/restore.
 
-현재 필드/검증은 새 패키지 외형의 초안이며 frozen 작업·셀 계약 파일을 변경하지 않는다. entry 파일이 존재한다고 그 내용을 실행 가능한 공정이나 검증된 장비로 취급하지 않는다.
+Current fields/verification are a draft of the new package envelope and do not change frozen operation/cell contract files. The presence of an entry file does not establish an executable process or validated device.
 
-공정 패키지의 결정적 조립과 외부 detached signature 도구는 [S process-package](https://github.com/jack0682/rx-solutions/blob/codex/initial-draft/runtime/rx-process-package/README.md)에 연결했다. 일반 production trust 공급/활성화는 여전히 별도다.
+Deterministic process-package assembly and external detached-signature tools connect through [S process-package](https://github.com/jack0682/rx-solutions/blob/codex/initial-draft/runtime/rx-process-package/README.md). General production trust provisioning/activation remains separate.

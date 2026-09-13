@@ -1,52 +1,52 @@
-# Executor PauseRun과 허가 철회
+# Executor PauseRun and authority revocation
 
-상태: 실제 Workflow.PauseRun, S의 영속 pause 요청, C++ halt fixture에 연결했다. Pause 응답은 native 취소·정지·접근 허가·자원 인계 완료가 아니다.
+Status: connected to actual Workflow.PauseRun, S's durable pause request and the C++ halt fixture. A Pause response is not completion of native cancellation/stop/access authorization/resource handover.
 
-## 적용 범위
+## Scope
 
-현재 Host permit/Arm/fence는 cell epoch와 scope에 묶여 있다. 이미 진행 중이거나 Arm 준비 중인 run의 중단에서 local Run.state만 바꾸면 기존 Host 허가의 정리가 불명확해진다. 따라서 이 구현은 해당 cell과 검증된 공유 scope/resource closure를 함께 철회한다.
+Current Host permits/Arm/fences bind to cell epoch and scope. Changing only local Run.state when pausing a run already executing or preparing Arm would leave cleanup of existing Host authority unclear. This implementation therefore revokes the relevant cell together with its validated shared scope/resource closure.
 
-- 실행 중인 origin run은 PAUSED, 영향 closure의 다른 진행/준비 run은 RECOVERY_REQUIRED다.
-- cell/scope epoch를 올리고 ExecutorPause LATCHED block을 남긴다. active mandate와 미사용 permit를 철회하고 fence outbox를 함께 기록한다.
-- 아직 Arm/mandate/permit가 없는 PREPARED run은 자체 상태만 PAUSED로 바꾼다. 다른 cell 작업을 불필요하게 fence하지 않는다.
-- 이미 PAUSED/RECOVERY_REQUIRED/COMPLETED/ABANDONED인 run은 새 fence나 상태 하향을 만들지 않는다. 이미 완료한 상태를 PAUSED로 덮어쓰지 않는다.
-- 예산과 part/activation/operation identity는 유지한다. 자동 재시작이나 예산 환급은 없다.
+- An executing origin run becomes PAUSED; other executing/preparing runs in the affected closure become RECOVERY_REQUIRED.
+- Cell/scope epochs increment and an ExecutorPause LATCHED block is recorded. Active mandates and unused permits are revoked, with fence outbox records written together.
+- A PREPARED run without Arm/mandate/permit changes only its own state to PAUSED. Other cell work is not unnecessarily fenced.
+- A run already PAUSED/RECOVERY_REQUIRED/COMPLETED/ABANDONED does not create a new fence or downgrade state. A completed state is not overwritten with PAUSED.
+- Budget and part/activation/operation identities are preserved. There is no automatic restart or budget refund.
 
-이 Pause는 explicit halt/중단 요청의 제한 경로다. 정상 WAIT_TARGET·일시적인 조회 지연을 이 API로 바꾸지 않는다. 그 상태는 기존 transient/연속성 규칙을 따른다. 실제 pause 해제와 run 재시작은 별도 명시적 조건·재확인 절차의 대상이며 아직 전체 restart API가 완료되지 않았다.
+This Pause is a restricted path for explicit halt/pause requests. Normal WAIT_TARGET or temporary read delays are not converted to this API; those states follow existing transient/continuity rules. Actual unpausing and run restart require separate explicit conditions/reconfirmation procedures, and the complete restart API is not yet finished.
 
-## 검사와 transaction
+## Checks and transaction
 
-현재 executor mTLS session·계정 역할·cell definition 협상·배정을 확인한 뒤, key와 전체 PauseRun payload(expected run revision 포함)를 비교한다. 신규 요청은 run CAS를 검사하고, EXECUTING run은 현재 owner session이 일치해야 한다. 같은 key/body는 원래 응답을 반환한다.
+After checking current executor mTLS session/account role/cell definition negotiation/assignment, compare the key and complete PauseRun payload, including expected run revision. New requests check run CAS; an EXECUTING run must match the current owner session. The same key/body returns the original response.
 
-상태/epoch/block/mandate/permit/outbox 및 control event/checkpoint를 하나의 transaction에서 처리한다. origin PAUSED를 만들기 위해 별도 두 번째 Run update를 하지 않는다. 기존 invalidation을 parameterize해 같은 commit의 최종 상태를 capture한다.
+State/epoch/block/mandate/permit/outbox and control event/checkpoint are handled in one transaction. A separate second Run update is not made to set the origin PAUSED. Existing invalidation is parameterized to capture the final state of the same commit.
 
-`Finalized`는 control capture 후 같은 transaction에서 완성된 projection을 읽고 요청 결과만 저장할 수 있다. core put/append/outbox mutation 기능은 노출하지 않는다. 이를 통해 PauseRun의 응답도 최종 RunSnapshot과 같은 cut에서 cache하며, read-after-commit으로 다른 시점의 상태를 최초 응답에 섞지 않는다.
+`Finalized` can read the completed projection in the same transaction after control capture and store only the request result. It exposes no core put/append/outbox mutation capabilities. This caches the PauseRun response at the same cut as the final RunSnapshot, without mixing later state into the initial response through read-after-commit.
 
-## 전달 상태와 결과
+## Delivery state and results
 
-- NEW인 operation delivery는 VOIDED로 봉인한다. native 미발행을 P가 증명할 수 있는 경우에만 NOT_EXECUTED 근거를 기록한다.
-- 이미 EMIT_ENTERED이면 Pause만으로 CANCELED/NOT_EXECUTED/성공을 만들지 않는다. 미결 전달은 UNKNOWN/격리와 조정 경로에 남긴다.
-- issued permit는 VOIDED가 되므로 늦게 온 PREPARED receipt가 새 Authorize outbox를 만들지 못한다.
-- pending start attempt는 REJECTED이고 늦은 Arm acknowledgment는 run을 다시 시작하지 못한다. 미발행 Arm도 현재 attempt 검사를 통과해 emit할 수 없다.
-- late correlated native result는 계속 수용한다. 실제 결과가 확인되어도 resource handover는 별도이며 격리/지지를 임의 해제하지 않는다.
+- NEW operation deliveries are sealed as VOIDED. NOT_EXECUTED evidence is recorded only when P can prove no native emission.
+- If already EMIT_ENTERED, Pause alone does not create CANCELED/NOT_EXECUTED/success. Unresolved delivery remains in UNKNOWN/quarantine and reconciliation paths.
+- Issued permits become VOIDED, so a late PREPARED receipt cannot create a new Authorize outbox item.
+- Pending start attempts become REJECTED, and late Arm acknowledgments cannot restart the run. An unissued Arm cannot pass the current-attempt check to emit either.
+- Late correlated native results remain acceptable. Even after an actual result is established, resource handover is separate; quarantine/support is not arbitrarily released.
 
-Fieldbus stop이나 robot cancel을 대신 호출한 것으로 기록하지 않는다. Fence 전달과 이미 진입한 작업의 조사/취소·local protection은 각자의 계약을 유지한다.
+It is not recorded as having called fieldbus stop or robot cancel on their behalf. Fence delivery, investigation/cancellation of already-entered operations and local protection retain their respective contracts.
 
-## S 요청과 반복 중단
+## S requests and repeated halts
 
-S journal에 PauseRun body와 전체 frozen RunView 응답을 기록한다. pause logical key는 같은 run/visit/root뿐 아니라 원래 executor session/epoch를 포함한다. 이 optional control identity가 없는 기존 operation key의 canonical 표현은 유지한다.
+The S journal records the PauseRun body and complete frozen RunView response. A pause logical key includes the original executor session/epoch as well as the same run/visit/root. The canonical representation of existing operation keys without this optional control identity is preserved.
 
-따라서 같은 pause의 응답 유실은 같은 key로 회수하고, 이후 명시적으로 다시 허가된 다른 context의 새 halt는 별도 요청이 된다. 과거 halt로 더 새 epoch의 실행을 자동 중단하지 않는다. 새 snapshot에서 이미 제한된 run이 확인되면 observation으로 기록하며 받지 못한 RPC reply를 만들지 않는다.
+A lost response for the same pause is therefore recovered with the same key, while a new halt in a different, subsequently explicitly authorized context becomes a separate request. A historical halt does not automatically pause execution in a newer epoch. If a new snapshot shows an already restricted run, this is recorded as an observation without fabricating an unreceived RPC reply.
 
-C++ `Executor::halt`가 만든 PauseExecutor request를 S worker가 검증해 이 경로로 전달한다. RPC 응답 후에는 C++/S 자체 판단으로 동작 재개나 물리 정지 완료를 선언하지 않는다.
+The S worker validates the PauseExecutor request created by C++ `Executor::halt` and forwards it through this path. After the RPC response, C++/S does not independently declare resumed operation or physical stop completion.
 
-## 검증
+## Validation
 
-- core commit 직전 실패/commit 후 응답 유실에서 RunSnapshot·fence·무효화·key 결과 원자성.
-- shared cell closure 반영, origin Run revision 한 번 증가, part/budget 보존과 같은 key의 응답 불변.
-- 미발행 작업의 봉인, 늦은 PREPARED 뒤 Authorize 생성 금지, Arm 준비 중 pause 뒤 late acknowledgment 거부.
-- 이미 emit된 요청은 취소로 단정하지 않고 후속 상관 결과를 받아 기록.
-- PREPARED/no-Arm run은 cell epoch를 바꾸지 않음.
-- 실제 mTLS PauseRun과 C++ halt→S journal→P 처리, pause 응답 유실과 새 boot recovery에서도 pause key/미수신 상태 보존.
+- Atomic RunSnapshot/fence/invalidation/key results on failure immediately before core commit and lost response after commit.
+- Shared-cell closure, one origin Run revision increment, part/budget preservation and immutable same-key responses.
+- Sealing unissued operations, no Authorize after late PREPARED, and rejection of late acknowledgments after pausing during Arm preparation.
+- Already-emitted requests are not presumed canceled; subsequent correlated results are accepted and recorded.
+- A PREPARED/no-Arm run does not change the cell epoch.
+- Actual mTLS PauseRun and C++ halt → S journal → P handling, including pause key/unreceived-state preservation after a lost pause response and new-boot recovery.
 
-시험의 clock/qualification/Host/operator는 명시적인 simulation fixture다. 실제 장비 정지 시간·안전 접근·현장 복구 인수는 별도이며 이 구현의 통과로 주장하지 않는다.
+Test clocks/qualification/Hosts/operators are explicit simulation fixtures. Actual device stopping time, safe access and field recovery acceptance are separate and are not established by these passing tests.

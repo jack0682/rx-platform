@@ -158,8 +158,8 @@ mod tests {
     fn bounds_the_complete_json_line_including_unicode_escaping_and_newline() {
         let host = Name::new(format!("host/{}", "x".repeat(123))).unwrap();
         let error = Error::Rpc(Status::internal(format!(
-            "경계 오류 {}",
-            "한글\"\\\n".repeat(1000)
+            "Boundary error {}",
+            "\u{d55c}\u{ae00}\"\\\n".repeat(1000)
         )));
         let line = line(&host, &error);
         assert!(line.chars().count() < MAX_LINE_CHARS);
@@ -167,7 +167,12 @@ mod tests {
         let value: serde_json::Value = serde_json::from_str(&line).unwrap();
         assert_eq!(value["host"], host.as_str());
         assert_eq!(value["truncated"], true);
-        assert!(value["message"].as_str().unwrap().starts_with("경계 오류"));
+        assert!(
+            value["message"]
+                .as_str()
+                .unwrap()
+                .starts_with("Boundary error")
+        );
     }
 
     #[test]
