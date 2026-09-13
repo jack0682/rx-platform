@@ -42,7 +42,7 @@ def patch_s(final:Path, installation:dict, engine_sha:str)->None:
     publish_new(final/'executor-config/cell.json',executor)
 
 
-def exercise(docker,materials,final:Path,bundle:Path,p_image:dict,s_image:dict,port:int,validator:str,release_evidence:Path,composition:str)->None:
+def exercise(docker,materials,final:Path,bundle:Path,p_image:dict,s_image:dict,port:int,validator:str,release_evidence:Path,composition:str,*,start_services=None,after_commissioning=None)->None:
     browser=json.loads((final/'browser-fixture.json').read_text())
     delivery=json.loads((final/'delivery.json').read_text())
     target=json.loads((final/'reference/target-cell.json').read_text())
@@ -81,8 +81,12 @@ def exercise(docker,materials,final:Path,bundle:Path,p_image:dict,s_image:dict,p
     patch_s(final,installation,hashlib.sha256(engine.read_bytes()).hexdigest())
     context={'docker':docker,'materials':materials,'final':final,'browser':browser,'delivery':delivery,
              'target':target,'installation':installation,'p':p,'p_image':p_image,'s_image':s_image,
-             'imports':imports,'validator':validator,'release_evidence':release_evidence,'composition':composition}
-    if composition == 'supervisor':
+             'imports':imports,'validator':validator,'release_evidence':release_evidence,'composition':composition,
+             'p_mounts':mounts,'p_data':p_data,'port':port,'after_commissioning':after_commissioning}
+    if start_services is not None:
+        if composition != 'independent':raise ValueError('fixture services require independent test composition')
+        context.update(start_services(context))
+    elif composition == 'supervisor':
         from .supervisor import start
         context.update(start(context))
     else:

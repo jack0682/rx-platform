@@ -95,8 +95,21 @@ impl TerminalHttps {
         worker: Option<Arc<rx_runtime::package_intake::Worker>>,
         bundle: Option<crate::operator_ui::OperatorBundle>,
     ) -> Result<Self, String> {
+        Self::new_with_host_recovery(runtime, credentials, policy, material, worker, bundle, None)
+    }
+    /// Add a release-configured recovery worker without changing terminal or operation authority.
+    pub fn new_with_host_recovery(
+        runtime: Arc<dyn ApplicationPort>,
+        credentials: Credentials,
+        policy: HttpsPolicy,
+        material: TlsMaterial,
+        worker: Option<Arc<rx_runtime::package_intake::Worker>>,
+        bundle: Option<crate::operator_ui::OperatorBundle>,
+        recovery: Option<Arc<dyn rx_runtime::host_recovery::Service>>,
+    ) -> Result<Self, String> {
         let acceptor = prepare_tls(material)?;
-        let mut router = routes::terminal_router(runtime, credentials, policy.clone(), worker)?;
+        let mut router =
+            routes::terminal_router(runtime, credentials, policy.clone(), worker, recovery)?;
         if let Some(bundle) = bundle {
             router = router.merge(bundle.router(policy));
         }

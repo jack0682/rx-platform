@@ -48,8 +48,14 @@ def selected(prefix,field,value):
         for part in field.split('.'):selected=selected.get(part) if isinstance(selected,dict) else None
         if selected==value:result.append({'key':k,'revision':revision,'value':doc})
     return result
+outbox=[]
+for oid,state,raw in db.execute('SELECT id,state,document FROM outbox'):
+    value=json.loads(raw)['value']
+    if value.get('host')=='host/sim':outbox.append({'id':oid,'state':state,'value':value})
 result={'producer':producer,'session':session,'evidence_cursor':cursor,'hosts':selected('host','id','host/sim'),
-        'cells':selected('cell','configuration.id','cell/a')}
+        'cells':selected('cell','configuration.id','cell/a'),
+        'baselines':selected('host-binding-baseline','host','host/sim'),
+        'plans':selected('host-link-plan','host','host/sim'),'outbox':outbox}
 db.rollback();db.close()
 print(json.dumps(result,sort_keys=True,separators=(',',':')))
 '''
@@ -64,7 +70,7 @@ def until(check, accept, seconds=20):
         time.sleep(.2)
 
 
-def exercise(docker, materials, final, bundle, p_image, s_image, port):
+def exercise(docker, materials, final, bundle, p_image, s_image, port, after_reconnect=None):
     browser=json.loads((final/'browser-fixture.json').read_text())
     delivery=json.loads((final/'delivery.json').read_text())
     check_role_files(final,browser)
@@ -167,6 +173,15 @@ def exercise(docker, materials, final, bundle, p_image, s_image, port):
     assert all(after_blocks.get(key)==value for key,value in before_blocks.items()),'old restrictions must remain intact'
     added=[b for key,b in after_blocks.items() if key not in before_blocks]
     assert added and all(b['reason']=='RUNTIME_RESTART' for b in added),added
+    extension = None
+    if after_reconnect is not None:
+        extension = after_reconnect({
+            'docker':docker,'materials':materials,'final':final,'browser':browser,'delivery':delivery,
+            'p_image':p_image,'s_image':s_image,'port':port,'installation':new_installation,
+            'initial':initial,'stopped':stopped,'stable':stable,'h':h,'p':restarted,
+            'p_data':pd,'h_data':hd,'oracle':oracle,'host_status':host_status,
+            'evidence_count':evidence_count,'api':new_api,
+        })
     docker.run('kill','--signal','TERM',h)
     h_stop=until(lambda:docker.state(h)['State'],lambda state:not state['Running'],30)
     assert h_stop['ExitCode']==0
@@ -179,12 +194,13 @@ def exercise(docker, materials, final, bundle, p_image, s_image, port):
         'host_before':host_before,'host_after':host_after,'host_installation':descriptor_before,
         'native_effects':0,'new_evidence_records':0,'operating_registration_rebound':False,
         'qualification_restored':False,'run_count':0,'p_stop_exits':[first_exit,final_exit],
+        'extension':extension,
         'oracle':'Independent read-only SQLite transaction; no direct writes or state injection.',
         'limitations':['Evidence/session communication only; operating rebind and restart/resume remain unimplemented.',
                        'Unqualified FILE_SIMULATION cell; no physical or commissioned recovery acceptance.']})
 
 
-def main():
+def main(after_reconnect=None):
     parser=argparse.ArgumentParser()
     parser.add_argument('--platform-image',default='rx-platform:runtime-draft')
     parser.add_argument('--solutions-image',default='rx-solutions:runtime-draft')
@@ -201,7 +217,7 @@ def main():
             materials.create_seed(s_image['Architecture']);package,compiled,compiler=materials.compile()
             validator=hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
             final=materials.finalize(package,compiled,compiler,port,bundle,validator)
-            exercise(docker,materials,final,bundle,p_image,s_image,port)
+            exercise(docker,materials,final,bundle,p_image,s_image,port,after_reconnect)
     finally:docker.cleanup()
 
 

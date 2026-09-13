@@ -214,3 +214,5 @@ fn missing_as(error: StoreError, fallback: Reject) -> StoreError {
         other => other,
     }
 }
+
+mod host_recovery;

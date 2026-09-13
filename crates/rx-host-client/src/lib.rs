@@ -24,6 +24,7 @@ pub struct HostClient {
     pub host_id: Name,
     pub session: base::Session,
     channel: Channel,
+    transport_pin: Option<app::host_link::TransportPin>,
 }
 #[derive(Clone)]
 pub struct Hello {
@@ -35,6 +36,10 @@ pub struct Hello {
     pub clock_id: String,
 }
 impl HostClient {
+    /// Present only after the exact release pin was checked on the TLS stream.
+    pub fn transport_pin(&self) -> Option<&app::host_link::TransportPin> {
+        self.transport_pin.as_ref()
+    }
     pub async fn inspect_cell(&self, cell_id: &Name) -> Result<cell::HostCellState, Status> {
         cell::cell_host_service_client::CellHostServiceClient::new(self.channel.clone())
             .inspect(self.call(cell_id, &new_id()))
@@ -100,6 +105,7 @@ impl HostClient {
             host_id,
             session,
             channel,
+            transport_pin: None,
         })
     }
     pub async fn open_cell(
@@ -629,3 +635,5 @@ pub mod configuration_worker;
 pub mod qualification;
 
 pub mod qualification_worker;
+
+pub mod recovery;

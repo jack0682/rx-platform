@@ -330,13 +330,19 @@ pub async fn serve<C: Clock + 'static>(
         } else {
             None
         };
-        let https = rx_api::terminal_https::TerminalHttps::new_with_operator_ui(
+        let recovery = Arc::new(rx_host_client::recovery::Worker::new(
+            Arc::new(handle.clone()),
+            loaded.host_links.clone(),
+        )?);
+        recovery.register().await?;
+        let https = rx_api::terminal_https::TerminalHttps::new_with_host_recovery(
             Arc::new(handle.clone()),
             loaded.credentials,
             rx_api::terminal_https::HttpsPolicy::new(&config.https.origin)?,
             loaded.https_tls,
             package_worker,
             loaded.operator_ui,
+            Some(recovery),
         )?;
         let grpc = rx_api::grpc::PlatformIngress::new(
             Arc::new(handle.clone()),

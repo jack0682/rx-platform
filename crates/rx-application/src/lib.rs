@@ -14,6 +14,7 @@ pub mod closure;
 
 pub mod lifecycle;
 
+pub mod host_binding_baseline;
 pub mod host_link;
 
 pub mod observation;
@@ -44,3 +45,5 @@ pub mod qualification_activation;
 pub mod runtime_invalidation;
 
 pub mod operator_start;
+
+pub mod host_recovery;
