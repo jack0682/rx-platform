@@ -98,7 +98,7 @@ def branch_error(event):
     named = lambda prefix: source.startswith(prefix + "/") and len(source) > len(prefix) + 1
     # Bots can prepare version updates for develop and security fixes for main.
     # This permits a branch route; it never grants approval or merge permission.
-    if target in {"main", "develop"} and named("dependabot"):
+    if same_repo and target in {"main", "develop"} and named("dependabot"):
         return None
     if target == "develop":
         if any(named(prefix) for prefix in ("feature", "fix", "docs", "chore", "codex")):
