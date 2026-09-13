@@ -8,6 +8,48 @@ use rx_domain::types::*;
 use rx_ports::{Repository, StoreError};
 
 pub enum Command {
+    RegisterInvestigationPolicy {
+        policy: investigation::Policy,
+        policy_file_digest: Digest,
+    },
+    InvestigationContext {
+        identity: Identity,
+        operation: Id,
+    },
+    PrepareInvestigationAttestation {
+        identity: Identity,
+        key: Id,
+        input: investigation::AttestSubmit,
+    },
+    CommitInvestigationAttestation(Box<investigation::Prepared>),
+    GetInvestigationAttestation {
+        identity: Identity,
+        operation: Id,
+        id: Id,
+    },
+    ListInvestigationAttestations {
+        identity: Identity,
+        operation: Id,
+        after: Option<Id>,
+        limit: usize,
+    },
+    PrepareInvestigationDisposition {
+        identity: Identity,
+        key: Id,
+        input: investigation::RecordDisposition,
+    },
+    CommitInvestigationDisposition(Box<investigation::PreparedDisposition>),
+    GetInvestigationDisposition {
+        identity: Identity,
+        operation: Id,
+        id: Id,
+    },
+    ListInvestigationDispositions {
+        identity: Identity,
+        operation: Id,
+        after: Option<Id>,
+        limit: usize,
+    },
     RegisterHostRecoveryTransport {
         host: Name,
         pin: rx_application::host_recovery::TransportPin,
@@ -739,6 +781,16 @@ pub enum Command {
     },
 }
 pub enum Reply {
+    InvestigationPolicy(investigation::PolicyGeneration),
+    InvestigationContext(Box<investigation::Context>),
+    InvestigationPreflight(investigation::Preflight),
+    InvestigationAttestation(Box<investigation::Attestation>),
+    InvestigationAttestationView(Box<investigation::AttestationView>),
+    InvestigationAttestationPage(investigation::AttestationPage),
+    InvestigationDispositionPreflight(investigation::DispositionPreflight),
+    InvestigationReceipt(Box<investigation::Receipt>),
+    InvestigationReceiptView(Box<investigation::ReceiptView>),
+    InvestigationReceiptPage(investigation::ReceiptPage),
     HostRecoveryContext(Box<rx_application::host_recovery::Context>),
     HostRecoveryBinding(Box<rx_application::host_recovery::Binding>),
     OptionalHostRecoveryBinding(Option<Box<rx_application::host_recovery::Binding>>),
@@ -906,6 +958,78 @@ impl<R: Repository + Send + 'static, C: Clock + 'static, A: QualificationAuthori
     }
     fn process(&mut self, command: Command) -> rx_ports::Result<Reply> {
         match command {
+            Command::RegisterInvestigationPolicy {
+                policy,
+                policy_file_digest,
+            } => self
+                .engine
+                .register_investigation_policy(policy, policy_file_digest)
+                .map(Reply::InvestigationPolicy),
+            Command::InvestigationContext {
+                identity,
+                operation,
+            } => self
+                .engine
+                .investigation_context(&identity, &operation)
+                .map(|v| Reply::InvestigationContext(Box::new(v))),
+            Command::PrepareInvestigationAttestation {
+                identity,
+                key,
+                input,
+            } => self
+                .engine
+                .prepare_investigation_attestation(&identity, &key, input)
+                .map(Reply::InvestigationPreflight),
+            Command::CommitInvestigationAttestation(prepared) => self
+                .engine
+                .commit_investigation_attestation(*prepared)
+                .map(|v| Reply::InvestigationAttestation(Box::new(v))),
+            Command::GetInvestigationAttestation {
+                identity,
+                operation,
+                id,
+            } => self
+                .engine
+                .investigation_attestation(&identity, &operation, &id)
+                .map(|v| Reply::InvestigationAttestationView(Box::new(v))),
+            Command::ListInvestigationAttestations {
+                identity,
+                operation,
+                after,
+                limit,
+            } => self
+                .engine
+                .list_investigation_attestations(&identity, &operation, after.as_ref(), limit)
+                .map(Reply::InvestigationAttestationPage),
+            Command::PrepareInvestigationDisposition {
+                identity,
+                key,
+                input,
+            } => self
+                .engine
+                .prepare_investigation_disposition(&identity, &key, input)
+                .map(Reply::InvestigationDispositionPreflight),
+            Command::CommitInvestigationDisposition(prepared) => self
+                .engine
+                .commit_investigation_disposition(*prepared)
+                .map(|v| Reply::InvestigationReceipt(Box::new(v))),
+            Command::GetInvestigationDisposition {
+                identity,
+                operation,
+                id,
+            } => self
+                .engine
+                .investigation_disposition(&identity, &operation, &id)
+                .map(|v| Reply::InvestigationReceiptView(Box::new(v))),
+            Command::ListInvestigationDispositions {
+                identity,
+                operation,
+                after,
+                limit,
+            } => self
+                .engine
+                .list_investigation_dispositions(&identity, &operation, after.as_ref(), limit)
+                .map(Reply::InvestigationReceiptPage),
             Command::RegisterHostRecoveryTransport { host, pin } => self
                 .engine
                 .register_host_recovery_transport(host, pin)

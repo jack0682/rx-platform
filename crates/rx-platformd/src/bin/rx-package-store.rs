@@ -10,6 +10,7 @@ type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Config {
+    investigation: None,
     schema: Name,
     store_root: PathBuf,
     import_root: PathBuf,

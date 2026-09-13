@@ -81,6 +81,8 @@ pub struct HostLink {
 #[serde(deny_unknown_fields)]
 pub struct Config {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub investigation: Option<Investigation>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub operator_ui: Option<OperatorUi>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub package_intake: Option<PackageIntake>,
@@ -95,6 +97,12 @@ pub struct Config {
     pub credentials: PinnedFile,
     pub https: Https,
     pub grpc: Grpc,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Investigation {
+    pub artifact_root: PathBuf,
+    pub policy: PinnedFile,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -202,12 +210,21 @@ impl Loaded {
             return Err("invalid startup configuration".into());
         }
         rx_api::terminal_https::HttpsPolicy::new(&config.https.origin)?;
+        if let Some(input) = &config.investigation {
+            if !input.artifact_root.is_absolute() {
+                return Err("absolute investigation artifact root required".into());
+            }
+            let policy: rx_application::investigation::Policy =
+                canonical::decode_json(&input.policy.read(false)?)?;
+            policy.digest()?;
+        }
         let operator_ui = config.operator_ui.as_ref().map(|input| {
             let operator_location = directory_location(&input.directory)?;
             let mut mutable_roots = vec![&config.data_directory, &config.runtime_directory];
             if let Some(intake) = &config.package_intake {
                 mutable_roots.push(&intake.import_root);
             }
+            if let Some(input) = &config.investigation { mutable_roots.push(&input.artifact_root); }
             for root in mutable_roots {
                 let mutable_location = directory_location(root)?;
                 if operator_location.starts_with(&mutable_location) || mutable_location.starts_with(&operator_location) {

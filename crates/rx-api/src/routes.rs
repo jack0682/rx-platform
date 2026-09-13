@@ -1,6 +1,7 @@
 mod device_binding;
 mod device_review;
 mod host_recovery;
+mod investigation;
 use crate::{
     auth::{Auth, COOKIE, Credentials, SESSION_SECONDS},
     error::ApiError,
@@ -56,6 +57,7 @@ struct ApiState {
     terminal_tls: bool,
     package_intake: Option<Arc<rx_runtime::package_intake::Worker>>,
     host_recovery: Option<Arc<dyn rx_runtime::host_recovery::Service>>,
+    investigation: Option<Arc<rx_runtime::investigation::Worker>>,
 }
 
 pub fn router(
@@ -63,7 +65,7 @@ pub fn router(
     credentials: Credentials,
     policy: LocalPolicy,
 ) -> Result<Router, String> {
-    build_router(runtime, credentials, policy, false, None, None)
+    build_router(runtime, credentials, policy, false, None, None, None)
 }
 pub fn router_with_package_intake(
     runtime: Arc<dyn ApplicationPort>,
@@ -71,7 +73,15 @@ pub fn router_with_package_intake(
     policy: LocalPolicy,
     worker: Arc<rx_runtime::package_intake::Worker>,
 ) -> Result<Router, String> {
-    build_router(runtime, credentials, policy, false, Some(worker), None)
+    build_router(
+        runtime,
+        credentials,
+        policy,
+        false,
+        Some(worker),
+        None,
+        None,
+    )
 }
 pub(crate) fn terminal_router(
     runtime: Arc<dyn ApplicationPort>,
@@ -79,6 +89,7 @@ pub(crate) fn terminal_router(
     policy: crate::terminal_https::HttpsPolicy,
     worker: Option<Arc<rx_runtime::package_intake::Worker>>,
     recovery: Option<Arc<dyn rx_runtime::host_recovery::Service>>,
+    investigation: Option<Arc<rx_runtime::investigation::Worker>>,
 ) -> Result<Router, String> {
     build_router(
         runtime,
@@ -90,6 +101,7 @@ pub(crate) fn terminal_router(
         true,
         worker,
         recovery,
+        investigation,
     )
 }
 fn build_router(
@@ -99,6 +111,7 @@ fn build_router(
     terminal_tls: bool,
     package_intake: Option<Arc<rx_runtime::package_intake::Worker>>,
     host_recovery: Option<Arc<dyn rx_runtime::host_recovery::Service>>,
+    investigation: Option<Arc<rx_runtime::investigation::Worker>>,
 ) -> Result<Router, String> {
     let state = ApiState {
         runtime,
@@ -107,12 +120,30 @@ fn build_router(
         terminal_tls,
         package_intake,
         host_recovery,
+        investigation,
     };
     Ok(Router::new()
         .route("/api/v1/health", get(health))
         .route("/api/v1/session", post(login).get(profile))
         .route("/api/v1/session/end", post(logout))
         .route("/api/v1/overview", get(overview))
+        .route("/api/v1/investigation-context", get(investigation::context))
+        .route(
+            "/api/v1/investigation-attestations",
+            get(investigation::list_attestations).post(investigation::attest),
+        )
+        .route(
+            "/api/v1/investigation-attestation",
+            get(investigation::get_attestation),
+        )
+        .route(
+            "/api/v1/recovery-dispositions",
+            get(investigation::list_dispositions).post(investigation::record_disposition),
+        )
+        .route(
+            "/api/v1/recovery-disposition",
+            get(investigation::get_disposition),
+        )
         .route("/api/v1/host-recovery-context", get(host_recovery::context))
         .route(
             "/api/v1/host-recoveries",

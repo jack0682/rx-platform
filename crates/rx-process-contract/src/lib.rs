@@ -21,3 +21,4 @@ pub mod native_outcome;
 pub mod source_link;
 
 pub mod assignment;
+pub mod investigation;

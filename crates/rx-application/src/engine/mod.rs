@@ -62,6 +62,7 @@ mod host_link;
 mod identity;
 mod intervention;
 mod invalidation;
+mod investigation;
 mod lifecycle;
 mod observation;
 mod operator_peer;

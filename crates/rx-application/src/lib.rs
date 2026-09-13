@@ -9,6 +9,7 @@ pub mod projection;
 pub use engine::Engine;
 pub use model::*;
 pub mod intervention;
+pub mod investigation;
 
 pub mod closure;
 

@@ -9,3 +9,5 @@ pub mod package_intake;
 pub mod requalification;
 
 pub mod host_recovery;
+
+pub mod investigation;

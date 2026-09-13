@@ -330,12 +330,34 @@ pub async fn serve<C: Clock + 'static>(
         } else {
             None
         };
+        let investigation = if let Some(input) = config.investigation.clone() {
+            let worker = tokio::task::spawn_blocking(move || {
+                rx_runtime::investigation::Worker::new(
+                    input.artifact_root,
+                    input.policy.path,
+                    input.policy.sha256,
+                )
+            })
+            .await??;
+            let Reply::InvestigationPolicy(_) = handle
+                .call(Command::RegisterInvestigationPolicy {
+                    policy: worker.policy(),
+                    policy_file_digest: worker.policy_file_digest(),
+                })
+                .await?
+            else {
+                return Err("investigation policy registration reply differs".into());
+            };
+            Some(worker)
+        } else {
+            None
+        };
         let recovery = Arc::new(rx_host_client::recovery::Worker::new(
             Arc::new(handle.clone()),
             loaded.host_links.clone(),
         )?);
         recovery.register().await?;
-        let https = rx_api::terminal_https::TerminalHttps::new_with_host_recovery(
+        let https = rx_api::terminal_https::TerminalHttps::new_with_investigation(
             Arc::new(handle.clone()),
             loaded.credentials,
             rx_api::terminal_https::HttpsPolicy::new(&config.https.origin)?,
@@ -343,6 +365,7 @@ pub async fn serve<C: Clock + 'static>(
             package_worker,
             loaded.operator_ui,
             Some(recovery),
+            investigation,
         )?;
         let grpc = rx_api::grpc::PlatformIngress::new(
             Arc::new(handle.clone()),

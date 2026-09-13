@@ -1,6 +1,8 @@
 use rx_application::*;
 #[path = "support/host_binding_baseline_tests.rs"]
 mod host_binding_baseline_tests;
+#[path = "support/investigation_tests.rs"]
+mod investigation_tests;
 #[path = "support/native_outcomes.rs"]
 mod native_outcomes_tests;
 #[path = "support/operator_start_tests.rs"]

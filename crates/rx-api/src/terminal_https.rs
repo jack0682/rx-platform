@@ -107,9 +107,38 @@ impl TerminalHttps {
         bundle: Option<crate::operator_ui::OperatorBundle>,
         recovery: Option<Arc<dyn rx_runtime::host_recovery::Service>>,
     ) -> Result<Self, String> {
+        Self::new_with_investigation(
+            runtime,
+            credentials,
+            policy,
+            material,
+            worker,
+            bundle,
+            recovery,
+            None,
+        )
+    }
+    /// Compose the explicitly configured investigation verifier, preserving older constructors.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_with_investigation(
+        runtime: Arc<dyn ApplicationPort>,
+        credentials: Credentials,
+        policy: HttpsPolicy,
+        material: TlsMaterial,
+        worker: Option<Arc<rx_runtime::package_intake::Worker>>,
+        bundle: Option<crate::operator_ui::OperatorBundle>,
+        recovery: Option<Arc<dyn rx_runtime::host_recovery::Service>>,
+        investigation: Option<Arc<rx_runtime::investigation::Worker>>,
+    ) -> Result<Self, String> {
         let acceptor = prepare_tls(material)?;
-        let mut router =
-            routes::terminal_router(runtime, credentials, policy.clone(), worker, recovery)?;
+        let mut router = routes::terminal_router(
+            runtime,
+            credentials,
+            policy.clone(),
+            worker,
+            recovery,
+            investigation,
+        )?;
         if let Some(bundle) = bundle {
             router = router.merge(bundle.router(policy));
         }
