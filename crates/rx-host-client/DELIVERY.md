@@ -1,41 +1,41 @@
-# 자동 전달과 수신 기록 조정
+# Automatic delivery and receipt reconciliation
 
-`delivery::Dispatcher`는 인증/협상을 완료한 Host마다 하나씩 구성하는 P의 sender/reconciler다. application은 기존 단일 writer에서만 변경한다. 장비 SDK를 직접 호출하거나 BT의 성공값으로 결과를 결정하지 않는다.
+`delivery::Dispatcher` is P's sender/reconciler, configured once per authenticated and negotiated Host. It changes the application only through the existing single writer. It neither directly invokes device SDKs nor decides outcomes from BT success values.
 
-## 처리 경계
+## Processing boundary
 
-1. SQLite pending outbox를 exclusive key 페이지로 읽는다. 앞쪽 미결 항목이 뒤쪽 항목을 영구적으로 가리지 않도록 cursor를 순환한다.
-2. `plan_delivery`가 현재 Host 권한과 메시지 관계를 확인한다. 최초 전달은 같은 transaction에서 current run/permit/조건을 재검사하고 NEW→EMIT_ENTERED로 바꾼다.
-3. Arm/Prepare/Authorize/Fence를 실제 mTLS HostClient로 보낸다. 이미 EMIT_ENTERED였던 operation 메시지는 GetReceipt로 조회한다. SEND_ENTERED 이상의 native 호출을 재전송하지 않는다.
-4. receipt와 해당 outbox 완료를 application transaction으로 기록한다. PREPARED는 준비 전달의 ack이며 Authorize 전달 완료의 ack은 아니다.
-5. native 진입이 알려진 작업은 GetReceipt→Reconcile→같은 T2로 조정한다. 결과와 자원 인계는 별개다. 이 dispatcher가 resource release나 part 완료를 자동 생성하지 않는다.
+1. Read SQLite pending outbox pages with an exclusive key cursor. Rotate the cursor so earlier unresolved entries cannot permanently hide later ones.
+2. `plan_delivery` checks current Host authority and message relationships. Initial delivery rechecks the current run/permit/conditions and changes NEW → EMIT_ENTERED in the same transaction.
+3. Send Arm/Prepare/Authorize/Fence through the actual mTLS HostClient. Operation messages already at EMIT_ENTERED are queried through GetReceipt. Native invocations at SEND_ENTERED or beyond are not resent.
+4. Record the receipt and completion of the relevant outbox entry in an application transaction. PREPARED acknowledges preparation delivery, not completed Authorize delivery.
+5. Reconcile operations with known native entry through GetReceipt → Reconcile → the same T2. Outcome and resource handover are separate. This dispatcher does not automatically create resource release or part completion.
 
-이미 저장한 동일 receipt를 다른 관련 delivery가 다시 회수할 때도 그 delivery는 완료된다. 잘못된 message/operation/Host 관계를 cached receipt 때문에 건너뛰지 않는다.
+When another related delivery retrieves an identical receipt already stored, that delivery is completed too. Cached receipts do not bypass checks for invalid message/operation/Host relationships.
 
-## 불명·재시도
+## Unknown states and retries
 
-- timeout/미수신/NOT_FOUND는 NOT_EXECUTED의 근거가 아니다. EMIT_ENTERED operation은 UNKNOWN/격리와 영속 attention을 남긴다.
-- 이전 authorization의 조회 결과가 PREPARED이면 REAUTHORIZATION_REQUIRED를 남긴다. 이전 grant/permit로 재전송하지 않는다. 새 grant·현 상태 확인·permit 재결합의 복구 절차는 후속이다.
-- Host session/권한이 바뀌면 stale 메시지를 새로운 권한으로 재작성하지 않는다. Host 재등록은 composition/복구 관리자의 역할이다.
-- evidence가 invocation receipt보다 먼저 도착하면 원본을 보존한다. receipt가 상관관계를 확정할 때 같은 transaction에서 재평가한다. 이미 native entry를 입증한 경우 permit를 소비하고 아직 NEW인 authorization을 폐기한다.
-- 결과의 불명은 poll 횟수로 해소하지 않는다. completion policy와 실제 근거만 결과를 바꾼다.
+- Timeout/no response/NOT_FOUND is not evidence of NOT_EXECUTED. An EMIT_ENTERED operation retains UNKNOWN/quarantine and durable attention.
+- If lookup for an earlier authorization returns PREPARED, retain REAUTHORIZATION_REQUIRED. Do not resend under the old grant/permit. Recovery with a new grant, current-state checks, and permit rebinding remains future work.
+- Changed Host sessions/authority do not cause stale messages to be rewritten under new authority. Host reregistration belongs to the composition/recovery manager.
+- If evidence arrives before the invocation receipt, preserve the source. Reevaluate it in the same transaction when the receipt establishes correlation. If native entry is already proven, consume the permit and discard any authorization still at NEW.
+- Poll counts do not resolve unknown outcomes. Only the completion policy and actual evidence change outcomes.
 
-## 운용 한도
+## Operational bounds
 
-한 pass에 delivery8개/reconciliation8개, 페이지 안에서는 Fence 우선이다. HostClient RPC 제한은3초다. 다른 Host는 별도 loop로 구성한다. 재시도 backoff는100ms→최대5초, scheduling metadata는 최대1,024개다. 미결 outbox는 메모리 한도와 관계없이 DB에 남는다.
+Each pass processes 8 deliveries/8 reconciliations, prioritizing Fence within a page. HostClient RPCs are limited to 3 seconds. Other Hosts use separate loops. Retry backoff is 100ms → at most 5 seconds; scheduling metadata is limited to 1,024 entries. Unresolved outbox entries remain in the DB regardless of memory limits.
 
-종료는 현재 제한된 pass를 마친 뒤 수행한다. 이미 claim한 send를 CAS와 RPC 사이에서 취소하지 않는다. 이 한도는 현장 보호 반응 시간의 보장이 아니다. 물리 보호는 독립된 현지 경로가 담당하며 제품 supervisor의 admission 중단·지지 확인·종료 정책 연결은 후속이다.
+Shutdown follows completion of the current bounded pass. Already claimed sends are not canceled between CAS and RPC. These bounds do not guarantee site protection response time. Independent local paths provide physical protection; integration with product supervisor policies for admission stop, support checks, and shutdown remains future work.
 
-## 현재 제한
+## Current limitations
 
-- Host link는 미리 인증·등록되어 있어야 한다. 자동 발견·새 grant·rebind·restart 전체 재조정은 아직 아니다.
-- Reconcile은 Host journal의 초기128개 prefix다. 큰 journal의 전체 전달에는 별도 `publication::Publisher`가 필요하다.
-- reconciliation 대상과 초기 상관관계 재평가는 현재 entity scan을 사용한다. 대규모 index/실측은 미완료다.
-- attention은 영속 진단이며 복구 case/절차 UI 전체와 아직 결합하지 않았다.
-- 제품 image/process 구성, 공개 원장 wire mapping, 시각 편집/BT, native cancel/stream, 전체 복구·인수는 계속 구현한다.
+- Host links must already be authenticated and registered. This is not yet complete automatic discovery, new grants, rebind, or restart reconciliation.
+- Reconcile returns the first 128-entry prefix of the Host journal. Complete delivery of a large journal requires a separate `publication::Publisher`.
+- Reconciliation targeting and initial correlation reevaluation currently use entity scans. Large-scale indexing/measurement is incomplete.
+- Attention is durable diagnostics and is not yet fully integrated with recovery cases/procedure UI.
+- Product image/process configuration, public ledger wire mapping, visual editing/BT, native cancel/stream, and complete recovery/acceptance remain under implementation.
 
-## 검증
+## Validation
 
-`tools/test_host_e2e.sh`의 자동 경로는 실제 dedicated writer와 별도 Host 프로세스를 사용한다. 첫 Authorize가 모의 호출을 마친 직후 응답을 잃게 한다. dispatcher는 GetReceipt/Reconcile로 회수하며 두 part의 Authorize2회·독립 device effect2회를 확인한다. 이후 Hold의 Fence가 Host에 자동 적용되는 것도 확인한다.
+The automated path in `tools/test_host_e2e.sh` uses an actual dedicated writer and a separate Host process. It drops the first Authorize response immediately after the simulated invocation completes. The dispatcher retrieves it through GetReceipt/Reconcile, verifying 2 Authorize calls and 2 independent device effects across two parts. It also verifies that a subsequent Hold Fence is applied to the Host automatically.
 
-part/activation 생성, 인계 proof 취득·release, part 완료는 시험 executor가 명시적으로 수행한다. 완전한 자율 생산 서비스나 실제 로봇 인수로 표현하지 않는다.
+The test executor explicitly performs part/activation creation, handover proof acquisition/release, and part completion. Do not present this as a complete autonomous production service or physical robot acceptance.

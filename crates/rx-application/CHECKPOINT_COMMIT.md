@@ -1,46 +1,46 @@
-# 분기·대기 후보 준비와 체크포인트 확정
+# Preparing branch/wait candidates and committing checkpoints
 
-상태: P 내부 전이, Runtime typed command, 선택적 PrepareCheckpoint와 확정 계약의 Workflow.CommitCheckpoint를 구현했다. S의 분기/대기 worker·영속 요청·관측 복원도 후속 단계에서 연결했다. [실행기 검증 범위](https://github.com/jack0682/rx-solutions/blob/codex/initial-draft/runtime/rx-executor/DECISIONS_AND_RECOVERY.md)를 함께 읽는다.
+Status: P internal transitions, Runtime typed commands, optional PrepareCheckpoint and the frozen contract's Workflow.CommitCheckpoint are implemented. S's branch/wait workers, durable requests and observation recovery were connected in subsequent stages. Also read the [executor validation scope](https://github.com/jack0682/rx-solutions/blob/codex/initial-draft/runtime/rx-executor/DECISIONS_AND_RECOVERY.md).
 
-## 완전한 상태 후보를 사용한다
+## Use complete state candidates
 
-확정된 ChangeCheckpoint는 상태 artifact와 기존 activation/slot 연결을 운반한다. 이를 임의 명령 봉투로 바꾸지 않는다. PrepareCheckpoint가 현재 P 상태에서 다음 `rx.executor-state.v1` 전체 후보를 만들고, 실행기는 그 Checkpoint를 그대로 CommitCheckpoint에 제안한다.
+The frozen ChangeCheckpoint carries a state artifact and existing activation/slot bindings. It is not repurposed as an arbitrary command envelope. PrepareCheckpoint creates the complete next `rx.executor-state.v1` candidate from P's current state, and the executor proposes that Checkpoint unchanged to CommitCheckpoint.
 
-후보는 run의 metadata·purpose·budget·session·part ID와 전체 activation/slot binding을 유지하고, 한 visit/node의 분기 선택·대기 시작·대기 결과만 제안한다. 새 revision은 current+1이다. 후보 artifact는 내용 주소로 보존하며 run 소유 artifact 경로에서 읽을 수 있지만, 현재 RunView를 교체하지 않는다. 읽을 수 있는 후보·과거 artifact는 현재 실행 허가가 아니다.
+The candidate preserves run metadata/purpose/budget/session/part ID and all activation/slot bindings, proposing only a branch selection, wait start or wait result for one visit/node. The new revision is current+1. The candidate artifact is preserved by content address and can be read through the run-owned artifact path, but does not replace the current RunView. Readable candidate/historical artifacts are not current execution permission.
 
-## 준비와 확정의 책임
+## Preparation and commit responsibilities
 
-| 단계 | P가 확인하는 것 | 원자적으로 바뀌는 것 |
+| Stage | What P checks | What changes atomically |
 |---|---|---|
-| 준비 | 현재 실행기 권한/셀 배정, run/visit/node, frontier, P 관측과 시각 | 후보 artifact·소유 참조·준비 기록. Run/공정 결정/작업은 그대로 |
-| 대기 중 | 관측이 UNKNOWN이거나 wait 조건이 아직 충족되지 않음 | 결정·후보를 만들지 않고 WAITING 반환 |
-| 이미 확정 | 해당 branch/window/result가 이미 저장됨 | ALREADY_APPLIED 반환. 실행기가 snapshot을 새로 읽음 |
-| 확정 | 현재 인증 → 전체 요청 key/body → run CAS/후보 소유·수명·세대 → 현재 운전 적격성 → 상태 재계산 | process checkpoint, Run revision, 현재 artifact/제어 사건, 원래 응답을 같은 commit에 기록 |
+| Preparation | Current executor authority/cell assignment, run/visit/node, frontier, P observations and time | Candidate artifact, ownership reference and preparation record. Run/process decisions/operations remain unchanged |
+| Waiting | Observation is UNKNOWN or the wait condition is not yet satisfied | Return WAITING without creating a decision/candidate |
+| Already committed | The branch/window/result is already stored | Return ALREADY_APPLIED. The executor reads the snapshot again |
+| Commit | Current authentication → complete request key/body → run CAS/candidate ownership/lifetime/generation → current operating eligibility → state recomputation | Record process checkpoint, Run revision, current artifact/control events and original response in the same commit |
 
-기존 내부 choose/start/check 경로와 후보 준비·확정은 `process_transition.rs`의 같은 전이 함수를 쓴다. 공정 체크포인트 저장도 다음 revision을 확인하는 한 함수를 사용한다. 통신 handler에는 별도 조건 판단이나 SQL을 넣지 않았다.
+The existing internal choose/start/check paths and candidate preparation/commit use the same transition functions in `process_transition.rs`. Process checkpoint persistence also uses one function that checks the next revision. Transport handlers contain no separate condition judgments or SQL.
 
-## 오래된 판단은 그대로 적용하지 않는다
+## Do not apply stale decisions unchanged
 
-후보에는 P runtime boot, executor session, cell epoch/scope, base revision, P 준비 시각과 최대 100ms 유효 기간이 결합된다. 확정할 때 현재 사실로 상태를 다시 계산하고, artifact의 전체 bytes와 기존 ID 연결을 대조한다. run revision이 같아도 관측 근거가 바뀌면 후보가 거부될 수 있다. 권한 철회·새 session·새 boot의 후보는 운전을 되살리지 않는다.
+A candidate is bound to P runtime boot, executor session, cell epoch/scope, base revision, P preparation time and a maximum lifetime of 100ms. At commit, state is recomputed from current facts, and the complete artifact bytes and existing ID bindings are compared. Even with an unchanged run revision, changed observation evidence can cause rejection. Candidates affected by authority revocation, a new session or a new boot do not revive operation.
 
-분기의 bool이나 완료 상태를 caller가 자유롭게 제출할 수 없다. 업로드 API도 제공하지 않는다. P가 준비한 artifact의 정확한 참조와 명세를 사용하고, 현재 평가와 같은 상태여야 한다. 잘못된 schema/size/revision, 다른 run, 추가·삭제·교체한 activation/slot은 허용하지 않는다.
+Callers cannot freely submit a branch bool or completion state. No upload API is provided. The exact reference and schema of the artifact P prepared must be used, and its state must match current evaluation. Incorrect schema/size/revision, another run, or added/deleted/replaced activations/slots are not permitted.
 
-## 대기 시각
+## Wait timing
 
-대기 시작 후보의 started_at과 deadline은 최초 P 준비 시각으로 정한다. 성공한 commit이 그 window를 확정하며 네트워크 지연만큼 시간을 추가하지 않는다. 일단 확정된 window는 다른 key로 재시작해도 늘어나지 않는다. 만료된 후보를 버리고 새 준비를 하는 것은 아직 확정되지 않은 시도의 교체다.
+A wait-start candidate's started_at and deadline are set from the initial P preparation time. A successful commit fixes that window without extending it by network delay. Once committed, a window does not extend even if restarted with another key. Discarding an expired candidate and preparing again replaces an attempt that has not yet been committed.
 
-조건 만족 후보가 있어도 실제 확정 시각이 deadline 이상이면 만족 상태를 적용하지 않는다. 새 준비에서 TIMED_OUT을 제안한다. timeout은 native 정지·작업 완료·자원 인계와 무관하다. clock 연속성을 확인할 수 없으면 확정하지 않는다.
+Even with a condition-satisfied candidate, satisfaction is not applied if the actual commit time is at or beyond the deadline. A new preparation proposes TIMED_OUT. Timeout is unrelated to native stop, operation completion or resource handover. A commit does not proceed if clock continuity cannot be established.
 
-## 응답 유실과 보존
+## Lost responses and preservation
 
-같은 key/body로 이미 확정된 변경을 요청하면 현재 revision으로 응답을 꾸미지 않고 최초 RunView를 반환한다. 현재 역할·셀 접근권은 재생 전에도 검사한다. 저장 전 실패는 공정과 revision을 바꾸지 않는다. 저장 후 응답 유실은 사실을 취소하지 않는다.
+A request for an already committed change with the same key/body returns the original RunView without fabricating a response from the current revision. Current role and cell access are checked before replay as well. Failure before persistence does not change the process or revision. A lost response after persistence does not undo the fact.
 
-prepared artifact가 현재 checkpoint로 받아들여질 때, 자동으로 생성한 최종 artifact의 digest까지 일치해야 transaction을 완료한다. 후보 자체나 현재 상태의 다른 artifact로 최종 응답을 대체하지 않는다.
+When a prepared artifact is accepted as the current checkpoint, the transaction completes only if the digest of the automatically generated final artifact also matches. The final response is not replaced with the candidate itself or another artifact of current state.
 
-## 통신 및 검증
+## Transport and validation
 
-PrepareCheckpoint는 [별도 명세와 binding hash](../../spec/executor-plan/v1/README.md)를 요구한다. 기존 base/cell 규범 8개와 executor-read binding은 유지했다. CommitCheckpoint는 기존 frozen protobuf와 body expected_revision 규칙을 그대로 사용한다.
+PrepareCheckpoint requires a [separate specification and binding hash](../../spec/executor-plan/v1/README.md). The existing eight base/cell normative files and executor-read binding are preserved. CommitCheckpoint uses the existing frozen protobuf and body expected_revision rules unchanged.
 
-core 시험은 후보의 비적용, 준비/확정 rollback과 응답 유실, 동일 key/전체 body 충돌, current-role 검사, artifact·mapping 변조, 관측 변화, 후보 만료, 대기 deadline 경계와 window 보존을 확인한다. 실제 mTLS 시험은 분기 및 대기 준비→확정→artifact 조회와 확정 응답 유실 후 회수를 확인한다. 기존 유한 작업·Pause·인계·복원 경로도 회귀 검증한다.
+Core tests verify non-application of candidates, preparation/commit rollback and lost responses, same-key/full-body conflicts, current-role checks, artifact/mapping tampering, observation changes, candidate expiry, wait deadline boundaries and window preservation. Actual mTLS tests verify branch and wait preparation → commit → artifact read, and recovery after a lost commit response. Existing finite-operation/Pause/handover/recovery paths are also regression-tested.
 
-S의 분기/대기 영속 요청과 결과 관측, 구조화된 체크포인트 거부에 따른 재준비를 연결했다. 남은 기능은 상주 BT loop, 개입/clearance와 복구, 후보 정리·긴 run의 용량/index, 전체 운영 UI와 제품 배포다. 현재 단일 상태 artifact의 크기 제한과 scan 비용을 해소한 것으로 간주하지 않는다. 시계·관측은 모의 fixture이며 물리 셀은 NOT_COMMISSIONED다.
+S's durable branch/wait requests and result observations, and re-preparation after structured checkpoint rejection, are connected. Remaining features include the resident BT loop, intervention/clearance and recovery, candidate cleanup/capacity/indexing for long runs, the complete operator UI and product deployment. The current single-state artifact size limit and scan cost are not considered resolved. Clocks and observations are simulated fixtures, and the physical cell is NOT_COMMISSIONED.

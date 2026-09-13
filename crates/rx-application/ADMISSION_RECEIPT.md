@@ -1,25 +1,25 @@
-# P의 최초 접수 확인서
+# P's initial admission receipt
 
-`ADMITTED` 응답은 특정 작업이 P에 영속 접수됐다는 확인이다. Host 준비, native 수락, 완료 또는 자원 인계를 뜻하지 않는다.
+An `ADMITTED` response confirms that P has durably admitted a specific operation. It does not mean Host readiness, native acceptance, completion or resource handover.
 
-## 근거 위치
+## Evidence location
 
-`Journaled`가 새 Work의 ADMITTED/revision1 상태를 control journal에 추가할 때 반환받은 **실제 seq**를 사용한다. 같은 transaction에서 `admissionreceipt/<operation key>`에 operation ID, intent digest, 그때의 operation revision, journal ID와 seq를 기록한다.
+Use the **actual seq** returned when `Journaled` appends a new Work's ADMITTED/revision1 state to the control journal. In the same transaction, record the operation ID, intent digest, operation revision at that point, journal ID and seq in `admissionreceipt/<operation key>`.
 
-이 seq는 나중의 journal head, 내부 audit event 수, 현재 Work record revision 또는 임의 상수가 아니다. 접수 확인서가 가리키는 control record에는 해당 작업의 원래 ADMITTED snapshot이 있다. receipt 기록 실패는 T1의 Work/slot/permit/outbox/요청 결과와 함께 rollback된다.
+This seq is not a later journal head, the internal audit event count, the current Work record revision or an arbitrary constant. The control record referenced by the admission receipt contains the operation's original ADMITTED snapshot. A receipt write failure rolls back together with T1's Work/slot/permit/outbox/request result.
 
-P control journal ID는 UUIDv8 형태로 다음 의미에 결합한다: `RX-CONTROL-JOURNAL-ID-v1`, installation ID, store generation, `site-cell-control-v1`. 해시는 기존 canonical domain 규칙을 사용한다. 같은 P process가 재시작해도 ID는 같고, 저장 세대나 journal view가 달라지면 달라진다. Host의 delivery/evidence journal ID와 혼용하지 않는다.
+P's control journal ID has UUIDv8 form and binds these values: `RX-CONTROL-JOURNAL-ID-v1`, installation ID, store generation and `site-cell-control-v1`. Hashing uses the existing canonical domain rules. The ID remains the same across a restart of the same P process and changes when the store generation or journal view changes. It is not interchangeable with the Host delivery/evidence journal ID.
 
-## 읽기와 후속 상태
+## Reads and subsequent state
 
-`Engine::admission_receipt`는 현재 session·셀 접근권을 확인하고 Work의 ID/intent와 접수 확인서가 일치하는지 검사한다. 뒤의 Host receipt나 완료 결과를 이 레코드에 덮어쓰지 않는다. 보류·권한 철회·후속 결과가 생겨도 최초 접수 기록은 그대로 남는다.
+`Engine::admission_receipt` checks the current session and cell access, then verifies that the Work ID/intent matches the admission receipt. Later Host receipts or completion results do not overwrite this record. The initial admission record remains unchanged after a Hold, authority revocation or subsequent result.
 
-프로토콜 adapter는 이 값을 frozen base Receipt의 ADMITTED stage로 변환한다. P operation revision은 포함하고, 아직 P 접수 확인서에 속하지 않는 invocation/Host state/cancel ID는 넣지 않는다. 원래 확인서의 journal ID를 현재 프로세스 boot ID로 교체하지 않는다.
+The protocol adapter converts this value into the ADMITTED stage of the frozen base Receipt. It includes the P operation revision and omits invocation/Host state/cancel ID, which do not yet belong to P's admission receipt. The original receipt's journal ID is not replaced with the current process boot ID.
 
-이 기능 이전에 만들어진 Work에 원래 접수 위치가 없으면 과거 head나 현재 snapshot으로 확인서를 만들지 않는다. `CONTINUITY_UNPROVEN`으로 남기며, 그것이 기존 작업을 새 ID로 재전송할 근거가 되지 않는다. 신규 T1 경로에는 이 확인서를 함께 저장한다.
+If a Work created before this feature lacks its original admission location, a receipt is not synthesized from a historical head or current snapshot. It remains `CONTINUITY_UNPROVEN`, which is not grounds to resubmit the existing operation under a new ID. New T1 paths persist this receipt together with the operation.
 
-## 시험과 한계
+## Tests and limitations
 
-저장 직전 실패와 저장 후 응답 유실을 주입한 뒤 동일 요청을 회수하고, 접수 확인서 하나만 남는지 확인했다. 그 seq로 control record를 읽어 operation ID/revision/ADMITTED 상태와 native invocation 부재를 대조한다. 뒤의 Hold에도 확인서 bytes가 유지되고 P 재시작/저장 세대 변경의 journal identity 규칙이 맞는지 확인한다.
+After injecting a failure immediately before persistence and a lost response after persistence, the same request was recovered and checked to leave exactly one admission receipt. Reading the control record at that seq verifies the operation ID/revision/ADMITTED state and the absence of a native invocation. Tests also verify that receipt bytes survive a later Hold and that journal identity follows the rules for P restart/store generation changes.
 
-공개 [Cell.SubmitOperation의 유한 run envelope/Receipt 반환과 Operation.Get](EXECUTOR_SUBMISSION.md)을 연결했다. base Operation.Lookup과 전체 Journal API는 후속이다. 접수 원장 위치를 확보한 것을 native 결과 증거 또는 전체 공개 원장 구현으로 표시하지 않는다. 저장소 복원 시 과거 journal namespace/기록의 보존·조회 정책도 별도 구현이 필요하다.
+The public [Cell.SubmitOperation finite-run envelope/Receipt response and Operation.Get](EXECUTOR_SUBMISSION.md) are connected. Base Operation.Lookup and the complete Journal API remain follow-up work. Establishing the admission ledger location is not presented as native result evidence or a complete public journal implementation. Preserving and querying historical journal namespaces/records during store restoration also requires a separate implementation.
