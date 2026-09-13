@@ -1,42 +1,42 @@
-# 장비 변경 후보를 공정 작성·컴파일에 연결
+# Connecting device change candidates to process authoring and compilation
 
-phase68. 현재 영향 검토가 끝난 장비 binding plan을 공정 초안의 선택지에 포함하고, 선택 출처를 컴파일 입력과 패키지에 보존한다. active CellConfiguration/Host binding/Work/qualification/Run은 변경하지 않는다.
+phase68. Include device binding plans with current completed impact review among process-draft options, and preserve selection provenance in compile inputs and packages. Active CellConfiguration/Host bindings/Work/qualification/Runs are not changed.
 
-## 선택 가능한 후보
+## Selectable candidates
 
-기존 GET binding-options는 active steps의 기존 catalog를 그대로 반환한다. 후보를 포함하려면 같은 경로에 POST로 `{cell, device_plans:[{id,revision,plan_digest}]}`를 보낸다. 이는 조회이며 설정을 저장하지 않는다.
+Existing GET binding-options continues to return the existing catalog of active steps. To include candidates, POST `{cell, device_plans:[{id,revision,plan_digest}]}` to the same path. This is a read and does not store settings.
 
-P는 각 plan의 정확한 revision/digest, IMPACT_REVIEWED 상태, 미해결 issue 없음, 현재 builder/구성/영향·device approval과 전체 영향 셀 접근권을 검사한다. 최대16 plan을 허용하고 중복 plan ID를 거부한다. 서로 다른 plan이 같은 binding ID를 제공하면 순서로 선택하지 않고 충돌로 거부한다. 합친 후보는 최대512개다.
+P checks every plan's exact revision/digest, IMPACT_REVIEWED status, absence of unresolved issues, current builder/configuration/impact/device approval and access to all impacted cells. At most 16 plans are allowed; duplicate plan IDs are rejected. If different plans supply the same binding ID, the conflict is rejected instead of resolving by order. There are at most 512 combined candidates.
 
-동일 binding ID의 active step은 선택한 plan의 후보로 표시할 수 있지만 active 값 자체를 덮어쓰지 않는다. 응답에는 source plan, required_cells와 별도의 composite catalog digest가 있다. plan이 없는 기존 catalog의 digest 계산은 유지한다.
+An active step with the same binding ID can be presented as the selected plan's candidate, without overwriting the active value itself. The response includes the source plan, required_cells and a separate composite catalog digest. Existing catalog digest calculation without plans is preserved.
 
-## 공정 초안 저장·회수
+## Saving and recovering process drafts
 
-기존 Save에 선택한 device_plans를 명시하고 기존 alias→binding ID selections를 사용한다. P는 같은 composite catalog를 재계산하여 exact Intent/Host·step digest를 보관한다. 선택한 모든 plan이 실제 선택에 사용되어야 하며, 의미 없는 출처를 추가하지 않는다.
+Specify selected device_plans in existing Save and use existing alias → binding ID selections. P recalculates the same composite catalog and preserves the exact Intent/Host/step digest. Every selected plan must be used in an actual selection; irrelevant provenance is not added.
 
-Binding Version은 plan refs/필요 셀/alias별 device_sources를 보관한다. 같은 key의 결과 회수와 과거 binding 조회도 현재 영향 셀 접근권을 확인한다. 선택한 plan이나 device approval이 더 이상 현재가 아니면 DEVICE_PLAN_CHANGED를 반환하며 원래 snapshot은 보존한다. 예전 active step으로 조용히 대체하지 않는다.
+Binding Version preserves plan refs/required cells/per-alias device_sources. Recovery of same-key results and historical binding reads also check current access to impacted cells. If a selected plan or device approval is no longer current, DEVICE_PLAN_CHANGED is returned while preserving the original snapshot. It is not silently replaced with the old active step.
 
-내보내기는 현재 source/binding revision·구조·catalog·plan·권한을 다시 검사하고 선택값, 원래 step digest, 실제 ActionBinding, provenance를 재계산해 저장본과 대조한다. 이 단계는 registry/승인 metadata의 현재성을 검사하며 원본 파일을 새로 취득한 execution proof가 아니다. 후속 승인/적용은 실제 원본 재검증을 요구한다.
+Export rechecks current source/binding revision, structure, catalog, plans and authority, then recalculates selections, original step digests, actual ActionBindings and provenance and compares them with the stored version. This stage checks currentness of registry/approval metadata; it is not execution proof based on newly acquired source files. Subsequent approval/application requires actual source revalidation.
 
-## 컴파일 입력 v1/v2
+## Compile inputs v1/v2
 
-변경 후보를 쓰지 않은 입력은 기존 `rx.process-compile-input.v1`과 hash를 유지한다. 후보를 쓰면 v2이며 alias마다 다음을 포함한다.
+Inputs without change candidates retain existing `rx.process-compile-input.v1` and hashes. Inputs using candidates are v2 and include, for each alias:
 
-- exact plan ID/revision/digest
-- plan 안의 binding ID
-- 전체 candidate step digest: 조건/인계 정책의 원래 출처 참조
-- 실제 Host/Intent의 action digest
+- Exact plan ID/revision/digest.
+- Binding ID within the plan.
+- Complete candidate step digest: a reference to the original source of conditions/handover policy.
+- Action digest of the actual Host/Intent.
 
-v2 bindings_digest는 bindings와 device_sources를 함께 포함한다. v1에 출처를 끼우거나 v2에서 출처를 삭제·변경하거나 Host/Intent를 바꾸면 integrity 검사를 통과하지 못한다. plan은 최대16개이고 provenance alias는 실제 binding에 존재해야 한다.
+The v2 bindings_digest includes both bindings and device_sources. Inserting provenance into v1, deleting/changing provenance in v2 or changing Host/Intent fails integrity checks. At most 16 plans are allowed, and provenance aliases must exist in actual bindings.
 
-S compiler는 실제 새 Intent로 ResolvedProcess와 BT XML을 생성하고 compile-report에도 provenance를 유지한다. process package의 signed authoring/compile-input.json에도 전체 v2 입력을 보존한다. 이 참조 자체가 S에 실행 권한이나 P의 plan registry 접근권을 주지는 않는다.
+The S compiler generates ResolvedProcess and BT XML with the actual new Intents, and preserves provenance in the compile-report too. The complete v2 input is also preserved in the process package's signed authoring/compile-input.json. These references alone do not grant S execution authority or access to P's plan registry.
 
-## 현행 검토와 다음 연결
+## Current review and next connections
 
-phase70에서 [장비 후보 공정 검토](DEVICE_PROCESS_REVIEW.md)를 연결했다. 기존 v1 검토는 active configuration만 검사하며 v2 device_sources를 승인하지 않는다. device_plans를 명시한 새 검토 요청은 후보 guard/configuration을 고정하고 원본·승인·영향을 재검증한다. 기존 step과 Host/Intent가 같아도 출처를 제거하거나 기본 구성의 guard로 대체하지 않는다.
+phase70 connected [device-candidate process review](DEVICE_PROCESS_REVIEW.md). Existing v1 review checks only active configuration and does not approve v2 device_sources. A new review request with explicit device_plans fixes candidate guards/configuration and revalidates sources/approvals/impact. Provenance is not removed or replaced with base-configuration guards even when step and Host/Intent match existing ones.
 
-phase71에서 [변경 제안·영향 검토·staging과 Host별 요구](DEVICE_CHANGE_PLAN.md)를 연결했다. 다음은 Host native/static binding 변경을 증명하는 경계와 APPLIED_UNQUALIFIED 적용·qualification이다. 현행 process-change는 장비 후보 검토 결과를 실제 적용할 수 없으며 준비·전송·적용을 명시적으로 거부한다.
+phase71 connected [change proposal/impact review/staging and per-Host requirements](DEVICE_CHANGE_PLAN.md). The next steps are a boundary that proves Host native/static binding changes, APPLIED_UNQUALIFIED application and qualification. Current process-change cannot actually apply device-candidate review results and explicitly rejects preparation/dispatch/application.
 
-기존 UI는 API로 저장한 후보 binding과 v2 출처를 읽고 내려받을 수 있도록 decoder를 확장했다. 미해결/오래된 plan은 조작을 차단하고 이전 snapshot을 표시한다. 새로운 plan을 고르는 전용 UI는 후속이다.
+The existing UI decoder was extended to read/download candidate bindings saved through the API and their v2 provenance. Unresolved/stale plans block actions and show the previous snapshot. A dedicated UI for selecting new plans remains follow-up work.
 
-시험은 정확한 v2 출처·원자 저장/응답 유실·plan 갱신 후 export 거부, signed package/recompile에서의 출처 보존·변조 거부, legacy review의 명시적 거부를 다룬다. 실제 JTC package/report/impact review→P draft API→S compiler/unsigned package 연결을 실행했다. [phase68 증거](https://github.com/jack0682/rx_docs/blob/6111a7d1dcf33052f38c3e67c6585aec2b44df3c/references/implementation/phase68_checks.json)를 따른다. 첫 물리 셀은 NOT_COMMISSIONED다.
+Tests cover exact v2 provenance, atomic persistence/lost responses, export rejection after plan updates, provenance preservation/tampering rejection in signed packages/recompilation, and explicit legacy-review rejection. The actual JTC package/report/impact review → P draft API → S compiler/unsigned package connection was executed. See the [phase68 evidence](https://github.com/jack0682/rx_docs/blob/6111a7d1dcf33052f38c3e67c6585aec2b44df3c/references/implementation/phase68_checks.json). The first physical cell is NOT_COMMISSIONED.

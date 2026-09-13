@@ -1,88 +1,88 @@
-# 실행 복원 상태와 내용 주소 artifact
+# Execution recovery state and content-addressed artifacts
 
-상태: 구현 초안. P의 실제 저장 transaction·로컬 조회에 연결했다. 실행기의 원격 복원과 [외부 Workflow.CommitCheckpoint](CHECKPOINT_COMMIT.md)를 연결했다. 전체 공개 원장 제공과 납품 검증은 별도 완료 조건이다.
+Status: implementation draft. Connected to P's actual storage transaction and local reads. Executor remote recovery and [external Workflow.CommitCheckpoint](CHECKPOINT_COMMIT.md) are connected. Providing the complete public journal and delivery acceptance remain separate completion criteria.
 
-## 책임
+## Responsibilities
 
-실행기는 재시작 후 새 작업을 만들기 전에 P가 이미 만든 run/activation/slot 연결과 공정 결정을 회수해야 한다. 로컬 BT의 tick 위치나 마지막 응답만으로 작업을 다시 할당할 수 없다.
+After a restart, the executor must recover the run/activation/slot bindings and process decisions that P has already created before creating a new operation. It cannot reassign an operation based only on its local BT tick position or last response.
 
-P가 run revision을 변경하는 transaction에서 복원 상태를 생성한다. 별도 비동기 작업이 나중의 DB 상태를 읽어 과거 revision의 checkpoint로 저장하지 않는다. Artifact를 읽는 권한과 작업을 계속하는 권한도 구별한다. 과거 artifact 안의 EXECUTING 표시는 현재 운전 허가가 아니다.
+P creates recovery state in the transaction that changes the run revision. A separate asynchronous task does not read later DB state and store it as a checkpoint for a historical revision. Permission to read an artifact is distinct from permission to continue work. An EXECUTING value inside a historical artifact is not current operating permission.
 
-## 저장 구조
+## Storage structure
 
-| 레코드 | 저장 내용 | 변경 규칙 |
+| Record | Stored content | Mutation rule |
 |---|---|---|
-| `run/<key>` | 업무 Run과 repository revision | 기존 업무 CAS 유지 |
-| `artifact/<digest key>` | `rx.executor-state.v1` payload | 동일 내용만 허용, 기존 bytes 교체 금지 |
-| `checkpointartifact/<run,digest key>` | 해당 run이 소유한 정확한 ArtifactRef | 다른 run의 artifact를 hash만으로 읽지 못함 |
-| `runcheckpoint/<run key>` | `rx.control.run-snapshot.v1` RunSnapshot | 현재 Run과 checkpoint를 같은 commit에서 교체 |
-| `control_events/control_entities`의 Run | 그 commit의 RunSnapshot | 현재 DB를 나중에 조인하지 않는 과거 cut |
+| `run/<key>` | Business Run and repository revision | Preserve existing business CAS |
+| `artifact/<digest key>` | `rx.executor-state.v1` payload | Only identical content is permitted; existing bytes cannot be replaced |
+| `checkpointartifact/<run,digest key>` | Exact ArtifactRef owned by the run | Another run's artifact cannot be read by hash alone |
+| `runcheckpoint/<run key>` | `rx.control.run-snapshot.v1` RunSnapshot | Replace the current Run and checkpoint in the same commit |
+| Run in `control_events/control_entities` | RunSnapshot from that commit | Historical cut that does not join the current DB later |
 
-표의 key는 논리 표기다. 실제 key는 기존 `persistence::key`의 domain hash 규칙을 사용한다. 임의 파일 경로나 외부 URL을 저장하거나 읽지 않는다.
+Keys in the table are logical notation. Actual keys follow the domain-hash rules of the existing `persistence::key`. Arbitrary file paths or external URLs are neither stored nor read.
 
-`ExecutorState`는 다음을 포함한다.
+`ExecutorState` contains:
 
-- release에 고정할 `schema=rx.executor-state.v1`.
-- 해당 시점의 Run과 run revision.
-- activation ID, node ID, visit, 각 slot의 operation ID와 intent digest.
-- visit별 ProcessCheckpoint: 확정 분기, wait window/result, 판단 시각과 근거 연결.
+- `schema=rx.executor-state.v1`, to be pinned in the release.
+- The Run and run revision at that point.
+- Activation ID, node ID, visit, and each slot's operation ID and intent digest.
+- Per-visit ProcessCheckpoint: committed branch, wait window/result, decision time and evidence links.
 
-Operation 결과·현재 자원 인계·현재 cell epoch의 전체 복사본은 아니다. 계속 실행하기 전에 이 정보와 현재 P 상태를 함께 조정해야 한다. 결과나 지지 해제를 checkpoint의 존재로 추론하지 않는다.
+It is not a complete copy of Operation results, current resource handover or the current cell epoch. This information must be reconciled with current P state before execution continues. Results or support release are not inferred from the existence of a checkpoint.
 
-Artifact payload는 해당 schema의 JSON이다. 업무 model의 nullable 값도 이 schema에 속한다. 공개 `RunView/Checkpoint`의 RX JSON 투영과 별개이며, 공개 wire의 optional 생략·uint64 문자열·Digest hex 규칙은 `rx-protocol` codec으로 적용한다.
+The artifact payload is JSON for that schema. Nullable values in the business model also belong to this schema. It is separate from the RX JSON projection of public `RunView/Checkpoint`; the `rx-protocol` codec applies public-wire rules for omitting optionals, uint64 strings and Digest hex.
 
-## 한 transaction 안의 생성 순서
+## Creation order within one transaction
 
 ```mermaid
 flowchart TD
-  A[업무 권한·CAS·공정 적격성 확인] --> B[Run·activation·slot·결정 갱신]
-  B --> C[같은 transaction에서 최종 연결 수집]
-  C --> D[정규화 bytes·SHA-256·크기 계산]
-  D --> E[Immutable artifact와 run 소유 참조 기록]
-  E --> F[RunSnapshot·제어 사건·현재 projection 기록]
-  F --> G[단일 commit]
+  A[Check business authority, CAS and process eligibility] --> B[Update Run, activation, slot and decisions]
+  B --> C[Collect final bindings in the same transaction]
+  C --> D[Compute canonical bytes, SHA-256 and size]
+  D --> E[Record immutable artifact and run-owned reference]
+  E --> F[Record RunSnapshot, control events and current projection]
+  F --> G[Single commit]
 ```
 
-1. `Journaled`가 실제 Run 변경을 포착한다. 같은 transaction에서 여러 차례 바뀌어도 최종 상태를 사용한다.
-2. `activation/`의 run 소유 레코드를 읽는다. ID 조회용 중복 레코드를 다시 포함하지 않는다. 각 slot의 Work를 읽어 run/activation/slot/part/cell/operation 연결을 대조한다.
-3. activation은 `(node, visit)`, slot은 이름, ProcessCheckpoint는 visit 순으로 정규화한다.
-4. `canonical::bytes`로 생성한 **실제 payload bytes**에 SHA-256을 적용한다. 의미 fingerprint나 임의 placeholder digest로 대체하지 않는다. `size_bytes`도 이 bytes의 길이다.
-5. artifact, 소유 참조, 현재 RunSnapshot과 제어 기록을 repository의 동일 transaction에 기록한다. 생성/기록 실패는 업무 변경·요청 결과·outbox와 함께 rollback된다.
-6. Run의 업무 revision을 artifact 생성 때문에 추가 증가시키지 않는다. 공개 Checkpoint revision은 해당 Run revision이다.
+1. `Journaled` captures actual Run changes. Even if there are multiple changes in one transaction, it uses the final state.
+2. Read run-owned records under `activation/`. Do not include duplicate records used for ID lookup again. Read each slot's Work and check the run/activation/slot/part/cell/operation bindings.
+3. Canonicalize activations by `(node, visit)`, slots by name, and ProcessCheckpoints by visit order.
+4. Apply SHA-256 to the **actual payload bytes** produced by `canonical::bytes`. Do not substitute a semantic fingerprint or arbitrary placeholder digest. `size_bytes` is the length of these bytes as well.
+5. Write the artifact, ownership reference, current RunSnapshot and control records in the same repository transaction. Creation/write failure rolls back together with business changes, request results and outbox.
+6. Artifact creation does not additionally increment the Run's business revision. The public Checkpoint revision is that Run revision.
 
-기존 저장소에는 한 번의 checkpoint seed를 적용한다. 이전 control journal을 다시 생성하거나 과거 artifact가 있었다고 꾸미지 않는다. 기존 run들의 현재 상태를 초기 artifact로 잡고 marker를 같은 transaction에 남긴다. 이후 과거 사건은 당시의 기존 schema로 유지되며, 전체 공개 원장 migration은 아직 완료하지 않았다.
+An existing store receives a one-time checkpoint seed. Earlier control journals are not regenerated, and historical artifacts are not fabricated. Existing runs' current states become initial artifacts, with a marker recorded in the same transaction. Historical events subsequently retain the schema used at the time; complete public-journal migration is not yet finished.
 
-## 읽기와 무결성
+## Reads and integrity
 
-`Engine::run_checkpoint`는 현재 세션·계정·셀 접근권을 확인한 뒤 현재 Run과 RunSnapshot의 내용/revision을 비교한다. checkpoint의 run/revision/schema와 실제 소유 artifact의 내용·activation 연결도 검증한다.
+`Engine::run_checkpoint` checks the current session, account and cell access before comparing the content/revision of the current Run and RunSnapshot. It also validates the checkpoint's run/revision/schema, the content of the actual owned artifact and its activation bindings.
 
-`Engine::checkpoint_artifact`는 현재 run 접근권과 run별 소유 참조를 확인하고 schema/digest/size를 모두 대조한다. 반환 전 다시 정규화하여 hash·size를 확인한다. 같은 hash라도 잘못된 schema/size를 허용하지 않는다. 권한이 회수된 사용자가 과거 참조를 보관하고 있어도 읽기는 거부된다.
+`Engine::checkpoint_artifact` checks current run access and the per-run ownership reference, then compares schema/digest/size. Before returning, it canonicalizes again and checks hash/size. An incorrect schema/size is not allowed even with the same hash. Reads are denied even if a user whose access was revoked retains an old reference.
 
-이전 artifact는 새 revision 생성 후에도 그대로 읽을 수 있다. P restart 뒤의 현재 snapshot은 권한 철회 상태를 반영하고, 이전 snapshot은 과거 사실로 보존한다. 복원 조회가 기존 mandate·session을 되살리지 않는다.
+Older artifacts remain readable unchanged after a new revision is created. The current snapshot after a P restart reflects authority revocation, while older snapshots are preserved as historical facts. Recovery reads do not revive an existing mandate or session.
 
-## 외부 연결
+## External connections
 
-- Runtime에 `RunCheckpoint`와 `CheckpointArtifact` typed command를 연결했다.
-- `rx-protocol-adapter::workflow`가 frozen `RunView/Checkpoint/ActivationView/SlotBinding`으로 변환한다. UINT64의 부정확한 숫자 변환을 하지 않는다.
-- 로컬 BFF의 `GET /api/v1/run/checkpoint?id=...`는 공개 RunView 형태를 반환한다.
-- `GET /api/v1/run/checkpoint/artifact?run=...&sha256=...&schema_id=...&size_bytes=...`는 정확한 canonical payload bytes를 반환한다. 현재 browser cookie·셀 접근권을 매번 확인하고 캐시를 금지한다.
+- `RunCheckpoint` and `CheckpointArtifact` typed commands are connected to Runtime.
+- `rx-protocol-adapter::workflow` converts to frozen `RunView/Checkpoint/ActivationView/SlotBinding`. It does not perform imprecise numeric conversions of UINT64.
+- The local BFF's `GET /api/v1/run/checkpoint?id=...` returns the public RunView form.
+- `GET /api/v1/run/checkpoint/artifact?run=...&sha256=...&schema_id=...&size_bytes=...` returns the exact canonical payload bytes. It checks the current browser cookie/cell access every time and prohibits caching.
 
-이 두 route는 DEVELOPMENT_LOOPBACK의 읽기 기능이다. service peer 세션을 브라우저 cookie로 만들지 않는다. 실제 executor mTLS `Workflow.GetRun`은 [등록/셀 협상/현재 권한 검사](EXECUTOR_PEER.md)에 연결했다. Run-owned artifact 읽기와 실제 C++ Frame 입력은 [현재 실행 상태 조회](EXECUTION_READ.md)에 연결했다. 유한 작업/Pause/인계 Frame/request worker와 `CommitCheckpoint`의 CAS 입력 검증을 연결했다. 분기/대기 worker는 연결했으며 전체 상주 loop는 후속이다. 이 기능을 활성화된 executor 복원 절차라고 부르지 않는다.
+These two routes are DEVELOPMENT_LOOPBACK read features. They do not create service-peer sessions from browser cookies. Actual executor mTLS `Workflow.GetRun` is connected to [registration/cell negotiation/current authority checks](EXECUTOR_PEER.md). Run-owned artifact reads and actual C++ Frame inputs are connected to [current execution-state reads](EXECUTION_READ.md). Finite-operation/Pause/handover Frames/request workers and CAS input validation for `CommitCheckpoint` are connected. Branch/wait workers are connected; the complete resident loop is follow-up work. This feature is not described as an activated executor recovery procedure.
 
-## 용량과 후속 조건
+## Capacity and follow-up conditions
 
-현재는 run별 history를 한 artifact와 activation 목록에 담고, 대상 수집에 entity scan을 사용한다. 일반 document/HTTP/wire의 1 MiB 제한을 유지한다. 크기 제한을 풀어 문제를 숨기지 않으며 기록 실패 시 부분 checkpoint를 성공으로 반환하지 않는다.
+Currently, each run's history is placed in one artifact and activation list, and target collection uses an entity scan. The general document/HTTP/wire limit of 1 MiB is retained. The size limit is not relaxed to hide the problem, and a write failure does not return a partial checkpoint as a success.
 
-장기 생산 run에 대한 admission 예산·용량 예약, indexed lookup, artifact 페이지/retention, export/backup/restore 정책을 아직 구현하지 않았다. 제한에 도달한 상태에서 후속 evidence·권한 철회까지 반드시 수용하도록 저장 모델을 더 분리해야 한다. 현재 한계는 제품 장시간 운전 검증의 미완료 사항이다. 삭제·GC는 제공하지 않는다.
+Admission budgets/capacity reservations for long production runs, indexed lookup, artifact paging/retention and export/backup/restore policies are not yet implemented. The storage model needs further separation so that subsequent evidence and authority revocation can still be accepted when the limit is reached. This limitation remains an incomplete item for product long-duration operation validation. Deletion/GC is not provided.
 
-## 시험
+## Tests
 
-- T1 직전 실패: Run/slot/artifact/현재 projection이 이전 상태로 함께 유지.
-- T1 commit 후 응답 유실: 동일 key 회수로 기존 작업 하나를 반환, 같은 revision의 artifact 한 개만 보존.
-- 정확한 hash·size·schema와 실제 operation/intent 연결, 이전 artifact 불변성.
-- P restart: 분기 결정·근거 시점 보존, 현재 권한 철회와 새 snapshot, 이전 snapshot 조회.
-- 다른 run 소유 참조·잘못된 size·현재 셀 접근권 회수 거부.
-- 실제 HTTP writer/SQLite 경로에서 frozen RunView 및 payload bytes 회수, 비로그인·중복/unknown query 거부.
-- 여섯 RunState와 2^53 초과 Counter를 strict RX JSON 왕복으로 검증.
+- Failure immediately before T1: Run/slot/artifact/current projection remain together in their previous state.
+- Lost response after T1 commit: recovery with the same key returns the one existing operation and preserves only one artifact for the same revision.
+- Exact hash/size/schema and actual operation/intent bindings; immutability of older artifacts.
+- P restart: preservation of branch decisions/evidence times, current authority revocation and new snapshot, and older snapshot reads.
+- Rejection of another run's ownership reference, incorrect size and revoked current cell access.
+- Recovery of frozen RunView and payload bytes through the actual HTTP writer/SQLite path; rejection of unauthenticated and duplicate/unknown queries.
+- Strict RX JSON round trips for all six RunStates and Counters greater than 2^53.
 
-모든 장비 입력은 simulation fixture다. 이 시험은 실제 로봇 완료·공정 품질·현장 복구·qualification을 증명하지 않는다.
+All device inputs are simulation fixtures. These tests do not establish actual robot completion, process quality, field recovery or qualification.

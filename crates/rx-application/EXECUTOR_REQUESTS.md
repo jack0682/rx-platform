@@ -1,52 +1,52 @@
-# 실행기의 소재 시도·단계 활성화 요청
+# Executor part-attempt and activation requests
 
-상태: 실제 mTLS RPC와 단일 writer/SQLite transaction에 연결했다. 전체 BT worker·장비 제출·checkpoint 변경 API의 완료를 뜻하지 않는다.
+Status: connected to actual mTLS RPCs and single-writer/SQLite transactions. This does not mean completion of the full BT worker, device submission or checkpoint mutation APIs.
 
-## 요청과 변경 소유자
+## Requests and mutation ownership
 
-| RPC | 주요 입력 | P가 기록하는 결과 |
+| RPC | Main inputs | Result recorded by P |
 |---|---|---|
-| Cell.BeginPartAttempt | 현재 CellCall, run, mandate, expected budget revision, optional cell revision | PartAttempt의 ID/ordinal/revision, run 소유 예산 소비와 run revision, 원장·복원 상태 |
-| Workflow.ResolveActivation | 현재 CallContext, key, run, node, visit, expected run revision | 유일 activation 또는 기존 mapping, 새 할당이면 run revision과 복원 상태 |
+| Cell.BeginPartAttempt | Current CellCall, run, mandate, expected budget revision, optional cell revision | PartAttempt ID/ordinal/revision, run-owned budget consumption and run revision, journal/recovery state |
+| Workflow.ResolveActivation | Current CallContext, key, run, node, visit, expected run revision | Unique activation or existing mapping; run revision and recovery state for a new allocation |
 
-RPC adapter는 메시지 형식·revision 위치·필수 key를 확인하고 typed command를 writer에 전달한다. JSON/Protobuf 안의 역할·단말·승인 bool로 실행 신원을 만들지 않는다. 내부 `ProcessingContext`의 시각은 writer가 처리할 때 얻은 P 시각이다.
+The RPC adapter checks message format, revision placement and required keys, then forwards a typed command to the writer. Roles, terminals or approval bools in JSON/Protobuf do not create an execution identity. Time in the internal `ProcessingContext` is P time obtained when the writer processes the request.
 
-공개 요청을 위한 `executor_requests`는 요청 envelope와 영속 결과를 처리한다. 실제 part 생성·예산 소비 및 activation 생성·적격성 판단은 기존 workflow와 같은 transition 함수를 사용한다. 별도 SQL 연결, 별도 작업 번호 allocator, 두 번째 업무 상태기계를 두지 않는다.
+`executor_requests` for public requests handles request envelopes and durable results. Actual part creation/budget consumption and activation creation/eligibility use the same transition functions as existing workflow paths. There is no separate SQL connection, operation-number allocator or second business state machine.
 
-## 검사와 저장 순서
+## Check and storage order
 
-1. 현재 P session/계정 Executor 역할, 계정 셀 범위, CellDefinition 협상, 해당 셀의 executor 배정을 확인한다. 새 boot나 역할 회수 후에는 과거 key로 이 검사를 건너뛰지 못한다.
-2. 요청 key와 typed 업무 payload 전체의 fingerprint를 비교한다. 이미 적용된 같은 요청이면 당시의 저장된 응답을 반환한다.
-3. 새 BeginPartAttempt는 run/cell 관계와 명시한 mandate, optional cell revision, 현재 run/mandate/qualification/조건과 budget revision·잔여 예산을 검사한다.
-4. 새 ResolveActivation은 run/node/visit의 기존 mapping부터 회수한다. 새로운 mapping이면 run revision·현재 실행 권한·실제 part ordinal·공정 frontier를 검사한다.
-5. core 변경, 요청 결과, 원장, 현재 projection과 checkpoint artifact는 같은 repository transaction에서 commit한다. 오류가 나면 함께 rollback된다.
+1. Check current P session/account Executor role, account cell scope, CellDefinition negotiation and the cell's executor assignment. A historical key cannot bypass this check after a new boot or role revocation.
+2. Compare the request key and fingerprint of the entire typed business payload. If the same request is already applied, return its stored response from that time.
+3. A new BeginPartAttempt checks the run/cell relationship, explicit mandate, optional cell revision, current run/mandate/qualification/conditions and budget revision/remaining budget.
+4. A new ResolveActivation first recovers any existing run/node/visit mapping. A new mapping requires checks of run revision/current execution authority/actual part ordinal/process frontier.
+5. Core changes, request result, journal, current projection and checkpoint artifact commit in the same repository transaction. Errors roll them back together.
 
-응답 유실 뒤 같은 key/body를 반복해도 예산을 다시 소비하거나 새 activation을 만들지 않는다. 조회를 한 뒤 새 revision을 얻었다고 해서 같은 key의 body를 바꾸지 않는다. 바뀐 mandate/visit/revision은 `KEY_CONFLICT`이며 gRPC `ALREADY_EXISTS`로 반환한다. 새 의도에는 새 key가 필요하다.
+Repeating the same key/body after a lost response does not consume budget again or create a new activation. Obtaining a new revision from a read is not a reason to change the body for the same key. Changed mandate/visit/revision is `KEY_CONFLICT`, returned as gRPC `ALREADY_EXISTS`. New intent requires a new key.
 
-새 key라도 이미 존재하는 `(run,node,visit)`는 기존 activation을 반환한다. 기존 mapping을 회수하는 것과 새 할당의 CAS를 구별하므로, 그 mapping이 생기기 전의 revision으로 다시 조회성 요청을 보내도 새로운 ID를 만들지 않는다. 다만 현재 신원/셀 접근 검사는 유지한다.
+An existing `(run,node,visit)` returns its existing activation even with a new key. Recovering an existing mapping is distinct from CAS for a new allocation, so a read-like repeat request using the revision before that mapping existed does not create a new ID. Current identity/cell access checks still apply.
 
-CallContext의 call ID와 인증 session 자체는 업무 fingerprint에 넣지 않는다. key는 installation/client namespace/method에 속한다. 업무 입력과 CAS 값은 fingerprint에 포함한다. 기존의 간단한 trusted composition helper와 공개 typed 요청의 payload가 다르면 같은 key를 교차 재사용하지 않는다. 서로 다른 payload를 같은 요청으로 처리하지 않으며, 공개 BFF를 추가할 때는 이 typed 경로를 사용해야 한다.
+CallContext call ID and the authentication session itself are excluded from the business fingerprint. The key belongs to installation/client namespace/method. Business inputs and CAS values are included in the fingerprint. If the existing simple trusted-composition helper and public typed request have different payloads, a key is not reused across them. Different payloads are not treated as the same request; any added public BFF must use this typed path.
 
-## revision과 응답
+## Revisions and responses
 
-BeginPartAttempt 응답에는 해당 commit의 실제 PartAttempt record revision을 저장한다. 나중의 part 처분을 조회해서 과거 요청 응답에 새 revision만 붙이지 않는다. `material_id`는 아직 모델에 결합한 식별이 없으므로 absent이며, 임의 소재 UUID를 발급해 확인된 실물로 표시하지 않는다.
+The BeginPartAttempt response stores the actual PartAttempt record revision from that commit. Later part disposition is not read to attach only a new revision to a historical response. `material_id` is absent because no material identity is bound into the model yet; an arbitrary material UUID is not issued and presented as an identified physical item.
 
-ActivationView의 slot/operation/intent 연결은 Work와 run/part/cell 관계까지 확인해 같은 transaction에서 만든다. 과거 key의 저장된 응답과 최신 GetRun을 구별한다. 이후 생성된 자식 mapping은 GetRun의 새 checkpoint에서 회수한다.
+ActivationView slot/operation/intent bindings are created in the same transaction after checking Work and run/part/cell relationships. A historical key's stored response is distinct from the latest GetRun. Child mappings created later are recovered from GetRun's new checkpoint.
 
-ProtoJSON의 기본 숫자 표현을 쓰지 않고 기존 frozen codec을 적용한다. positive visit/budget/run revision을 요구하고, CellCall의 base expected_revision을 객체별 expected_*와 중복해서 받지 않는다.
+The existing frozen codec is used instead of default ProtoJSON numeric representation. Positive visit/budget/run revisions are required; CellCall's base expected_revision is not accepted in duplicate with object-specific expected_* fields.
 
-## 검증 범위
+## Validation scope
 
-- 실제 저장 직전 rollback 및 commit 직후 응답 유실에서 part 수·예산·activation·checkpoint의 일관성.
-- 같은 key와 바뀐 mandate/budget/visit의 충돌, 새 key의 기존 activation 회수.
-- 예산을 소진한 뒤에도 동일 Begin 요청은 원래 part를 반환하며 추가 소비가 없음.
-- 역할 회수 후에는 cached part/activation 응답도 권한 검사를 우회하지 못함.
-- 실제 TLS socket/단일 writer/SQLite에서 Session→Cell 협상→모의 operator 시작→BeginPartAttempt→ResolveActivation→GetRun의 연결.
+- Consistent part count/budget/activation/checkpoint on rollback immediately before actual persistence and lost response immediately after commit.
+- Conflicts between the same key and changed mandate/budget/visit; existing activation recovery with a new key.
+- Even after budget exhaustion, the same Begin request returns the original part without further consumption.
+- After role revocation, cached part/activation responses cannot bypass authorization.
+- Actual TLS socket/single writer/SQLite connection through Session → Cell negotiation → simulated operator start → BeginPartAttempt → ResolveActivation → GetRun.
 
-통신 시험의 operator 단말, qualification, Host 준비/Arm acknowledgment는 명시적인 simulation fixture다. 이 시험은 Work를 만들거나 native device를 호출하지 않는다. 실제 장비 전달은 별도 Host E2E 범위다.
+The transport tests' operator terminal, qualification, Host readiness/Arm acknowledgment are explicit simulation fixtures. These tests do not create Work or invoke a native device. Actual device delivery is a separate Host E2E scope.
 
-## 다음 연결
+## Next connections
 
-[Cell.SubmitOperation의 유한 작업 경로](EXECUTOR_SUBMISSION.md)를 활성화했다. run/activation/slot/part와 parent mandate, 중첩 CallContext, 두 객체 CAS를 같은 T1에 연결하고, 실제 원장 위치의 [최초 접수 확인서](ADMISSION_RECEIPT.md)를 반환한다. 연속 제어·복구 제출과 아래 공정 제어 연결은 후속이다.
+The [Cell.SubmitOperation finite-operation path](EXECUTOR_SUBMISSION.md) is enabled. It connects run/activation/slot/part and parent mandate, nested CallContext and two-object CAS in the same T1, returning an [initial admission receipt](ADMISSION_RECEIPT.md) at the actual journal location. Continuous-control/recovery submission and the process-control connections below are follow-up work.
 
-P의 branch/wait 결정·Workflow.CommitCheckpoint의 release schema/CAS, E artifact 확보·C++ Frame/유한 작업/Pause/인계 worker·pending key 복원은 후속 단계에서 연결했다. S 분기/대기 worker는 연결했으며 전체 복구는 남았다. 현재 두 요청의 동작을 전체 executor 실행·복구·운전 qualification으로 확대해 표현하지 않는다.
+P branch/wait decisions, Workflow.CommitCheckpoint release schema/CAS, E artifact acquisition, C++ Frame/finite-operation/Pause/handover workers and pending-key recovery were connected in later stages. S branch/wait workers are connected; complete recovery remains outstanding. The behavior of these two requests is not presented as complete executor execution/recovery/operating qualification.

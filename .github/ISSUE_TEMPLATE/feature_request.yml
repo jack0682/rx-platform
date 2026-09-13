@@ -1,23 +1,23 @@
 name: Feature request
-description: RX의 이기종 로봇·시설 협업을 개선할 제안을 기록합니다.
+description: Propose an improvement to RX coordination of heterogeneous robots and infrastructure.
 title: '[Feature] '
 body:
   - type: textarea
     id: problem
     attributes:
-      label: 해결할 문제
-      description: 사용자, 로봇 또는 운영 영역에서 필요한 동작을 설명해주세요.
+      label: Problem to solve
+      description: Describe the behavior needed by users, robots or operating domains.
     validations:
       required: true
   - type: textarea
     id: proposal
     attributes:
-      label: 제안과 완료 조건
-      description: 구체적인 결과와 이를 확인할 방법을 적어주세요.
+      label: Proposal and completion criteria
+      description: State the concrete outcome and how it can be verified.
     validations:
       required: true
   - type: textarea
     id: alternatives
     attributes:
-      label: 대안과 계약 영향
-      description: 권한, 완료 판정, 인계, 복구 및 다른 저장소에 미칠 영향을 적어주세요.
+      label: Alternatives and contract impact
+      description: Describe effects on authority, completion decisions, handover, recovery and other repositories.
