@@ -1,11 +1,11 @@
-# 보안 정책
+# Security policy
 
-RX는 연구·개발 중인 개인 프로젝트입니다. 현재 `main`과 `develop`의 문제를 우선 확인하며 이전 스냅샷·태그에 대한 장기 보안 지원이나 대응 시간을 약속하지 않습니다. CI 통과와 보안 검토는 실물 장비의 안전 인증이나 운전 승인을 뜻하지 않습니다.
+RX is a personal project under research and development. We prioritize issues affecting the current `main` and `develop` branches and do not promise long-term security support or response times for older snapshots and tags. Passing CI or a security review does not constitute physical equipment safety certification or operating approval.
 
-## 비공개 제보
+## Private reporting
 
-인증·권한 우회, 비밀정보 노출, 명령 재실행, 원장 무결성 또는 복구 경계의 취약점은 [GitHub 비공개 취약점 보고](https://github.com/jack0682/rx-platform/security/advisories/new)로 전달해주세요. 공개 이슈·PR에는 공격 절차나 토큰·개인정보·장비 접속정보를 올리지 마세요.
+Report vulnerabilities involving authentication or authority bypass, secret exposure, command replay, journal integrity or recovery boundaries through [GitHub private vulnerability reporting](https://github.com/jack0682/rx-platform/security/advisories/new). Do not publish attack procedures, tokens, personal information or equipment connection details in public issues or PRs.
 
-제보에는 영향을 받는 커밋과 환경, 최소 재현 절차, 예상 영향, 가능한 완화 방법을 적어주세요. 실제 장비나 타인의 시스템에서 검증하지 않고 모의 환경의 근거로 설명할 수 있습니다. 관리자는 제보를 확인하고 재현·수정·공개 시점을 보고자와 조율합니다.
+Include the affected commit and environment, minimal reproduction steps, expected impact and possible mitigations. Evidence from a simulated environment is sufficient; do not test on physical equipment or systems belonging to others. The maintainer will review the report and coordinate reproduction, remediation and disclosure timing with the reporter.
 
-수정은 테스트와 검토를 거친 PR로 반영합니다. 운영 중인 장비의 패치 적용·중단·재시작은 해당 운영 주체의 절차에 따라 별도로 결정합니다.
+Fixes go through tested and reviewed PRs. The relevant operator separately determines patching, stopping and restarting procedures for equipment in operation.

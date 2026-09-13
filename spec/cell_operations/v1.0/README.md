@@ -1,33 +1,33 @@
-# RX 셀 운영 계약 v1.0
+# RX Cell Operations Contract v1.0
 
-상태: v1.0 문서 revision 2026-09-14-neutral.1 · 규범적 설계 문서. 실물 운전 허가·안전기능 성능·인증 판정은 아니다.
+Status: v1.0 document revision 2026-09-14-english.1 · Normative design document. Not physical-operation authorization, safety-function performance, or a certification decision.
 
-이 계약은 셀의 **운전 조건, 실행 허가, 작업자 개입, 복구, 변경 후 재검토**를 정의한다. [공통 작업 계약 v1.0](https://github.com/jack0682/rx_docs/blob/main/docs/contracts/v1.0/README.md)에 결합하며 기존 작업의 접수·결과·불명·중복 처리 의미를 소급 변경하지 않는다.
+This contract defines cell **operating conditions, execution authorization, operator intervention, recovery, and revalidation after change**. It extends the [common operation contract v1.0](https://github.com/jack0682/rx_docs/blob/main/docs/contracts/v1.0/README.md) without retroactively changing existing acceptance, outcome, uncertainty, or duplicate-handling semantics.
 
-| 문서 | 역할 |
+| Document | Role |
 |---|---|
-| [01 사용 범위·조건·기능](01_scope_conditions_functions.md) | 첫 셀 경계, 사용 범위·관측·소재 지지, 위험/안전기능의 책임 |
-| [02 허가·무효화](02_authorization_invalidation.md) | 자동 run 시작 의도, 1회 작업 permit, 철회·경합·재시작 |
-| [03 개입·복구·변경](03_intervention_recovery_change.md) | 작업자 개입·접근 근거·인수인계·복구 경로·검증 영향 |
-| [04 데이터·연결·UI](04_protocol_integration_ui.md) | 타입·API·원자성·기존 계약 연결·혼합 버전·운영 화면 |
-| [05 반례·검증·완료 감사](05_validation_audit.md) | SR01–03과 경합 trace, 구현/실물 검증 의무, 요구별 완료 판단 |
-| [조사와 결정 근거](https://github.com/jack0682/rx_docs/blob/6111a7d1dcf33052f38c3e67c6585aec2b44df3c/references/cell_operation_research_2026-09-10/research_and_decisions.md) | 원문 사실, RX 정책, 대안 선택·배제 이유 |
+| [01 Scope, conditions, and functions](01_scope_conditions_functions.md) | First-cell boundary, operating scope/observations/material support, hazard/safety-function responsibilities |
+| [02 Authorization and invalidation](02_authorization_invalidation.md) | Automatic-run start intent, single-operation permits, revocation/races/restart |
+| [03 Intervention, recovery, and change](03_intervention_recovery_change.md) | Operator intervention/access evidence/handover/recovery paths/validation impact |
+| [04 Data, integration, and UI](04_protocol_integration_ui.md) | Types/APIs/atomicity/base-contract integration/mixed versions/operational UI |
+| [05 Counterexamples, validation, and completion audit](05_validation_audit.md) | SR01–03 and race traces, implementation/physical-validation obligations, per-requirement completion decisions |
+| [Research and decision evidence](https://github.com/jack0682/rx_docs/blob/6111a7d1dcf33052f38c3e67c6585aec2b44df3c/references/cell_operation_research_2026-09-10/research_and_decisions.md) | Original-source facts, RX policies, rationale for selecting/rejecting alternatives |
 
-## 기준
+## Principles
 
-- `MUST/필수/금지`는 이 계약을 구현할 때 지킬 요구다. 모델별 수치·신호·절차는 별도 검증된 profile이 제공한다.
-- 정상 자동 run은 유효한 범위·현재 조건 안에서 반복할 수 있다. 매 작업마다 사람의 클릭을 요구하지 않는다.
-- 단순 통신 응답 유실은 곧 안전정지나 사람 개입이 아니다. 원래 의도·제어권이 유지되고 결과를 회수할 수 있으면 같은 작업을 조회해 조정한다.
-- 사람 접근/수동 상태 변경, 안전정지, 장비·권한 세대 변경 뒤에는 기존 시작 의도를 되살리지 않는다. 명시된 재확인과 새로운 시작이 필요하다.
-- RX의 전달 허용은 실제 보호 기능의 조건을 대체하지 않는다. RX·Host·OS가 그 기능 경로에 들어가면 그 부분도 요구 성능/고장 가정/검증에 포함된다.
-- Rust/ROS 경계·두 RX 레포/컨테이너 구성을 유지한다. 장비 지원 범위는 profile별 검증으로 정한다. 새로운 필수 중앙 안전 서버나 세 번째 레포를 전제하지 않는다.
+- `MUST/required/prohibited` denotes implementation requirements. Separately validated profiles provide model-specific values, signals, and procedures.
+- Normal automatic runs may repeat within valid scopes/current conditions. No human click is required for every operation.
+- A simple lost communication response is not itself a safety stop or human intervention. If original intent/authority remain and results are recoverable, reconcile by querying the same operation.
+- After human access/manual-state change, safety stops, or device/authority generation changes, do not revive prior start intent. Explicit revalidation and a new start are required.
+- RX dispatch permission does not replace actual protective-function conditions. If RX/Host/OS participates in that function path, include it in required performance, fault assumptions, and validation.
+- Preserve the Rust/ROS boundary and two RX repository/container structure. Determine device support through per-profile validation. Do not assume a new mandatory central safety server or third repository.
 
-## 적용 범위
+## Scope
 
-같은 주 컴퓨터의 단일 Runtime과 장비 Host, 명시적으로 정의한 운영 셀을 적용 범위로 한다. 고정식·바퀴형·족형 모델의 차이를 profile로 표현한다. 실제 장비 구성·시설 제어부·신호·개입 절차가 미확정인 설치는 `NOT_COMMISSIONED`다. 이 상태에서도 계약 설계는 확정할 수 있지만 생산/현장 접근 허용을 발급할 수는 없다.
+Applies to a single Runtime and device Hosts on the same primary computer and an explicitly defined operational cell. Profiles represent stationary/wheeled/legged model differences. Installations with unresolved actual equipment, facility controllers, signals, or intervention procedures are `NOT_COMMISSIONED`. Contract design can be finalized in this state, but production/site-access permission cannot be issued.
 
-N01–N06의 분석을 실제 규칙과 추적표로 정리한 판이다. 프로토콜 확장은 `rx.cell.v1`, 기존 `rx.contract.v1`은 기초 계약으로 재사용한다. 해당 셀 release는 둘을 함께 지원해야 하며 옛 Host로 자동 하향 실행하지 않는다. 세부 호환 규칙은 04에 있다.
+This edition turns the N01–N06 analysis into concrete rules and traceability tables. Protocol extension is `rx.cell.v1`, reusing `rx.contract.v1` as the base. Relevant cell releases must support both; no automatic downgrade to old Hosts. Detailed compatibility rules are in 04.
 
-[독립 문서 검토 기록](review_record.md) · [계약 manifest](protocol_manifest.json) · [무결성 기록](manifest_integrity.json)
+[Independent documentation review record](review_record.md) · [Contract manifest](protocol_manifest.json) · [Integrity record](manifest_integrity.json)
 
-제조사 중립화의 범위·호환·hash 변경은 [문서 개정 기록](revision_2026-09-14.md)에 있다. 2026-09-10 검토 결과를 이 개정판의 새 실행 검증으로 주장하지 않는다.
+Vendor-neutralization scope, compatibility, and hash changes are in the [documentation revision record](revision_2026-09-14.md). Subsequent translation-only byte/hash changes are in the [English translation revision](translation_revision_2026-09-14.md). Do not present the 2026-09-10 review as new execution validation of these revisions.

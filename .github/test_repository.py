@@ -57,6 +57,40 @@ class BranchPolicyTests(unittest.TestCase):
 
 
 class ArtifactTests(unittest.TestCase):
+    def test_ai_instructions_are_excluded_without_rejecting_test_harnesses(self):
+        for name in ("AGENTS.md", "claude.md", "nested/CLAUDE.local.md",
+                     ".claude/settings.json", ".github/agents/reviewer.md",
+                     "skills/reviewer/SKILL.md", ".cursor/rules/project.mdc",
+                     ".claude", ".codex", ".cursor", ".agents", ".continue"):
+            with self.subTest(name=name):
+                self.assertTrue(CHECK.is_ai_artifact(Path(name)))
+        for name in ("runtime/rx-host/tests/support/crash_harness.rs",
+                     ".github/workflows/ci.yml", "docs/agent_architecture.md"):
+            self.assertFalse(CHECK.is_ai_artifact(Path(name)))
+
+    def test_english_policy_rejects_residual_text_but_preserves_unicode_test_coverage(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            path = root / "source.rs"
+            policy = {"schema": "rx.repository-content-policy.v1", "language": "en",
+                      "exclude_ai_artifacts": True}
+            path.write_text("English comment\n" + chr(0xac00))
+            self.assertIn("source.rs:2", CHECK.content_policy_errors(root, [path], policy)[0])
+            policy["language"] = "mixed"
+            self.assertEqual(CHECK.content_policy_errors(root, [path], policy), [])
+            policy["language"] = "en"
+            path.write_text('let unicode_fixture = "\\u{ac00}";')
+            self.assertEqual(CHECK.content_policy_errors(root, [path], policy), [])
+
+    def test_content_policy_checks_ai_files_even_in_mixed_language_repositories(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            path = root / "AGENTS.md"
+            path.write_text("Local assistant instructions")
+            policy = {"schema": "rx.repository-content-policy.v1", "language": "mixed",
+                      "exclude_ai_artifacts": True}
+            self.assertIn("must remain local", CHECK.content_policy_errors(root, [path], policy)[0])
+
     def test_local_links_and_code_examples(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary).resolve()
@@ -70,6 +104,22 @@ class ArtifactTests(unittest.TestCase):
             self.assertEqual(len(errors), 1)
             self.assertIn("missing.md", errors[0])
             self.assertEqual(siblings, 0)
+
+    def test_ai_symlink_and_non_english_filename_cannot_escape_the_policy(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            assistant = root / "CLAUDE.md"
+            assistant.symlink_to("missing-local-instructions")
+            settings = root / ".claude"
+            settings.symlink_to(root, target_is_directory=True)
+            document = root / (chr(0xac00) + ".md")
+            document.write_text("English content")
+            policy = {"schema": "rx.repository-content-policy.v1", "language": "en",
+                      "exclude_ai_artifacts": True}
+            errors = CHECK.content_policy_errors(root, [assistant, settings, document], policy)
+            self.assertEqual(len(errors), 3)
+            self.assertTrue(any("must remain local" in item for item in errors))
+            self.assertTrue(any("English filename" in item for item in errors))
 
     def test_machine_specific_link_is_rejected(self):
         with tempfile.TemporaryDirectory() as temporary:

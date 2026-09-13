@@ -14,8 +14,8 @@ QualificationAuthority is an immutable in-memory verification catalog prepared o
 
 Current grants and Host Arm receipts are supplied by test fixtures/receipt adapters. Host journals, actual native dispatch and completion evidence ingestion are not implemented in this crate yet. This is not a public HTTP/RPC server or hardware commissioning result.
 
-[패키지 반입 접수](PACKAGE_INTAKE.md)는 별도 작업자의 파일 검증·보관 결과를 현재 사용자·셀·정책 문맥에 결합해 원장에 남긴다. 결과는 AWAITING_REVIEW이며 승인·활성화가 아니다.
+[Package intake](PACKAGE_INTAKE.md) binds a separate worker's file verification/storage result to the current user/cell/policy context and records it in the ledger. The result is AWAITING_REVIEW, not approval or activation.
 
-[공정 검토·소프트웨어 승인](PROCESS_REVIEW.md)은 실제 검증 자료의 서명과 원문/결과/셀 문맥을 대조하고, 제출자와 다른 Verifier의 결정을 버전에 결합한다. 활성화·실물 qualification은 별도다.
+[Process review and software approval](PROCESS_REVIEW.md) compare actual verification material signatures and source/result/cell context, and bind a decision by a Verifier different from the submitter to a version. Activation and physical qualification are separate.
 
-[승인 공정 변경 계획](PROCESS_CHANGE.md)은 before/after·영향 검토·STAGED·명시적 fence 준비를 구현한다. Host 구성 ack와 실제 설치 선택 교체는 후속이다.
+[Approved-process change planning](PROCESS_CHANGE.md) implements before/after, impact review, STAGED and explicit fence preparation. Host configuration acknowledgments and replacement of the actual installed selection are subsequent work.

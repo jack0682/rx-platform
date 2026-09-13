@@ -259,7 +259,7 @@ fn document_manifest_hashes_remain_the_negotiation_identity() {
     let base_hash = format!("{:x}", Sha256::digest(canonical::bytes(&base).unwrap()));
     assert_eq!(
         base_hash,
-        "3499dff92023509d4daaded3bb9d89a822c948a9b2c025e954262c9bef9d5afe"
+        "d32519ffd33cc02f5e6f82406ad2fe253421527dc047b807c11beb11a8f7583c"
     );
     assert_eq!(
         cell["required_base_manifest_sha256"].as_str().unwrap(),
@@ -267,6 +267,6 @@ fn document_manifest_hashes_remain_the_negotiation_identity() {
     );
     assert_eq!(
         format!("{:x}", Sha256::digest(canonical::bytes(&cell).unwrap())),
-        "0c167639b3d048f6717819f9cc9b92bba8c3a11a4c41c7068d3a04c44e7be0ea"
+        "5e75ab4d3d72d4b22082003dbec5e2ca54562cc4302d2e306b07ce64d215d71b"
     );
 }
