@@ -71,7 +71,7 @@ jobs:
         run: cargo test --workspace --all-features --locked
 
   ci:
-    name: CI
+    name: ${{ github.event_name == 'pull_request' && 'CI' || 'Branch CI' }}
     if: ${{ always() }}
     needs: [repository, rust]
     runs-on: ubuntu-24.04

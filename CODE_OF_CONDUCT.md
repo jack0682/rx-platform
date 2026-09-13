@@ -1,7 +1,7 @@
-# 협업 행동 원칙
+# Code of conduct
 
-RX의 이슈, PR, 토론에서는 배경과 경험이 다른 참여자를 존중합니다. 기술적 주장과 코드에 대한 비판은 구체적인 근거와 개선 제안으로 표현하고 사람에 대한 공격으로 바꾸지 않습니다.
+Respect participants with different backgrounds and experience in RX issues, PRs and discussions. Critique technical claims and code with concrete evidence and suggestions for improvement rather than personal attacks.
 
-괴롭힘, 차별, 위협, 원치 않는 성적 표현, 동의 없는 개인정보 공개를 허용하지 않습니다. 관리자는 문제가 되는 콘텐츠의 수정·삭제, 대화 제한, 참여 제한을 적용할 수 있습니다. 사안의 영향과 반복 여부에 맞춰 대응합니다.
+Harassment, discrimination, threats, unwanted sexual content and disclosure of personal information without consent are not permitted. The maintainer may require edits, remove content, restrict conversations or limit participation. Responses should reflect the impact and recurrence of the behavior.
 
-문제는 저장소 관리자 `@jack0682`에게 알릴 수 있습니다. 민감한 개인정보를 공개 이슈에 올리지 마세요. 보안 취약점은 [SECURITY.md](SECURITY.md)의 비공개 경로를 이용해주세요.
+Report concerns to the repository maintainer, `@jack0682`. Do not put sensitive personal information in public issues. Use the private reporting route in [SECURITY.md](SECURITY.md) for security vulnerabilities.

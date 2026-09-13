@@ -1,97 +1,97 @@
-# 승인 공정의 변경 계획·영향 검토·staging·적용 준비
+# Change planning, impact review, staging and application preparation for approved processes
 
-2026-09-12. 이 구현은 SR03의 `PROPOSED → IMPACT_REVIEWED → STAGED`와 그 뒤의 적용 준비를 연결한다. **현재 설치 구성은 아직 바꾸지 않는다.** `APPLIED_UNQUALIFIED → QUALIFIED_ACTIVE`에는 Host 구성 ack, 잔류 작업/지지 처분, 이전 실행 참조 보존과 새 qualification을 연결해야 한다.
+2026-09-12. This implementation connects SR03's `PROPOSED → IMPACT_REVIEWED → STAGED` and the subsequent application preparation. **It does not yet change the current installed configuration.** `APPLIED_UNQUALIFIED → QUALIFIED_ACTIVE` requires connections to Host configuration acks, disposition of residual work/support, preservation of previous execution references and fresh qualification.
 
-이는 승인 화면의 버튼을 실행 선택 pointer에 바로 연결하지 않기 위한 실제 변경 경로다. Stage까지는 운영 권한을 바꾸지 않으며, 등록 단말의 ReleaseManager가 적용 준비를 명시적으로 요청한 경우에만 영향 셀의 epoch/permit/fence를 처리한다.
+This is an actual change path that prevents a button on an approval screen from connecting directly to an execution-selection pointer. Through Stage, operating authority is unchanged; impacted cells' epochs/permits/fences are handled only when a ReleaseManager on a registered terminal explicitly requests application preparation.
 
-## 승인 결과에서 대상 구성을 만드는 방법
+## Building the target configuration from an approval result
 
-제안에는 공정 검토 ID·검증 revision·review digest·승인 decision revision과 변경 이유를 고정한다. 패키지 worker가 원본 Store·정책·verifier authority·signed report·원문과 결과를 다시 검사해야 새 제안을 만들 수 있다. P의 최신 소프트웨어 승인도 그대로 유효해야 한다.
+A proposal pins the process review ID, verification revision, review digest, approval decision revision and reason for change. A new proposal can be created only after the package worker rechecks the original Store, policy, verifier authority, signed report, source and result. P's latest software approval must also remain valid.
 
-대상 구성은 임의의 새 CellConfiguration을 클라이언트에게 받아 저장하지 않는다. 검토한 configuration snapshot과 실제 검증된 resolved process로 만든다.
+The target configuration is not an arbitrary new CellConfiguration accepted from a client and stored. It is built from the reviewed configuration snapshot and the actual verified resolved process.
 
-- 각 compiled operation node의 binding을 검토 시 선택한 기존 StepBinding에 연결한다.
-- host, normalized intent, 실행 조건, completion 규칙, condition ID/revision, handover age 등 기존 작업 규칙을 복사한다.
-- 새 StepBinding ID는 compiled node ID다. 같은 template을 여러 위치/반복에 쓰면 각각의 node ID로 분리하고 원래 template ID를 `step_origins`에 보존한다.
-- 정적 predecessor 목록은 비운전 검토에서 원문 순서를 확인한 뒤 compiled tree가 담당하도록 전환한다. P의 기존 configuration validator가 요구하는 형태로 명시적으로 바꾼다. 서명된 원문/결과와 predecessor 순서의 독립 검사는 앞 검토 경로와 재검증 worker에서 실행한다.
-- recipe 참조는 실제 resolved process의 SHA-256/schema/size로 바꾸고 process를 포함한다. 나머지 셀 구성 필드는 그대로 유지한다.
-- before/after는 별도의 내용 hash 기반 불변 구성 문서로 보관한다. 구성이 같거나, 장비 operation이 없거나, 확장된 구성 record가 현재1MiB 한도를 넘으면 거부한다.
+- Connect each compiled operation node's binding to the existing StepBinding selected during review.
+- Copy existing operation rules, including host, normalized intent, execution conditions, completion rules, condition ID/revision and handover age.
+- The new StepBinding ID is the compiled node ID. Using the same template in multiple positions/repetitions separates it into each node ID, while preserving the original template ID in `step_origins`.
+- After source order is checked in non-operating review, responsibility for the static predecessor list is transferred to the compiled tree. It is explicitly converted into the form required by P's existing configuration validator. Independent checks of the signed source/result and predecessor order run in the preceding review path and the reverification worker.
+- Replace the recipe reference with the actual resolved process SHA-256/schema/size and include the process. Preserve all other cell configuration fields.
+- Preserve before/after as separate immutable configuration documents addressed by content hash. Reject identical configurations, configurations with no equipment operations, or expanded configuration records exceeding the current 1 MiB limit.
 
-기존 definition/envelope를 새 qualification으로 승격하지 않는다. 이 단계에서 유지하는 참조는 기존 하드웨어/제약 문맥이며, 공정 순서 변경이 envelope·검증 범위에 주는 영향은 재검토 대상이다. 새 구성에 기존 qualification을 붙여 실행시키는 구현은 없다.
+The existing definition/envelope is not promoted to a new qualification. References preserved at this stage represent existing hardware/constraint context; the impact of process-order changes on the envelope and verification scope must be reviewed again. There is no implementation that attaches the existing qualification to the new configuration and executes it.
 
-## 영향 범위와 검토
+## Impact scope and review
 
-기본 단위는 셀 전체다. 변경 원점에서 시작해 다음 중 하나를 공유하는 셀을 고정점까지 포함한다.
+The base unit is the entire cell. Starting at the change origin, include cells sharing any of the following until reaching a fixed point:
 
 1. scope
 2. command/support resource
 3. Host
 
-Host만 같고 scope/resource 이름이 다르더라도 공통 프로세스·제어 경로의 영향을 놓치지 않도록 포함한다. 현재 closure 한도는64셀이다. 알 수 없는 의존성이 없다고 추정해 일부 node만 영향 없음으로 취급하지 않는다. 현재 builder는 장비/Host/layout을 추가하는 범용 변경기가 아니며, 그런 변경은 영향 그래프를 확장해야 한다.
+Cells are included even if only the Host matches and scope/resource names differ, to avoid missing effects through a common process/control path. The current closure limit is 64 cells. It does not assume away unknown dependencies and treat only some nodes as unaffected. The current builder is not a general changer that adds equipment/Hosts/layout; such changes must extend the impact graph.
 
-각 영향 셀의 전체 configuration digest, definition/envelope/recipe 참조와 Host/scope/resource 목록을 고정한다. qualification·recovery 검토와 Host 구성 확인 필요성을 명시한다. 이 정적 영향 문맥과 실행 중인 Run/작업/자원/사건의 현재 blocker를 구별한다. 정상 작업 진행만으로 제안의 정적 digest가 바뀌지는 않는다.
+Pin each impacted cell's complete configuration digest, definition/envelope/recipe references and Host/scope/resource lists. Explicitly require qualification/recovery review and Host configuration confirmation. Distinguish this static impact context from current blockers in running Runs/operations/resources/cases. Normal work progress alone does not change the proposal's static digest.
 
-모든 영향 셀에 현재 접근권이 있어야 제안·조회·검토·staging·준비를 진행할 수 있다. origin 하나의 권한으로 다른 셀의 변경 정보를 얻거나 권한을 철회하지 못한다.
+Current access to all impacted cells is required for proposal, query, review, staging and preparation. Authority over one origin cannot retrieve other cells' change information or revoke their authority.
 
-변경 제안자와 다른 Verifier 계정이 변경 이유와 before/after·scope·검증/복구 영향을 검토한다. 계획 digest와 revision을 명시하고 의견을 기록한다. 영향 검토를 바꿀 때도 CAS와 이력을 유지한다. Stage는 ReleaseManager가 요청하며, package/report/현재 승인과 target 재생성을 다시 확인한다.
+A Verifier account different from the change proposer reviews the reason for change, before/after, scope, and verification/recovery impact. It specifies the plan digest and revision and records comments. Changes to impact review also retain CAS and history. A ReleaseManager requests Stage, which rechecks package/report/current approval and target regeneration.
 
-## 적용 준비의 효과
+## Effects of application preparation
 
-등록된 현재 단말에서 ReleaseManager가 `BeginPreparation`을 명시적으로 요청한다. 이 API는 실제 적용 완료를 뜻하지 않는다.
+A ReleaseManager on a currently registered terminal explicitly requests `BeginPreparation`. This API does not mean actual application is complete.
 
-하나의 transaction에서 다음을 수행한다.
+The following occur in one transaction:
 
-- 중첩된 영향 범위에서 다른 변경의 준비가 진행 중이면 거부한다.
-- 현재 검토/승인, 계획 digest/revision, builder identity와 모든 영향 구성 digest를 다시 확인한다.
-- 영향 셀 전체에 새 epoch와 scope epoch를 기록하고 `CONFIGURATION_CHANGE` latched block을 추가한다.
-- 기존 미진입 permit/queue와 live mandate를 기존 invalidation 규칙으로 봉인한다. 실제 진입 가능성을 배제하지 못한 작업은 UNKNOWN/미해결 상태와 자원을 보존한다.
-- Run·start attempt·native disposition도 기존 invalidation 규칙으로 처리한다. 기존 결론이나 증거를 새 성공으로 바꾸지 않는다.
-- 관련 Host에 fence를 outbox로 넣고 각 메시지 ID/목표 epoch/scope를 Preparation에 묶는다. Preparation, 변경 revision/history/event와 request 결과를 함께 기록한다.
+- Reject if preparation for another change is in progress within an overlapping impact scope.
+- Recheck current review/approval, plan digest/revision, builder identity and all impacted configuration digests.
+- Record new epochs and scope epochs across all impacted cells and add a latched `CONFIGURATION_CHANGE` block.
+- Seal existing pre-entry permits/queues and live mandates under existing invalidation rules. Operations for which actual entry cannot be ruled out retain UNKNOWN/unresolved state and resources.
+- Handle Runs, start attempts and native dispositions under existing invalidation rules as well. Do not turn existing conclusions or evidence into new success.
+- Put fences for relevant Hosts in the outbox and bind each message ID/target epoch/scope to Preparation. Record Preparation, change revision/history/event and request result together.
 
-같은 request key/body는 최초 준비 결과를 회수한다. 응답 유실을 이유로 새 epoch/fence를 중복 발행하지 않는다. Runtime 재시작이나 다른 hold로 preparation의 boot/epoch가 낡아지면 조회에 stale을 표시한다. `refresh=true`와 최신 변경 revision을 명시해야 다시 준비한다. 이전 준비 이력·기존 block·작업/자원은 지우지 않는다.
+The same request key/body retrieves the initial preparation result. Lost responses do not cause duplicate new epochs/fences. If a Runtime restart or another hold makes the preparation's boot/epoch stale, the query displays staleness. Repreparation requires explicit `refresh=true` and the latest change revision. Previous preparation history, existing blocks, operations and resources are not deleted.
 
-현재 준비 중인 변경을 자동 취소하거나 이전 운전 권한을 복구하는 API는 없다. 조정/취소도 남은 물리 상태와 적절한 복구 절차를 요구한다.
+There is currently no API that automatically cancels a change under preparation or restores previous operating authority. Reconciliation/cancellation also require consideration of remaining physical state and appropriate recovery procedures.
 
-## 조회와 미충족 조건
+## Queries and unmet conditions
 
-조회는 stored before/after와 현재 blocker를 반환한다. 최대256개 항목과 전체 개수/잘림 여부를 구분한다.
+Queries return stored before/after and current blockers. They distinguish at most 256 items from the total count/truncation status.
 
-- 현재 configuration/승인 또는 준비 boot/epoch가 달라짐
-- 아직 처분되지 않은 Run
-- NONE/UNRESOLVED 또는 disputed 작업
-- 보유/격리된 resource
-- 열린 사건
-- 준비 메시지에 대한 Host fence 미확인
-- Host 구성 acknowledgement 필요
+- Current configuration/approval or preparation boot/epoch has changed
+- Runs not yet disposed
+- NONE/UNRESOLVED or disputed operations
+- Held/isolated resources
+- Open cases
+- Missing Host fence acknowledgment for preparation messages
+- Host configuration acknowledgment required
 
-fence 확인은 해당 준비의 정확한 메시지·epoch·scope와 현재 등록된 Host boot/journal을 대조한다. **fence 확인을 구성 적용 ack로 대신하지 않는다.** Host의 공정 문맥 서비스/receipt와 P transport client는 [Host 계약](https://github.com/jack0682/rx-solutions/blob/codex/initial-draft/runtime/rx-host/PROCESS_CONFIGURATION.md)에 구현했다. [P 영속 coordinator](HOST_CONFIGURATION_DISPATCH.md)가 명시적 Batch 요청·자동 전송·receipt 반영을 연결한다. 현재 준비에 맞는 Host 확인이 없는 동안 `HOST_CONFIGURATION_ACKNOWLEDGEMENT_REQUIRED`는 남는다. Host 확인이 부족한 상태에서 after를 설치하거나 `APPLIED_UNQUALIFIED`/`QUALIFIED_ACTIVE`를 기록하지 않는다.
+Fence confirmation compares the exact preparation message/epoch/scope with the currently registered Host boot/journal. **Fence confirmation is not a substitute for configuration application acknowledgment.** The Host process-context service/receipt and P transport client are implemented in the [Host contract](https://github.com/jack0682/rx-solutions/blob/codex/initial-draft/runtime/rx-host/PROCESS_CONFIGURATION.md). The [P durable coordinator](HOST_CONFIGURATION_DISPATCH.md) connects explicit Batch requests, automatic dispatch and receipt incorporation. `HOST_CONFIGURATION_ACKNOWLEDGEMENT_REQUIRED` remains until Host confirmation matches the current preparation. Without sufficient Host confirmation, the after configuration is not installed and neither `APPLIED_UNQUALIFIED` nor `QUALIFIED_ACTIVE` is recorded.
 
-STAGED까지는 `applied=false`, `activation_authorized=false`다. [P 적용](PROCESS_APPLY.md) 후에는 APPLIED_UNQUALIFIED와 `applied=true`를 기록하지만 운전 허가는 false다. 나머지 blocker가 적다고 물리적 정지·지지 처분이 확인됐다는 뜻도 아니다. Host별 receipt의 적용/미적용/미확인과 현재 준비와의 일치 여부를 별도로 표시한다. 모든 Host 확인 후에도 P 적용과 qualification은 후속 단계다.
+Through STAGED, `applied=false` and `activation_authorized=false`. After [P application](PROCESS_APPLY.md), APPLIED_UNQUALIFIED and `applied=true` are recorded, but operating authorization remains false. Having few remaining blockers does not mean physical stopping/support disposition has been confirmed. Per-Host receipt status—applied/not applied/unconfirmed—and agreement with current preparation are displayed separately. Even after all Hosts confirm, P application and qualification remain subsequent steps.
 
 ## API
 
-기존 browser BFF의 `{request_key, command}`를 사용한다. 아직 변경 전용 화면은 제공하지 않는다.
+Uses the existing browser BFF `{request_key, command}`. A dedicated change screen is not yet provided.
 
-| API | 역할·내용 |
+| API | Role and content |
 |---|---|
-| POST `/api/v1/process-changes` | Engineer: 검토/승인 참조와 이유로 변경 제안 |
-| POST `/api/v1/process-change/impact-review` | 별도 Verifier: target(change/cell/expected/plan_digest)와 의견 |
-| POST `/api/v1/process-change/stage` | ReleaseManager: 검토한 target을 재검증하여 STAGED |
-| POST `/api/v1/process-change/prepare` | 현재 등록 단말의 ReleaseManager: target과 refresh 여부로 적용 준비 |
-| POST `/api/v1/process-change/configure-hosts` | 현재 등록 단말의 ReleaseManager: 영속 Host 요청 Batch를 명시적으로 승인 |
-| POST `/api/v1/process-change/apply` | 현재 등록 단말 ReleaseManager: fresh Host 확인·패키지 재검증 후 P 구성을 APPLIED_UNQUALIFIED로 교체 |
-| GET `/api/v1/process-change?cell=...&id=...` | Engineer/Verifier/ReleaseManager: 모든 영향 셀의 권한 확인 후 before/after·blocker 조회 |
+| POST `/api/v1/process-changes` | Engineer: propose a change with review/approval references and a reason |
+| POST `/api/v1/process-change/impact-review` | Separate Verifier: target(change/cell/expected/plan_digest) and comments |
+| POST `/api/v1/process-change/stage` | ReleaseManager: reverify the reviewed target to reach STAGED |
+| POST `/api/v1/process-change/prepare` | ReleaseManager on a currently registered terminal: prepare application using target and refresh selection |
+| POST `/api/v1/process-change/configure-hosts` | ReleaseManager on a currently registered terminal: explicitly approve a durable Host request Batch |
+| POST `/api/v1/process-change/apply` | ReleaseManager on a currently registered terminal: replace P configuration with APPLIED_UNQUALIFIED after fresh Host confirmation and package reverification |
+| GET `/api/v1/process-change?cell=...&id=...` | Engineer/Verifier/ReleaseManager: query before/after and blockers after checking authority over all impacted cells |
 
-제안·stage worker ticket은 현재 boot/등록된 Store owner/정책에 결합하며30초만 유효하다. 현재 역할과 영향 셀 권한은 cached 결과 회수 전에도 확인한다. 같은 key의 다른 의도, 오래된 revision/plan digest, 회수된 소프트웨어 승인은 거부한다.
+Proposal/stage worker tickets bind the current boot/registered Store owner/policy and are valid for only 30 seconds. Current roles and impacted-cell authority are checked even before retrieving cached results. Different intent under the same key, stale revision/plan digest, and revoked software approval are rejected.
 
-CONFIGURATION_CHANGE는 내부 block reason이며 기존 wire CellReason의 EXTERNAL_RESTRICTION으로 투영한다. UI에도 ‘구성 변경 준비’로 표시한다. frozen base/cell 규범 파일과 enum 값을 바꾸지 않았다.
+CONFIGURATION_CHANGE is an internal block reason and projects to EXTERNAL_RESTRICTION in the existing wire CellReason. The UI also displays it as 'Configuration change preparation'. Frozen base/cell normative files and enum values were not changed.
 
-## 다음 연결
+## Next connections
 
-1. 적용 후 새 epoch의 fence 확인과 Host 재검증 연결.
-2. 실제 미적용/적용/불명, 혼합 구성을 구별한 재조정 및 중단/취소 정책.
-3. 적용된 구성의 취소/복원에서 Run/증거의 불변 구성 참조를 유지.
-4. APPLIED_UNQUALIFIED의 old qualification 보관/철회와 새 qualification 절차.
-5. 변경 검토·준비·진행·미충족 조건 UI.
+1. Post-application fence acknowledgment for the new epoch and Host requalification.
+2. Reconciliation and interruption/cancellation policies distinguishing actual not-applied/applied/unknown states and mixed configurations.
+3. Preservation of immutable Run/evidence configuration references when cancelling/restoring an applied configuration.
+4. Retention/revocation of old qualification in APPLIED_UNQUALIFIED and fresh qualification procedures.
+5. UI for change review, preparation, progress and unmet conditions.
 
-위 작업은 이번 staging/준비의 완료로 간주하지 않는다. 실장비는 아직 NOT_COMMISSIONED다.
+The work above is not considered complete by completion of this staging/preparation implementation. Physical equipment remains NOT_COMMISSIONED.

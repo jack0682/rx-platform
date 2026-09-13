@@ -1,7 +1,7 @@
 {
-  "schema_hash_sha256": "3499dff92023509d4daaded3bb9d89a822c948a9b2c025e954262c9bef9d5afe",
+  "schema_hash_sha256": "d32519ffd33cc02f5e6f82406ad2fe253421527dc047b807c11beb11a8f7583c",
   "manifest_file": "protocol_manifest.json",
   "hashed_bytes": "RFC8785 JCS UTF-8, no trailing newline",
-  "validation_scope": "Document byte integrity and vendor-neutral policy revision; not hardware or distributed conformance",
-  "document_revision": "2026-09-14-neutral.1"
+  "validation_scope": "Document byte integrity and English translation revision; no change to wire semantics, and no new hardware or distributed conformance claim",
+  "document_revision": "2026-09-14-english.1"
 }

@@ -22,12 +22,12 @@ def exercise_operator(c:dict, active:dict)->None:
         page.on('pageerror',lambda error:errors.append(str(error)))
         page.on('console',lambda message:csp.append(message.text) if 'Content Security Policy' in message.text or 'Refused to' in message.text else None)
         page.goto(origin,wait_until='networkidle')
-        page.get_by_label('계정',exact=True).fill('operator')
-        page.get_by_label('비밀번호',exact=True).fill(browser['credentials']['operator'])
-        page.get_by_role('button',name='로그인',exact=True).click()
-        expect(page.get_by_role('button',name='로그아웃',exact=True)).to_be_visible()
-        page.get_by_role('button',name='새 실행 준비').click()
-        page.get_by_role('button',name='실행 기록 만들기',exact=True).click()
+        page.get_by_label('Account',exact=True).fill('operator')
+        page.get_by_label('Password',exact=True).fill(browser['credentials']['operator'])
+        page.get_by_role('button',name='Sign in',exact=True).click()
+        expect(page.get_by_role('button',name='Sign out',exact=True)).to_be_visible()
+        page.get_by_role('button',name='Prepare new run').click()
+        page.get_by_role('button',name='Create run record',exact=True).click()
         deadline=time.monotonic()+20
         while True:
             current=observer.get('/api/v1/overview');runs=main_cell(current,cell)['runs']
@@ -37,8 +37,8 @@ def exercise_operator(c:dict, active:dict)->None:
         assert len(runs)==1
         run=runs[0]['value']['id']
         page.get_by_role('combobox').filter(has=page.locator(f'option[value="{run}"]')).select_option(run)
-        page.get_by_label('소재 시도 수량',exact=True).fill('2')
-        button=page.get_by_role('button',name='시작 내용 검토',exact=True)
+        page.get_by_label('Material attempt count',exact=True).fill('2')
+        button=page.get_by_role('button',name='Review start details',exact=True)
         try:
             expect(button).to_be_enabled(timeout=20000)
         except Exception:
@@ -47,7 +47,7 @@ def exercise_operator(c:dict, active:dict)->None:
             publish_new(docker.evidence/'start-unavailable-context.json',c['users']['operator'].get('/api/v1/run/start-context',cell=cell,run=run,purpose='PRODUCTION',budget_limit='2'))
             raise
         button.click()
-        expect(page.get_by_role('heading',name='이 실행을 시작할까요?')).to_be_visible()
+        expect(page.get_by_role('heading',name='Start this run?')).to_be_visible()
         page.screenshot(path=str(docker.evidence/'operator-start-confirmation.png'),full_page=True)
         sent=[]
         def lose_reply(route):
@@ -55,16 +55,16 @@ def exercise_operator(c:dict, active:dict)->None:
             response=route.fetch();assert response.ok,response.text()
             route.abort('failed')
         page.route('**/api/v1/runs/start',lose_reply,times=1)
-        page.get_by_role('button',name='검토한 수량으로 시작 요청',exact=True).click()
-        expect(page.get_by_role('button',name='같은 요청 확인',exact=True)).to_be_visible()
+        page.get_by_role('button',name='Request start with reviewed count',exact=True).click()
+        expect(page.get_by_role('button',name='Check original request',exact=True)).to_be_visible()
         page.reload(wait_until='networkidle')
-        expect(page.get_by_role('button',name='같은 요청 확인',exact=True)).to_be_visible()
+        expect(page.get_by_role('button',name='Check original request',exact=True)).to_be_visible()
         recovered=[]
         def recover_reply(route):
             recovered.append(route.request.post_data_json);route.continue_()
         page.route('**/api/v1/runs/start',recover_reply,times=1)
-        page.get_by_role('button',name='같은 요청 확인',exact=True).click()
-        expect(page.get_by_role('button',name='같은 요청 확인',exact=True)).to_have_count(0,timeout=20000)
+        page.get_by_role('button',name='Check original request',exact=True).click()
+        expect(page.get_by_role('button',name='Check original request',exact=True)).to_have_count(0,timeout=20000)
         assert len(sent)==1 and sent==recovered
         publish_new(docker.evidence/'ui-start-request-recovery.json',{'sent':sent,'recovered':recovered})
         deadline=time.monotonic()+45
@@ -88,7 +88,7 @@ def exercise_operator(c:dict, active:dict)->None:
         assert all(v['capture']['captured_at']['clock_id']==c['installation']['clock_id'] for v in effects)
         physical=main_cell(current,negative)['cell']['value']
         assert physical['commissioning']=='NOT_COMMISSIONED' and physical['qualification'] is None
-        expect(page.get_by_role('region',name='선택 실행 시작과 상태').get_by_text('현재 실행 상태 · 시도 완료',exact=True)).to_be_visible(timeout=15000)
+        expect(page.get_by_role('region',name='Selected run start and status').get_by_text('Current run state · Attempt completed',exact=True)).to_be_visible(timeout=15000)
         page.screenshot(path=str(docker.evidence/'operator-completed.png'),full_page=True)
         page.set_viewport_size({'width':390,'height':844});page.screenshot(path=str(docker.evidence/'operator-completed-mobile.png'),full_page=True)
         assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')
