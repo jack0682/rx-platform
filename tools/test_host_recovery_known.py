@@ -211,10 +211,14 @@ class Scenario:
         em = [ec + ':/config/executor:ro', ed + ':/data:rw']
         d.command(image, '/opt/rx/bin/rx-executor-service', ['cell', 'init', '/config/executor/cell.json'], em, 'e-init')
         e = d.start(image, 'e', 'e', '/opt/rx/bin/rx-executor-service', ['cell', 'run', '/config/executor/cell.json'], em)
-        result = {'h': h, 'e': e, 'h_data': hd, 'e_data': ed,
+        result = {'h': h, 'e': e, 'h_data': hd, 'e_data': ed, 'e_config': ec, 'e_mounts': em,
                   'host_fixture_limitations': LIMITATIONS[1:3]}
         self.c.update(result)
         return result
+
+    def after_executor_stop(self, context: dict, attention: dict) -> dict | None:
+        """Optional independent follow-up inspection; default known-query scope is unchanged."""
+        return None
 
     def stop(self, name: str, allowed: tuple[int, ...]) -> dict:
         state = self.docker.state(name)['State']
@@ -528,6 +532,7 @@ class Scenario:
         assert stop['stop']['run'] == run['id'] and stop['stop']['origin_session'] == status['session']
         assert 'UNAUTHENTICATED' in stop['last_error'] and stop['durability_fault'] is None
         self.retain('executor-retained-attention', executor_attention)
+        executor_inspection = self.after_executor_stop(c, executor_attention)
         host_exit = self.stop(c['h'], (0,))
         stop_file = c['materials'].temporary / 'known-host-stop.json'
         d.run('cp', c['h'] + ':/run/rx-host/host-status.json', str(stop_file))
@@ -557,6 +562,7 @@ class Scenario:
             'qualification_reauthorized': False, 'automatic_resume': False, 'physical_control': physical,
             'host_before': host_before, 'host_after_restart': host_after, 'host_stop': host_stop,
             'executor_attention': executor_attention, 'executor_clean_shutdown': False,
+            'executor_inspection': executor_inspection,
             'process_exits': {'p_before': first_exit, 'p_after': last_exit, 'h': host_exit, 'e': executor_exit},
             'oracle': 'Independent network-none, read-only SQLite transactions. Live WAL included; stopped immutable only with empty/absent WAL.',
             'limitations': LIMITATIONS,
@@ -585,14 +591,14 @@ def fixture_provenance(source: Path, destination: Path, image: dict) -> dict:
             'shipped_host_binary': False, 'mount_read_only': True}
 
 
-def validator_identity() -> str:
+def validator_identity(extra_sources: tuple[Path, ...] = ()) -> str:
     digest = hashlib.sha256(b'RX-KNOWN-RECOVERY-QUERY-ACCEPTANCE-v1\0')
-    for path in [Path(__file__), *sorted((ROOT / 'tools/cell_delivery').glob('*.py'))]:
+    for path in [Path(__file__), *sorted((ROOT / 'tools/cell_delivery').glob('*.py')), *extra_sources]:
         digest.update(str(path.relative_to(ROOT)).encode() + b'\0'); digest.update(path.read_bytes())
     return digest.hexdigest()
 
 
-def main() -> None:
+def main(scenario_type=Scenario, extra_validator_sources: tuple[Path, ...] = ()) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--platform-image', default='rx-platform:runtime-draft')
     parser.add_argument('--solutions-image', default='rx-solutions:runtime-draft')
@@ -616,7 +622,7 @@ def main() -> None:
             provenance = fixture_provenance(args.host_fixture, fixture, s_image)
             publish_new(docker.evidence / 'inputs.json', {'platform_image': p_image['Id'], 'solutions_image': s_image['Id'],
                         'fixture': provenance, 'release_evidence': release_proof, 'limitations': LIMITATIONS})
-            scenario = Scenario(docker, fixture, provenance)
+            scenario = scenario_type(docker, fixture, provenance)
             try:
                 with socket.socket() as connection:
                     connection.bind(('127.0.0.1', 0)); port = connection.getsockname()[1]
@@ -624,7 +630,7 @@ def main() -> None:
                 docker.run('cp', holder + ':/opt/rx/operator', str(bundle))
                 materials = Materials(ROOT, temporary, docker.evidence, docker, s_image['Id'])
                 materials.create_seed(s_image['Architecture'])
-                package, compiled, compiler = materials.compile(); validator = validator_identity()
+                package, compiled, compiler = materials.compile(); validator = validator_identity(extra_validator_sources)
                 final = materials.finalize(package, compiled, compiler, port, bundle, validator)
                 delivery = json.loads((final / 'delivery.json').read_text())
                 assert not delivery['qualification_report_generated']
