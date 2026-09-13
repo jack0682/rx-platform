@@ -8,6 +8,70 @@ use rx_domain::types::*;
 use rx_ports::{Repository, StoreError};
 
 pub enum Command {
+    RegisterHostRecoveryTransport {
+        host: Name,
+        pin: rx_application::host_recovery::TransportPin,
+    },
+    HostRecoveryContext {
+        identity: Identity,
+        host: Name,
+        origin: Name,
+    },
+    LookupHostRecoveryProposal {
+        identity: Identity,
+        key: Id,
+        input: rx_application::host_recovery::Prepare,
+    },
+    ProposeHostRecovery {
+        identity: Identity,
+        key: Id,
+        input: rx_application::host_recovery::Prepare,
+        read: Box<rx_application::host_recovery::VerifiedRead>,
+    },
+    ApproveHostRecovery {
+        identity: Identity,
+        key: Id,
+        input: rx_application::host_recovery::Approve,
+    },
+    GetHostRecovery {
+        identity: Identity,
+        id: Id,
+    },
+    ListHostRecoveries {
+        identity: Identity,
+        host: Name,
+        after: Option<Id>,
+        limit: usize,
+    },
+    PlanHostRecoveryFence {
+        id: Id,
+        cell: Name,
+        read: Box<rx_application::host_recovery::VerifiedRead>,
+    },
+    RecordHostRecoveryFence {
+        id: Id,
+        cell: Name,
+        acknowledgment: FenceAcknowledgment,
+    },
+    CommitHostRecovery {
+        id: Id,
+        expected_revision: Counter,
+        read: Box<rx_application::host_recovery::VerifiedRead>,
+    },
+    RefreshHostRecovery {
+        id: Id,
+        read: Box<rx_application::host_recovery::VerifiedRead>,
+    },
+    HostRecoveryQuery {
+        id: Id,
+        operation: Id,
+    },
+    RecordHostRecoveryReceipt {
+        id: Id,
+        message: Id,
+        receipt: HostReceipt,
+    },
+
     PrepareQualificationIssue {
         identity: Identity,
         key: Id,
@@ -675,6 +739,14 @@ pub enum Command {
     },
 }
 pub enum Reply {
+    HostRecoveryContext(Box<rx_application::host_recovery::Context>),
+    HostRecoveryBinding(Box<rx_application::host_recovery::Binding>),
+    OptionalHostRecoveryBinding(Option<Box<rx_application::host_recovery::Binding>>),
+    HostRecoveryView(Box<rx_application::host_recovery::View>),
+    HostRecoveryPage(Box<rx_application::host_recovery::RecoveryPage>),
+    HostRecoveryFence(rx_application::host_recovery::FenceTask),
+    HostRecoveryQuery(rx_application::host_recovery::QueryPlan),
+
     QualificationPreflight(rx_application::qualification_activation::Preflight),
     QualificationBatch(Box<rx_application::qualification_activation::Batch>),
     QualificationView(Box<rx_application::qualification_activation::View>),
@@ -825,12 +897,102 @@ impl<R: Repository + Send + 'static, C: Clock + 'static, A: QualificationAuthori
             | Command::EndUserSession(_)
             | Command::PutPrincipal { .. }
             | Command::DeliveryAttention { .. }
-            | Command::FinishFence { .. } => Priority::Control,
+            | Command::FinishFence { .. }
+            | Command::PlanHostRecoveryFence { .. }
+            | Command::RecordHostRecoveryFence { .. }
+            | Command::CommitHostRecovery { .. } => Priority::Control,
             _ => Priority::Normal,
         }
     }
     fn process(&mut self, command: Command) -> rx_ports::Result<Reply> {
         match command {
+            Command::RegisterHostRecoveryTransport { host, pin } => self
+                .engine
+                .register_host_recovery_transport(host, pin)
+                .map(|_| Reply::Done),
+            Command::HostRecoveryContext {
+                identity,
+                host,
+                origin,
+            } => self
+                .engine
+                .host_recovery_context(&identity, &host, &origin)
+                .map(|v| Reply::HostRecoveryContext(Box::new(v))),
+            Command::LookupHostRecoveryProposal {
+                identity,
+                key,
+                input,
+            } => self
+                .engine
+                .lookup_host_recovery_proposal(&identity, &key, &input)
+                .map(|v| Reply::OptionalHostRecoveryBinding(v.map(Box::new))),
+            Command::ProposeHostRecovery {
+                identity,
+                key,
+                input,
+                read,
+            } => self
+                .engine
+                .propose_host_recovery(&identity, &key, input, *read)
+                .map(|v| Reply::HostRecoveryBinding(Box::new(v))),
+            Command::ApproveHostRecovery {
+                identity,
+                key,
+                input,
+            } => self
+                .engine
+                .approve_host_recovery(&identity, &key, input)
+                .map(|v| Reply::HostRecoveryBinding(Box::new(v))),
+            Command::GetHostRecovery { identity, id } => self
+                .engine
+                .host_recovery(&identity, &id)
+                .map(|v| Reply::HostRecoveryView(Box::new(v))),
+            Command::ListHostRecoveries {
+                identity,
+                host,
+                after,
+                limit,
+            } => self
+                .engine
+                .list_host_recoveries(&identity, &host, after.as_ref(), limit)
+                .map(|v| Reply::HostRecoveryPage(Box::new(v))),
+            Command::PlanHostRecoveryFence { id, cell, read } => self
+                .engine
+                .plan_host_recovery_fence(&id, &cell, *read)
+                .map(Reply::HostRecoveryFence),
+            Command::RecordHostRecoveryFence {
+                id,
+                cell,
+                acknowledgment,
+            } => self
+                .engine
+                .record_host_recovery_fence(&id, &cell, acknowledgment)
+                .map(|v| Reply::HostRecoveryBinding(Box::new(v))),
+            Command::CommitHostRecovery {
+                id,
+                expected_revision,
+                read,
+            } => self
+                .engine
+                .commit_host_recovery(&id, expected_revision, *read)
+                .map(|v| Reply::HostRecoveryBinding(Box::new(v))),
+            Command::RefreshHostRecovery { id, read } => self
+                .engine
+                .refresh_host_recovery(&id, *read)
+                .map(|v| Reply::HostRecoveryBinding(Box::new(v))),
+            Command::HostRecoveryQuery { id, operation } => self
+                .engine
+                .host_recovery_query(&id, &operation)
+                .map(Reply::HostRecoveryQuery),
+            Command::RecordHostRecoveryReceipt {
+                id,
+                message,
+                receipt,
+            } => self
+                .engine
+                .record_host_recovery_receipt(&id, &message, receipt)
+                .map(|v| Reply::Work(Box::new(v))),
+
             Command::PrepareQualificationIssue {
                 identity,
                 key,

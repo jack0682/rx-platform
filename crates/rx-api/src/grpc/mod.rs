@@ -125,7 +125,8 @@ impl PlatformIngress {
                     .max_encoding_message_size(1_048_576),
             )
             .serve_with_incoming_shutdown(
-                tokio_stream::wrappers::TcpListenerStream::new(listener),
+                // Explicit incoming streams bypass Server::tcp_nodelay.
+                tonic::transport::server::TcpIncoming::from(listener).with_nodelay(Some(true)),
                 shutdown,
             )
             .await

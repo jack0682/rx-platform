@@ -1,5 +1,6 @@
 mod device_binding;
 mod device_review;
+mod host_recovery;
 use crate::{
     auth::{Auth, COOKIE, Credentials, SESSION_SECONDS},
     error::ApiError,
@@ -54,6 +55,7 @@ struct ApiState {
     policy: LocalPolicy,
     terminal_tls: bool,
     package_intake: Option<Arc<rx_runtime::package_intake::Worker>>,
+    host_recovery: Option<Arc<dyn rx_runtime::host_recovery::Service>>,
 }
 
 pub fn router(
@@ -61,7 +63,7 @@ pub fn router(
     credentials: Credentials,
     policy: LocalPolicy,
 ) -> Result<Router, String> {
-    build_router(runtime, credentials, policy, false, None)
+    build_router(runtime, credentials, policy, false, None, None)
 }
 pub fn router_with_package_intake(
     runtime: Arc<dyn ApplicationPort>,
@@ -69,13 +71,14 @@ pub fn router_with_package_intake(
     policy: LocalPolicy,
     worker: Arc<rx_runtime::package_intake::Worker>,
 ) -> Result<Router, String> {
-    build_router(runtime, credentials, policy, false, Some(worker))
+    build_router(runtime, credentials, policy, false, Some(worker), None)
 }
 pub(crate) fn terminal_router(
     runtime: Arc<dyn ApplicationPort>,
     credentials: Credentials,
     policy: crate::terminal_https::HttpsPolicy,
     worker: Option<Arc<rx_runtime::package_intake::Worker>>,
+    recovery: Option<Arc<dyn rx_runtime::host_recovery::Service>>,
 ) -> Result<Router, String> {
     build_router(
         runtime,
@@ -86,6 +89,7 @@ pub(crate) fn terminal_router(
         },
         true,
         worker,
+        recovery,
     )
 }
 fn build_router(
@@ -94,6 +98,7 @@ fn build_router(
     policy: LocalPolicy,
     terminal_tls: bool,
     package_intake: Option<Arc<rx_runtime::package_intake::Worker>>,
+    host_recovery: Option<Arc<dyn rx_runtime::host_recovery::Service>>,
 ) -> Result<Router, String> {
     let state = ApiState {
         runtime,
@@ -101,12 +106,28 @@ fn build_router(
         policy,
         terminal_tls,
         package_intake,
+        host_recovery,
     };
     Ok(Router::new()
         .route("/api/v1/health", get(health))
         .route("/api/v1/session", post(login).get(profile))
         .route("/api/v1/session/end", post(logout))
         .route("/api/v1/overview", get(overview))
+        .route("/api/v1/host-recovery-context", get(host_recovery::context))
+        .route(
+            "/api/v1/host-recoveries",
+            get(host_recovery::list).post(host_recovery::propose),
+        )
+        .route("/api/v1/host-recovery", get(host_recovery::get))
+        .route(
+            "/api/v1/host-recovery/approve",
+            post(host_recovery::approve),
+        )
+        .route(
+            "/api/v1/host-recovery/progress",
+            post(host_recovery::progress),
+        )
+        .route("/api/v1/host-recovery/query", post(host_recovery::query))
         .route(
             "/api/v1/package-intake-context",
             get(package_intake_context),

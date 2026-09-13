@@ -19,3 +19,5 @@ Background Evidence.Publish is owned by the solutions Host. Product supervision,
 선택 qualification client는 [Host 자격 수용](https://github.com/jack0682/rx-solutions/blob/codex/initial-draft/runtime/rx-host/QUALIFICATION_ACCEPTANCE.md)의 Inspect/Accept/Lookup을 제공한다. 이 raw transport는 P의 발급 권위나 영속 task를 대체하지 않는다.
 
 `qualification_worker`는 P 영속 발급 task를 수행한다. Arm의 block 해제는 P가 승인한 ID에 한정하고 현재 Host block을 확인한 뒤 전달한다. 동일 lease의 갱신과 자격·Arm을 구별한다.
+
+P-only 재시작 뒤 관리자 승인에 따른 [Host 복구 통신](HOST_RECOVERY.md)을 제공한다. 현재 transport/source와 최초 불변 baseline을 확인하고 기존 Fence·receipt·native 결과만 회수한다. RECOVERY_ONLY는 운전용 등록·자격·Arm·Run 재개 허가가 아니다.

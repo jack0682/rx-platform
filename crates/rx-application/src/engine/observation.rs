@@ -194,7 +194,7 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
         })
     }
 }
-fn accept_facts(
+pub(super) fn accept_facts(
     tx: &mut dyn Transaction,
     cell: &Cell,
     host: &HostRegistration,

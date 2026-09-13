@@ -1,4 +1,5 @@
 //! Durable plan for transport bootstrap. Bound does not mean qualified or armed.
+pub use crate::host_binding_baseline::{BootstrapProvenance, TransportPin};
 use rx_domain::{host_snapshot::HostSnapshot, types::*};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -10,6 +11,8 @@ pub struct Prepare {
     pub snapshot: HostSnapshot,
     pub read_started: TimePoint,
     pub ttl_ms: Counter,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provenance: Option<BootstrapProvenance>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Plan {
@@ -35,6 +38,8 @@ pub struct Plan {
     pub prepared_at: TimePoint,
     pub valid_until: TimePoint,
     pub bound: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provenance: Option<BootstrapProvenance>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Commit {

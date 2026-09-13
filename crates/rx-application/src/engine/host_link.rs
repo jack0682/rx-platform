@@ -1,5 +1,6 @@
 use super::*;
 use crate::host_link::*;
+mod baseline;
 const PLAN: &str = "rx.internal.host-link-plan.v1";
 impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
     /// Registered, pinned Host transport adapter only; not an externally callable RPC.
@@ -68,6 +69,15 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             {
                 return reject(Reject::StaleEpoch);
             }
+            if let Some(provenance) = &request.provenance {
+                baseline::validate_provenance(
+                    provenance,
+                    snapshot,
+                    &request.read_started,
+                    &cell.configuration,
+                    &now,
+                )?;
+            }
             let mut source_sessions = BTreeMap::new();
             for spec in cell
                 .configuration
@@ -92,6 +102,7 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             if let Some(row) = tx.get(&current_key)? {
                 let previous: Id = decode(&row, "rx.internal.host-link-id.v1")?;
                 let (_, plan): (_, Plan) = load(tx, "host-link-plan", &previous, PLAN)?;
+                baseline::reject_downgrade(&plan, request.provenance.as_ref())?;
                 if plan.host_boot == snapshot.host_boot
                     && (plan.delivery_journal != snapshot.delivery_journal
                         || plan.evidence_journal != snapshot.evidence_journal)
@@ -107,6 +118,7 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                     && plan.valid_until.clock_id == now.clock_id
                     && now.ticks_ns < plan.valid_until.ticks_ns
                 {
+                    baseline::check_reuse(&plan, request.provenance.as_ref())?;
                     return Ok(plan);
                 }
             }
@@ -233,6 +245,7 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                     ),
                 },
                 bound: false,
+                provenance: request.provenance,
             };
             save(tx, "host-link-plan", &plan.id, None, PLAN, &plan)?;
             let previous = tx.get(&current_key)?;
@@ -397,6 +410,15 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             )?;
             plan.bound = true;
             plan.valid_until = registration.grant.valid_until.clone();
+            baseline::create(
+                tx,
+                meta,
+                &producer,
+                &cell.configuration,
+                &plan,
+                &registration,
+                &now,
+            )?;
             save(tx, "host-link-plan", &plan.id, Some(revision), PLAN, &plan)?;
             event(tx, "rx.event.host-link-bound.v1", &registration)?;
             Ok(registration)
@@ -439,6 +461,14 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
     }
     pub fn current_time(&self) -> TimePoint {
         self.clock.now()
+    }
+    /// Internal historical read only. Missing legacy data is never reconstructed here.
+    pub fn host_binding_baseline(
+        &mut self,
+        plan: &Id,
+    ) -> Result<Option<crate::host_binding_baseline::HostBindingBaseline>> {
+        self.repository
+            .transact(|tx| crate::host_binding_baseline::load(tx, plan))
     }
 }
 

@@ -6,6 +6,7 @@ use rx_application::{
 use rx_domain::types::*;
 use rx_runtime::application::{ApplicationPort, Command, Reply};
 use std::sync::Arc;
+mod diagnostic;
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
 pub struct ConnectedHost {
     pub client: HostClient,
@@ -32,10 +33,13 @@ impl ConnectedHost {
         configuration: &CellConfiguration,
         ttl_ms: Counter,
     ) -> Result<Self, Error> {
-        let client = HostClient::connect_pinned(endpoint, host.clone(), hello, server_pin).await?;
+        let client = HostClient::connect_pinned(endpoint, host.clone(), hello, server_pin)
+            .await
+            .map_err(|e| diagnostic::at("CONNECT_PINNED", e))?;
         client
             .open_cell(configuration, &now(&runtime).await?.clock_id)
-            .await?;
+            .await
+            .map_err(|e| diagnostic::at("OPEN_CELL", e.into()))?;
         Self::from_client(runtime, client, configuration, ttl_ms).await
     }
     pub async fn from_client(
@@ -53,6 +57,19 @@ impl ConnectedHost {
             .unwrap_or(250_000_000)
             .clamp(1_000_000, 250_000_000);
         let observation_interval = std::time::Duration::from_nanos(interval_ns);
+        // Historical connection provenance is collected through the same pinned
+        // client. An ordinary CA-only client cannot manufacture a release pin.
+        let configuration_read = if let Some(transport) = client.transport_pin() {
+            let started = now(&runtime).await?;
+            let configuration = client
+                .inspect_process_configuration()
+                .await
+                .map_err(|e| diagnostic::at("READ_CONFIGURATION", e.into()))?;
+            let finished = now(&runtime).await?;
+            Some((transport.clone(), configuration, started, finished))
+        } else {
+            None
+        };
         let read_started = now(&runtime).await?;
         let snapshot = client
             .read_bootstrap(
@@ -64,17 +81,61 @@ impl ConnectedHost {
                     .map(|s| s.id.clone())
                     .collect(),
             )
-            .await?;
-        let Reply::HostLink(plan) = runtime
+            .await
+            .map_err(|e| diagnostic::at("READ_SOURCES", e.into()))?;
+        let provenance = configuration_read.map(
+            |(
+                transport,
+                configuration,
+                configuration_read_started,
+                configuration_read_finished,
+            )| {
+                host_link::BootstrapProvenance {
+                    transport,
+                    configuration,
+                    configuration_read_started,
+                    configuration_read_finished,
+                    host_read: snapshot.clone(),
+                }
+            },
+        );
+        let timing = provenance.as_ref().map(|p| {
+            (
+                p.configuration_read_started.clone(),
+                p.configuration_read_finished.clone(),
+                read_started.clone(),
+                p.host_read.captured_at.clone(),
+            )
+        });
+        let prepared = runtime
             .request(Command::PrepareHostLink(Box::new(host_link::Prepare {
                 host: client.host_id.clone(),
                 platform_session: Id::new(&client.session.session_id)?,
                 snapshot,
                 read_started,
                 ttl_ms,
+                provenance,
             })))
-            .await?
-        else {
+            .await;
+        let prepared = match prepared {
+            Ok(reply) => reply,
+            Err(error) => {
+                if let (Some((started, finished, read_started, captured)), Ok(now)) =
+                    (timing, now(&runtime).await)
+                {
+                    return Err(diagnostic::read_failure(
+                        error.into(),
+                        &started,
+                        &finished,
+                        &read_started,
+                        &captured,
+                        &now,
+                    ));
+                }
+                return Err(diagnostic::at("PREPARE_LINK", error.into()));
+            }
+        };
+        let Reply::HostLink(plan) = prepared else {
             return Err("link plan reply".into());
         };
         if plan.bound {
@@ -101,7 +162,8 @@ impl ConnectedHost {
                 &plan.scopes,
                 &plan.block_ids,
             )
-            .await?;
+            .await
+            .map_err(|e| diagnostic::at("FENCE", e.into()))?;
         // Persisted before either outbound request. Retries of an existing grant must not
         // move its conservative P expiry forward using a later local send time.
         let sent_at = plan.prepared_at.clone();
@@ -113,7 +175,8 @@ impl ConnectedHost {
                 plan.ttl_ms,
                 sent_at.clone(),
             )
-            .await?;
+            .await
+            .map_err(|e| diagnostic::at("ACQUIRE_GRANT", e.into()))?;
         if host_boot != plan.host_boot {
             return Err("Host changed during bootstrap".into());
         }
@@ -133,7 +196,8 @@ impl ConnectedHost {
         };
         let Reply::HostRegistration(registration) = runtime
             .request(Command::CommitHostLink(Box::new(command.clone())))
-            .await?
+            .await
+            .map_err(|e| diagnostic::at("COMMIT_LINK", e.into()))?
         else {
             return Err("link commit reply".into());
         };
@@ -261,6 +325,7 @@ impl ConnectionService {
     }
     pub async fn run(self, mut stopped: tokio::sync::watch::Receiver<bool>) -> Result<(), Error> {
         let mut delay = 100u64;
+        let mut diagnostic = diagnostic::Changes::default();
         let mut connected = loop {
             if *stopped.borrow() || stopped.has_changed().is_err() {
                 self.status.send_replace(ConnectionStatus::Stopped);
@@ -330,7 +395,12 @@ impl ConnectionService {
                     self.status
                         .send_replace(ConnectionStatus::WaitingForProducer);
                 }
-                Err(_) => {
+                Err(error) => {
+                    if let Some(line) =
+                        diagnostic.next(&self.configuration.host, &self.configuration.cell, &error)
+                    {
+                        eprintln!("{line}");
+                    }
                     self.status.send_replace(ConnectionStatus::Attention);
                 }
             }

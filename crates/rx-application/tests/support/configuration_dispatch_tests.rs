@@ -816,3 +816,6 @@ mod requalification_tests;
 
 #[path = "process_revalidation_tests.rs"]
 mod process_revalidation_tests;
+
+#[path = "host_recovery_tests.rs"]
+mod host_recovery_tests;

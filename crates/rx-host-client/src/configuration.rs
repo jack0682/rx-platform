@@ -2,7 +2,7 @@
 use super::*;
 use rx_domain::host_configuration as data;
 use rx_protocol::host_configuration as wire;
-fn binding_hash() -> Vec<u8> {
+pub(super) fn binding_hash() -> Vec<u8> {
     let value: serde_json::Value = serde_json::from_slice(include_bytes!(
         "../../../spec/host-configuration/v1/binding.json"
     ))
