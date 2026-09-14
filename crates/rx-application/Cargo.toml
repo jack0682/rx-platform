@@ -6,7 +6,7 @@ edition.workspace = true
 publish.workspace = true
 
 [dependencies]
-base64 = "0.22"
+base64 = "0.23"
 rx-package = {path="../rx-package"}
 rx-domain = { path = "../rx-domain" }
 rx-ports = { path = "../rx-ports" }
