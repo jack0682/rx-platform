@@ -1,34 +1,44 @@
 # Contributing
 
-RX is a personal project that enables heterogeneous robots and infrastructure to cooperate through shared task, authority, state, result and recovery contracts. Repository visibility and physical validation are separate matters. Consult each repository's README and implementation records for the current validation scope.
+RX is a personal project for heterogeneous robots and infrastructure. Contributions use Apache-2.0. Consult the repository README and implementation records for the current validation scope.
 
 ## Branches and GitFlow
 
-| Branch | Role | PR target |
+| Branch | Purpose | PR target |
 |---|---|---|
-| `main` | Stable baseline, release history and default branch | Changes must go through a PR |
-| `develop` | Integration and validation of upcoming changes | Promote to `main` when ready |
-| `feature/*`, `fix/*`, `docs/*`, `chore/*`, `codex/*` | Work branches created from `develop` | `develop` |
-| `release/*` | Release preparation branched from `develop` | `main`; also carry required fixes into `develop` |
-| `hotfix/*` | Urgent fixes branched from `main` | `main`; also merge into `develop` |
-| `dependabot/*` | Automated dependency updates in this repository | Routine updates target `develop`; security updates may target `main` |
+| `main` | Stable baseline and release history; default branch | PRs only |
+| `develop` | Integration and validation of upcoming work | `main` when ready |
+| `feature/*`, `fix/*`, `docs/*`, `chore/*`, `codex/*` | Work created from `develop` | `develop` |
+| `release/*` | Release preparation created from `develop` | `main`, then carry fixes into `develop` |
+| `hotfix/*` | Urgent fixes created from `main` | `main`, then carry fixes into `develop` |
+| `dependabot/*` | Dependency proposals from this repository | `develop`; security fixes may target `main` |
 
-A small personal project may use a `develop` → `main` promotion PR without a separate release branch. After promotion, use a `main` → `develop` PR to bring changes and history back together. Use **merge commits** for releases, hotfixes and merges between long-lived branches to preserve their common ancestry. Work-branch PRs may also use squash merges. Do not use rebase merges.
+All PRs use merge commits. Squash and rebase merges are disabled so that reviewed commits, signatures and signoffs retain their identities. A small release can use a `develop` to `main` promotion PR without a release branch. After promotion, merge `main` back to `develop` through a PR.
+
+## Signed commits and the daily workflow
+
+Every commit, including merges, needs both a matching author `Signed-off-by` trailer and a verified OpenPGP signature. Read the [Developer Certificate of Origin](https://developercertificate.org/) before signing off. The trailer records your certification of contribution rights; the cryptographic signature authenticates the commit. Neither substitutes for the other.
+
+Configure a verified GitHub email and register your public GPG key, then install the repository's local hooks. See the [repository governance guide](GOVERNANCE.md) for key setup, branch updates, merge and recovery instructions.
 
 ```sh
+python3 tools/install_git_hooks.py
 git switch develop
 git pull --ff-only origin develop
 git switch -c feature/your-change
 # Make the change and run the checks below.
 git add <changed-paths>
-git commit -m "Describe the behavior change"
+git commit -s -S -m "Describe the behavior change"
 git push -u origin feature/your-change
-# Open a pull request targeting develop on GitHub.
+# Open a PR targeting develop; wait for CI and DCO.
+python3 tools/merge_pr.py PR_NUMBER
 ```
 
-Deleting or force-pushing `main` and `develop` is prohibited. Merges require a PR, successful CI against an up-to-date base branch and resolution of all review conversations. The required number of approvals from another person is zero so a sole maintainer can handle their own PRs. CODEOWNERS identifies review responsibility. Maintainers and automation must inspect validation results before merging. The required ruleset check is named `CI` in all three repositories.
+`main` and `develop` reject direct pushes, force pushes and deletion. A PR needs `CI` from GitHub Actions and `DCO` from the DCO app, an up-to-date base, verified signatures and resolved review conversations. A separate update lock permits the administrator to update these branches only through a PR; that exception does not bypass the quality rules.
 
-The PR route check reads GitHub's event JSON directly. Names such as `main`, `develop`, `release/*`, `hotfix/*` or `dependabot/*` on an external fork do not grant access to this repository's release routes. Submit external contributions from work branches to `develop`. CI does not provide repository secrets or write permissions to public fork code.
+The required number of approvals is zero while there is only one maintainer. CODEOWNERS identifies review responsibility. The maintainer still reviews the diff and validation evidence before merging. When an independent maintainer joins, raise the required approvals and enable required code-owner review together.
+
+External forks cannot use names such as `main`, `develop`, `release/*`, `hotfix/*` or `dependabot/*` to acquire this repository's release routes. Submit external changes from work branches to `develop`. Fork CI receives a read-only token and no repository secrets.
 
 ## Changes and validation
 
@@ -38,6 +48,7 @@ The Rust toolchain in `rust-toolchain.toml` and Python 3 are required.
 
 ```sh
 python3 .github/test_repository.py
+python3 .github/test_commit_policy.py
 python3 tools/check_repository.py
 python3 tools/check_contract_baselines.py
 python3 tools/test_export_host_sdk.py

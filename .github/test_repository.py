@@ -15,6 +15,90 @@ CHECK = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(CHECK)
 
 
+CONFIG_SPEC = importlib.util.spec_from_file_location(
+    "configure_github", Path(__file__).resolve().parents[1] / "tools/configure_github.py"
+)
+CONFIGURE = importlib.util.module_from_spec(CONFIG_SPEC)
+CONFIG_SPEC.loader.exec_module(CONFIGURE)
+
+
+class GovernanceTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        root = Path(__file__).resolve().parents[1]
+        cls.config = json.loads((root / "repository-settings.json").read_text())
+        cls.rulesets = {rule["name"]: rule for rule in cls.config["rulesets"]}
+
+    def test_configuration_audit_rejects_bypass_and_check_provider_drift(self):
+        expected = {"bypass_actors": [], "checks": [
+            {"context": "CI", "integration_id": 15368},
+            {"context": "DCO", "integration_id": 1861},
+        ]}
+        self.assertTrue(CONFIGURE.contains(expected, expected))
+        self.assertFalse(CONFIGURE.contains({**expected, "bypass_actors": [{"actor_id": 5}]}, expected))
+        self.assertFalse(CONFIGURE.contains({**expected, "checks": [
+            {"context": "CI", "integration_id": 1},
+            {"context": "DCO", "integration_id": 1861},
+        ]}, expected))
+        self.assertFalse(CONFIGURE.contains([{"context": "CI"}, {"context": "DCO"}],
+                                            [{"context": "CI"}, {"context": "CI"}]))
+
+    def test_update_rule_omits_only_its_false_default(self):
+        expected = {"type": "update", "parameters": {"update_allows_fetch_and_merge": False}}
+        self.assertTrue(CONFIGURE.contains({"type": "update"}, expected))
+        self.assertFalse(CONFIGURE.contains(
+            {"type": "update", "parameters": {"update_allows_fetch_and_merge": True}}, expected))
+
+    def test_pr_only_exception_cannot_bypass_quality_checks(self):
+        quality = self.rulesets["RX protected branches"]
+        self.assertEqual(quality["bypass_actors"], [])
+        rules = {rule["type"]: rule for rule in quality["rules"]}
+        self.assertTrue({"deletion", "non_fast_forward", "required_signatures", "pull_request"} <= rules.keys())
+        checks = rules["required_status_checks"]["parameters"]
+        self.assertTrue(checks["strict_required_status_checks_policy"])
+        self.assertEqual(checks["required_status_checks"], [
+            {"context": "CI", "integration_id": 15368},
+            {"context": "DCO", "integration_id": 1861},
+        ])
+        self.assertEqual(rules["pull_request"]["parameters"]["allowed_merge_methods"], ["merge"])
+        update = self.rulesets["RX PR-only branch updates"]
+        self.assertEqual(update["bypass_actors"], [
+            {"actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "pull_request"}
+        ])
+        self.assertEqual(update["rules"], [
+            {"type": "update", "parameters": {"update_allows_fetch_and_merge": False}}
+        ])
+        self.assertEqual(update["conditions"], quality["conditions"])
+
+    def test_every_branch_requires_verified_signatures_without_bypass(self):
+        contributions = self.rulesets["RX signed contributions"]
+        self.assertEqual(contributions["bypass_actors"], [])
+        self.assertEqual(contributions["conditions"]["ref_name"], {"include": ["~ALL"], "exclude": []})
+        self.assertEqual(contributions["rules"], [{"type": "required_signatures"}])
+
+    def test_unknown_branch_creation_has_no_bypass(self):
+        names = self.rulesets["RX GitFlow branch names"]
+        self.assertEqual(names["bypass_actors"], [])
+        self.assertEqual(names["rules"], [{"type": "creation"}])
+        self.assertEqual(names["conditions"]["ref_name"], {
+            "include": ["~ALL"],
+            "exclude": ["refs/heads/main", "refs/heads/develop"] + [
+                "refs/heads/" + prefix + "/**/*" for prefix in
+                ("feature", "fix", "docs", "chore", "codex", "release", "hotfix", "dependabot")],
+        })
+
+    def test_tags_and_merge_settings_do_not_offer_unsigned_shortcuts(self):
+        tags = self.rulesets["RX immutable release tags"]
+        self.assertEqual(tags["bypass_actors"], [])
+        self.assertEqual(tags["conditions"]["ref_name"], {"include": ["~ALL"], "exclude": []})
+        self.assertEqual({rule["type"] for rule in tags["rules"]}, {"deletion", "update"})
+        settings = self.config["settings"]
+        self.assertTrue(settings["allow_merge_commit"])
+        self.assertTrue(settings["web_commit_signoff_required"])
+        for field in ("allow_squash_merge", "allow_rebase_merge", "allow_auto_merge", "allow_update_branch"):
+            self.assertFalse(settings[field])
+
+
 class BranchPolicyTests(unittest.TestCase):
     def route(self, source, target, fork=False):
         return CHECK.branch_error({"pull_request": {
