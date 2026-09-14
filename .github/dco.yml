@@ -1,0 +1,6 @@
+# The repository owner is subject to DCO checks too.
+require:
+  members: true
+allowRemediationCommits:
+  individual: false
+  thirdParty: false

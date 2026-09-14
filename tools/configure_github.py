@@ -26,14 +26,26 @@ def api(method, path, payload=None):
 
 def contains(actual, expected):
     if isinstance(expected, dict):
+        # GitHub omits the default false parameter on branch update rules.
+        if (isinstance(actual, dict) and actual.get("type") == "update"
+                and "parameters" not in actual
+                and expected.get("parameters") == {"update_allows_fetch_and_merge": False}):
+            actual = {**actual, "parameters": {"update_allows_fetch_and_merge": False}}
         return isinstance(actual, dict) and all(
             key in actual and contains(actual[key], value)
             for key, value in expected.items()
         )
     if isinstance(expected, list):
-        return isinstance(actual, list) and len(actual) == len(expected) and all(
-            any(contains(candidate, item) for candidate in actual) for item in expected
-        )
+        if not isinstance(actual, list) or len(actual) != len(expected):
+            return False
+        remaining = list(actual)
+        for item in expected:
+            index = next((index for index, candidate in enumerate(remaining)
+                          if contains(candidate, item)), None)
+            if index is None:
+                return False
+            remaining.pop(index)
+        return True
     return actual == expected
 
 
@@ -49,7 +61,7 @@ def main():
     # Both permanent branches must exist before any settings or protection change.
     for branch in ("main", "develop"):
         api("GET", f"{prefix}/branches/{branch}")
-    existing = api("GET", f"{prefix}/rulesets")
+    existing = api("GET", f"{prefix}/rulesets?per_page=100")
     matched = {}
     for expected in config["rulesets"]:
         matches = [rule for rule in existing if rule["name"] == expected["name"]]
@@ -82,6 +94,11 @@ def main():
         actual = api("GET", f"{prefix}/rulesets/{rule_id}") if rule_id else {}
         observations.append((expected["name"], actual, expected))
     failures = [label for label, actual, expected in observations if not contains(actual, expected)]
+    expected_names = {rule["name"] for rule in config["rulesets"]}
+    unmanaged = sorted(rule["name"] for rule in existing
+                       if rule["name"].startswith("RX ") and rule["name"] not in expected_names)
+    if unmanaged:
+        failures.append("unrecorded RX rulesets: " + ", ".join(unmanaged))
     for label in failures:
         print(f"DRIFT: {repo}: {label}")
     if failures:

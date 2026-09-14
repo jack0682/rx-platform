@@ -6,15 +6,16 @@
     "homepage": "https://github.com/jack0682/rx_docs",
     "default_branch": "main",
     "allow_merge_commit": true,
-    "allow_squash_merge": true,
+    "allow_squash_merge": false,
     "allow_rebase_merge": false,
-    "allow_auto_merge": true,
-    "allow_update_branch": true,
+    "allow_auto_merge": false,
+    "allow_update_branch": false,
     "delete_branch_on_merge": true,
     "has_issues": true,
     "has_wiki": false,
-    "squash_merge_commit_title": "PR_TITLE",
-    "squash_merge_commit_message": "PR_BODY"
+    "web_commit_signoff_required": true,
+    "merge_commit_title": "PR_TITLE",
+    "merge_commit_message": "PR_BODY"
   },
   "topics": [
     "robotics",
@@ -70,8 +71,7 @@
             "require_last_push_approval": false,
             "required_review_thread_resolution": true,
             "allowed_merge_methods": [
-              "merge",
-              "squash"
+              "merge"
             ]
           }
         },
@@ -83,9 +83,94 @@
               {
                 "context": "CI",
                 "integration_id": 15368
+              },
+              {
+                "context": "DCO",
+                "integration_id": 1861
               }
             ]
           }
+        },
+        {
+          "type": "required_signatures"
+        }
+      ]
+    },
+    {
+      "name": "RX PR-only branch updates",
+      "target": "branch",
+      "enforcement": "active",
+      "bypass_actors": [
+        {
+          "actor_id": 5,
+          "actor_type": "RepositoryRole",
+          "bypass_mode": "pull_request"
+        }
+      ],
+      "conditions": {
+        "ref_name": {
+          "include": [
+            "refs/heads/main",
+            "refs/heads/develop"
+          ],
+          "exclude": []
+        }
+      },
+      "rules": [
+        {
+          "type": "update",
+          "parameters": {
+            "update_allows_fetch_and_merge": false
+          }
+        }
+      ]
+    },
+    {
+      "name": "RX signed contributions",
+      "target": "branch",
+      "enforcement": "active",
+      "bypass_actors": [],
+      "conditions": {
+        "ref_name": {
+          "include": [
+            "~ALL"
+          ],
+          "exclude": []
+        }
+      },
+      "rules": [
+        {
+          "type": "required_signatures"
+        }
+      ]
+    },
+    {
+      "name": "RX GitFlow branch names",
+      "target": "branch",
+      "enforcement": "active",
+      "bypass_actors": [],
+      "conditions": {
+        "ref_name": {
+          "include": [
+            "~ALL"
+          ],
+          "exclude": [
+            "refs/heads/main",
+            "refs/heads/develop",
+            "refs/heads/feature/**/*",
+            "refs/heads/fix/**/*",
+            "refs/heads/docs/**/*",
+            "refs/heads/chore/**/*",
+            "refs/heads/codex/**/*",
+            "refs/heads/release/**/*",
+            "refs/heads/hotfix/**/*",
+            "refs/heads/dependabot/**/*"
+          ]
+        }
+      },
+      "rules": [
+        {
+          "type": "creation"
         }
       ]
     },
@@ -97,7 +182,7 @@
       "conditions": {
         "ref_name": {
           "include": [
-            "refs/tags/v*"
+            "~ALL"
           ],
           "exclude": []
         }

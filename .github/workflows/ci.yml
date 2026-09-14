@@ -28,8 +28,22 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
+          fetch-depth: 0
       - name: Test repository checks
-        run: python3 .github/test_repository.py
+        run: |
+          python3 .github/test_repository.py
+          python3 .github/test_commit_policy.py
+      - name: Check DCO and verified OpenPGP signatures
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          revision="$HEAD_SHA"
+          if [[ -n "$BASE_SHA" ]]; then
+            revision="$BASE_SHA..$HEAD_SHA"
+          fi
+          python3 tools/check_commit_policy.py --range "$revision" --github-repository "$GITHUB_REPOSITORY"
       - name: Validate PR branch route
         if: github.event_name == 'pull_request'
         run: python3 tools/check_repository.py --event "$GITHUB_EVENT_PATH"
