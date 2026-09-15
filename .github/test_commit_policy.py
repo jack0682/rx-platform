@@ -105,15 +105,15 @@ class HookTests(unittest.TestCase):
         self.commit("Unsigned despite signed defaults", "--no-gpg-sign")
         self.check("--range", "HEAD^..HEAD", ok=False)
 
-    def test_missing_signoff_and_bot_authors_are_not_exempt(self):
+    def test_signed_commits_require_author_signoff_including_bots(self):
         self.commit()
         tree = self.command("git", "rev-parse", "HEAD^{tree}").stdout.strip()
         sha = self.command("git", "commit-tree", "-S", tree, input="Missing attestation\n").stdout.strip()
         self.assertIn("missing author Signed-off-by", self.check("--range", sha, ok=False).stderr)
-        self.command("git", "config", "user.name", "dependabot[bot]")
-        self.command("git", "config", "user.email", "49699333+dependabot[bot]@users.noreply.github.com")
+        self.command("git", "config", "user.name", "automation[bot]")
+        self.command("git", "config", "user.email", "automation-bot@example.com")
         sha = self.command("git", "commit-tree", "-S", tree, input="Bot attestation missing\n").stdout.strip()
-        self.check("--range", sha, ok=False)
+        self.assertIn("missing author Signed-off-by", self.check("--range", sha, ok=False).stderr)
 
     def test_actual_push_rejects_protected_updates_and_deletions(self):
         self.commit()

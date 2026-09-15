@@ -11,7 +11,6 @@ RX is a personal project for heterogeneous robots and infrastructure. Contributi
 | `feature/*`, `fix/*`, `docs/*`, `chore/*`, `codex/*` | Work created from `develop` | `develop` |
 | `release/*` | Release preparation created from `develop` | `main`, then carry fixes into `develop` |
 | `hotfix/*` | Urgent fixes created from `main` | `main`, then carry fixes into `develop` |
-| `dependabot/*` | Dependency proposals from this repository | `develop`; security fixes may target `main` |
 
 All PRs use merge commits. Squash and rebase merges are disabled so that reviewed commits, signatures and signoffs retain their identities. A small release can use a `develop` to `main` promotion PR without a release branch. After promotion, merge `main` back to `develop` through a PR.
 
@@ -38,7 +37,19 @@ python3 tools/merge_pr.py PR_NUMBER
 
 The required number of approvals is zero while there is only one maintainer. CODEOWNERS identifies review responsibility. The maintainer still reviews the diff and validation evidence before merging. When an independent maintainer joins, raise the required approvals and enable required code-owner review together.
 
-External forks cannot use names such as `main`, `develop`, `release/*`, `hotfix/*` or `dependabot/*` to acquire this repository's release routes. Submit external changes from work branches to `develop`. Fork CI receives a read-only token and no repository secrets.
+External forks cannot use names such as `main`, `develop`, `release/*` or `hotfix/*` to acquire this repository's release routes. Submit external changes from work branches to `develop`. Fork CI receives a read-only token and no repository secrets.
+
+## Manual dependency updates
+
+Review vulnerability alerts regularly and after a relevant advisory. A maintainer owns dependency updates; automatic version and security-fix proposals are disabled. Evaluate release notes, compatibility, licenses and security impact before changing a manifest or lockfile.
+
+1. Start from current `develop` with a focused `chore/deps-<package>` branch.
+2. Update the required manifests, lockfiles and pinned action revisions together. Keep unrelated upgrades separate and explain any required source changes.
+3. Run the repository checks and the affected language, application and integration tests listed below. A previously passing proposal is not evidence for a new revision.
+4. Commit with your own truthful `Signed-off-by` and OpenPGP signature using `git commit -s -S`, then open a PR to `develop`. Wait for current `CI` and `DCO` before using `tools/merge_pr.py`.
+5. For an urgent fix to the stable release, use the existing `hotfix/*` route from `main`, then synchronize `main` back to `develop` through a checked PR.
+
+See [the closed dependency proposals and policy record](GOVERNANCE.md#dependency-update-policy) before revisiting an earlier upgrade. Do not add someone else's signoff or weaken the commit audit to reuse an automated commit.
 
 ## Changes and validation
 
