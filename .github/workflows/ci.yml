@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, develop, 'codex/**', 'feature/**', 'fix/**', 'docs/**', 'chore/**', 'release/**', 'hotfix/**', 'dependabot/**']
+    branches: [main, develop, 'codex/**', 'feature/**', 'fix/**', 'docs/**', 'chore/**', 'release/**', 'hotfix/**']
   pull_request:
     branches: [main, develop]
     types: [opened, synchronize, reopened, edited, ready_for_review]
