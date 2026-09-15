@@ -163,8 +163,7 @@
             "refs/heads/chore/**/*",
             "refs/heads/codex/**/*",
             "refs/heads/release/**/*",
-            "refs/heads/hotfix/**/*",
-            "refs/heads/dependabot/**/*"
+            "refs/heads/hotfix/**/*"
           ]
         }
       },
@@ -196,5 +195,8 @@
         }
       ]
     }
-  ]
+  ],
+  "dependency_updates": {
+    "automated_security_fixes": false
+  }
 }
