@@ -55,6 +55,9 @@ def main():
     args = parser.parse_args()
     config = json.loads((ROOT / "repository-settings.json").read_text())
     repo = config["repository"]
+    automatic_fixes = config["dependency_updates"]["automated_security_fixes"]
+    if type(automatic_fixes) is not bool:
+        raise ValueError("automatic security fixes must be a boolean")
     if repo not in {"jack0682/rx_docs", "jack0682/rx-platform", "jack0682/rx-solutions"}:
         raise ValueError("Unexpected repository identity; review this script before extending its scope")
     prefix = f"repos/{repo}"
@@ -75,7 +78,7 @@ def main():
         api("PUT", f"{prefix}/actions/permissions/workflow", config["workflow_permissions"])
         api("PATCH", prefix, {"security_and_analysis": config["security"]})
         api("PUT", f"{prefix}/vulnerability-alerts")
-        api("PUT", f"{prefix}/automated-security-fixes")
+        api("PUT" if automatic_fixes else "DELETE", f"{prefix}/automated-security-fixes")
         for expected in config["rulesets"]:
             rule_id = matched[expected["name"]]
             path = f"{prefix}/rulesets" + (f"/{rule_id}" if rule_id else "")
@@ -88,6 +91,9 @@ def main():
         ("actions", api("GET", f"{prefix}/actions/permissions"), config["actions"]),
         ("workflow permissions", api("GET", f"{prefix}/actions/permissions/workflow"), config["workflow_permissions"]),
         ("security", current.get("security_and_analysis", {}), config["security"]),
+        ("automatic security fixes", api("GET", f"{prefix}/automated-security-fixes"),
+         {"enabled": automatic_fixes}),
+        ("vulnerability alerts", api("GET", f"{prefix}/vulnerability-alerts"), None),
     ]
     for expected in config["rulesets"]:
         rule_id = matched[expected["name"]]

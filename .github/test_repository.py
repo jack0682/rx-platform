@@ -2,11 +2,14 @@
 """Regression cases for the branch gate and repository artifact checks."""
 
 import hashlib
+import io
 import importlib.util
 import json
 from pathlib import Path
 import tempfile
 import unittest
+from contextlib import redirect_stdout
+from unittest.mock import patch
 
 SPEC = importlib.util.spec_from_file_location(
     "check_repository", Path(__file__).resolve().parents[1] / "tools/check_repository.py"
@@ -84,7 +87,7 @@ class GovernanceTests(unittest.TestCase):
             "include": ["~ALL"],
             "exclude": ["refs/heads/main", "refs/heads/develop"] + [
                 "refs/heads/" + prefix + "/**/*" for prefix in
-                ("feature", "fix", "docs", "chore", "codex", "release", "hotfix", "dependabot")],
+                ("feature", "fix", "docs", "chore", "codex", "release", "hotfix")],
         })
 
     def test_tags_and_merge_settings_do_not_offer_unsigned_shortcuts(self):
@@ -97,6 +100,86 @@ class GovernanceTests(unittest.TestCase):
         self.assertTrue(settings["web_commit_signoff_required"])
         for field in ("allow_squash_merge", "allow_rebase_merge", "allow_auto_merge", "allow_update_branch"):
             self.assertFalse(settings[field])
+
+
+class SecurityAutomationTests(unittest.TestCase):
+    def setUp(self):
+        root = Path(__file__).resolve().parents[1]
+        self.config = json.loads((root / "repository-settings.json").read_text())
+        self.prefix = "repos/" + self.config["repository"]
+        self.enabled = True
+        self.alerts = True
+        self.ignore_change = False
+        self.calls = []
+
+    def api(self, method, path, payload=None):
+        self.calls.append((method, path))
+        if path == self.prefix + "/automated-security-fixes":
+            if method == "GET":
+                return {"enabled": self.enabled, "paused": False}
+            if not self.ignore_change:
+                self.enabled = method == "PUT"
+            return None
+        if path == self.prefix + "/vulnerability-alerts":
+            if method == "GET" and not self.alerts:
+                raise RuntimeError("HTTP 404: vulnerability alerts disabled")
+            if method != "GET":
+                self.alerts = method == "PUT"
+            return None
+        if method != "GET":
+            return {"id": int(path.rsplit("/", 1)[1])} if "/rulesets/" in path else None
+        if path == self.prefix:
+            return {**self.config["settings"], "security_and_analysis": self.config["security"]}
+        if "/branches/" in path:
+            return {}
+        if path.endswith("/rulesets?per_page=100"):
+            return [{"name": rule["name"], "id": index + 1}
+                    for index, rule in enumerate(self.config["rulesets"])]
+        if "/rulesets/" in path:
+            return self.config["rulesets"][int(path.rsplit("/", 1)[1]) - 1]
+        for suffix, key in (("/topics", "topics"), ("/actions/permissions", "actions"),
+                            ("/actions/permissions/workflow", "workflow_permissions")):
+            if path == self.prefix + suffix:
+                value = self.config[key]
+                return {"names": value} if key == "topics" else value
+        self.fail(f"Unexpected request: {method} {path}")
+
+    def invoke(self, apply=False):
+        self.calls.clear()
+        output = io.StringIO()
+        argv = ["configure_github.py"] + (["--apply"] if apply else [])
+        with patch.object(CONFIGURE, "api", self.api), patch("sys.argv", argv), redirect_stdout(output):
+            result = CONFIGURE.main()
+        return result, output.getvalue()
+
+    def test_apply_and_reapply_keep_fixes_disabled_and_alerts_enabled(self):
+        self.assertIs(self.config["dependency_updates"]["automated_security_fixes"], False)
+        for _ in range(2):
+            self.assertEqual(self.invoke(apply=True)[0], 0)
+            self.assertFalse(self.enabled)
+            self.assertTrue(self.alerts)
+            self.assertNotIn(("PUT", self.prefix + "/automated-security-fixes"), self.calls)
+            self.assertIn(("GET", self.prefix + "/automated-security-fixes"), self.calls)
+            self.assertIn(("GET", self.prefix + "/vulnerability-alerts"), self.calls)
+
+    def test_read_only_audit_detects_reactivation_without_changing_it(self):
+        result, output = self.invoke()
+        self.assertEqual(result, 1)
+        self.assertIn("automatic security fixes", output)
+        self.assertTrue(self.enabled)
+        self.assertTrue(all(method == "GET" for method, _ in self.calls))
+        self.enabled = False
+        self.assertEqual(self.invoke()[0], 0)
+        self.alerts = False
+        with self.assertRaisesRegex(RuntimeError, "alerts disabled"):
+            self.invoke()
+
+    def test_apply_detects_a_security_change_that_did_not_take_effect(self):
+        self.ignore_change = True
+        result, output = self.invoke(apply=True)
+        self.assertEqual(result, 1)
+        self.assertIn("automatic security fixes", output)
+        self.assertTrue(self.enabled)
 
 
 class BranchPolicyTests(unittest.TestCase):
@@ -113,7 +196,7 @@ class BranchPolicyTests(unittest.TestCase):
                     self.assertIsNone(self.route(source, "develop", fork))
 
     def test_release_and_backmerge_routes(self):
-        for source, target in (("develop", "main"), ("release/0.2", "main"), ("hotfix/issue", "main"), ("main", "develop"), ("release/0.2", "develop"), ("hotfix/issue", "develop"), ("dependabot/npm/security", "main")):
+        for source, target in (("develop", "main"), ("release/0.2", "main"), ("hotfix/issue", "main"), ("main", "develop"), ("release/0.2", "develop"), ("hotfix/issue", "develop")):
             with self.subTest(source=source, target=target):
                 self.assertIsNone(self.route(source, target))
 
@@ -130,11 +213,6 @@ class BranchPolicyTests(unittest.TestCase):
     def test_missing_payload_fails_closed(self):
         self.assertIsNotNone(CHECK.branch_error({}))
         self.assertIsNotNone(CHECK.branch_error({"pull_request": {}}))
-
-    def test_dependabot_exception_requires_repository_owned_branch(self):
-        for target in ("main", "develop"):
-            self.assertIsNone(self.route("dependabot/cargo/update", target))
-            self.assertIsNotNone(self.route("dependabot/cargo/update", target, fork=True))
 
     def test_shell_syntax_is_only_data(self):
         self.assertIsNone(self.route("feature/$(exit 99)", "develop"))

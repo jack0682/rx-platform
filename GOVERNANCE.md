@@ -101,9 +101,9 @@ python3 tools/configure_github.py
 
 The commit audit above uses GitHub's verification results with the logged-in GitHub CLI account. Without `--github-repository`, verification uses your local GPG keyring; import trusted contributors' public keys, including GitHub's web-flow public key, before auditing their signatures. An unknown local public key alone does not establish that a GitHub-verified signature is invalid.
 
-The GitHub configuration command is read-only by default. It compares repository settings, Actions permissions, security settings and the complete managed rulesets with the reviewed file. To change policy, submit a PR that changes the settings and explains the effect, merge it under the existing rules, then run `python3 tools/configure_github.py --apply` with an administrator account. Re-run the read-only audit and inspect the effective branch rules. No automated job silently edits protections.
+The GitHub configuration command is read-only by default. It compares repository settings, Actions permissions, security settings, automatic security fixes, vulnerability-alert availability and the complete managed rulesets with the reviewed file. To change policy, submit a PR that changes the settings and explains the effect, merge it under the existing rules, then run `python3 tools/configure_github.py --apply` with an administrator account. Re-run the read-only audit and inspect the effective branch rules. No automated job silently edits protections.
 
-Actions use pinned action revisions, read-only tokens and no `pull_request_target` execution of contributor code. Secret scanning and push protection remain enabled. Existing dependency update tooling remains a proposal mechanism, subject to the same checks as other changes.
+Actions use pinned action revisions, read-only tokens and no `pull_request_target` execution of contributor code. Secret scanning and push protection remain enabled. Dependency updates use manually reviewed, signed contributor PRs. Vulnerability notifications remain enabled; automatic security-fix PRs are disabled.
 
 The [2026-09-14 signing migration](docs/governance/history-rewrite-2026-09-14.md) records the one-time user-authorized history rewrite, unchanged file trees, old-to-new commit correspondence and archived backup digests. Old closed PR checks are historical records; the migration does not retroactively rerun or change them. Fresh clones use the rewritten branches and tags. Keep local uncommitted work before replacing an older clone.
 
@@ -114,3 +114,15 @@ The [2026-09-14 signing migration](docs/governance/history-rewrite-2026-09-14.md
 - [GitHub rulesets REST API](https://docs.github.com/en/rest/repos/rules)
 - [DCO application configuration](https://github.com/dcoapp/app)
 - [Developer Certificate of Origin](https://developercertificate.org/)
+
+## Dependency update policy
+
+Dependency changes are maintained through the manual, signed PR procedure in [CONTRIBUTING.md](CONTRIBUTING.md#manual-dependency-updates). There is no scheduled version-update configuration on `main` or `develop`. Vulnerability alerts remain enabled so maintainers can assess and prepare security fixes themselves.
+
+`repository-settings.json` declares `dependency_updates.automated_security_fixes: false`. Applying the reviewed configuration disables automatic security-fix proposals and retains vulnerability alerts; the read-only audit also checks both states. Do not run an older configuration script that unconditionally enables automatic fixes. The regression tests exercise applying and reapplying this policy, detecting reactivation without changing remote state, and detecting a disable request that did not take effect.
+
+### Closed proposals — 2026-09-15
+
+Four earlier proposals remain closed and unmerged: [#7](https://github.com/jack0682/rx-platform/pull/7) (checkout/cache revisions) and [#9](https://github.com/jack0682/rx-platform/pull/9) (base64 0.23.1) passed their Rust jobs but failed the author DCO audit. [#8](https://github.com/jack0682/rx-platform/pull/8) (sha2 0.11.0) failed Rust with E0277 / `LowerHex` in `crates/rx-protocol/build.rs:22`. [#10](https://github.com/jack0682/rx-platform/pull/10) (argon2 0.6.0) failed with E0432 / `SaltString` and E0061 in `crates/rx-api/src/auth.rs`. Those two upgrades need source/API migration; none of the four upgrades is applied here.
+
+The [complete ten-proposal register](https://github.com/jack0682/rx_docs/blob/eabb60fb7865018df566a36ea6344f8a01e433c2/GOVERNANCE.md#dependency-update-policy) preserves the proposed versions, three observed Rust failures, checks that passed on the other seven proposals, and historical CI links. These observations concern those historical PR revisions; re-run the relevant checks for a new maintainer-authored update. No partial CI success or successful DCO app status overrides the repository commit audit.
