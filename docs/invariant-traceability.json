@@ -1,0 +1,283 @@
+{
+  "schema": "rx.invariant-traceability.v1",
+  "scope": "Repository-local declared scenario evidence, not exhaustive invariant conformance. Uncovered means no reviewed test binding is declared here, not that no relevant test exists.",
+  "verification_limit": "The checker verifies definition IDs and named test declarations, not whether a test semantically establishes an invariant. It does not execute tests, prove reachability or physical safety, or evaluate the rationale.",
+  "source_limit": "IDs come from local vendored documents. cell_operations/v1.0/05_validation_audit.md is outside the four normative-document hashes and can drift independently between repositories.",
+  "summary": {
+    "total": 30,
+    "declared": 10,
+    "uncovered": 20
+  },
+  "invariants": [
+    {
+      "id": "I01",
+      "status": "uncovered",
+      "reason": "No end-to-end binding is declared that jointly observes the preceding platform intent commit and Host SEND_ENTERED for a normal native effect.",
+      "tests": []
+    },
+    {
+      "id": "I02",
+      "status": "declared",
+      "reason": "Platform request identity and immutable-operation scenarios; not every API or transport.",
+      "tests": [
+        {
+          "file": "crates/rx-application/tests/transactions.rs",
+          "name": "changed_intent_under_same_key_is_a_conflict",
+          "reason": "Reuses an admitted key with a changed execution timeout and asserts KeyConflict."
+        },
+        {
+          "file": "crates/rx-application/tests/transactions.rs",
+          "name": "same_slot_new_key_and_lost_reply_do_not_create_another_operation",
+          "reason": "Injects a committed-but-lost reply, retries the key and the same slot with a new key, and asserts the same operation ID and one consumed budget unit."
+        }
+      ]
+    },
+    {
+      "id": "I03",
+      "status": "declared",
+      "reason": "Platform delivery uncertainty; native retransmission prevention is a separate Host/driver boundary.",
+      "tests": [
+        {
+          "file": "crates/rx-application/tests/transactions.rs",
+          "name": "an_entered_send_with_no_remote_receipt_remains_unknown_and_is_not_reissued",
+          "reason": "After RemoteNotFound, delivery planning reports first_emission=false and preserves Unknown, no outcome and Quarantined."
+        }
+      ]
+    },
+    {
+      "id": "I04",
+      "status": "uncovered",
+      "reason": "No binding is declared for the full completion-evidence rule versus timeout, idle and BT-only success; reviewed domain/native-result tests are narrower.",
+      "tests": []
+    },
+    {
+      "id": "I05",
+      "status": "declared",
+      "reason": "Conflicting controller reservations across two simulated cells; not proof of physical controller exclusion.",
+      "tests": [
+        {
+          "file": "crates/rx-application/tests/transactions.rs",
+          "name": "one_physical_resource_is_reserved_across_cells_not_per_cell_alias",
+          "reason": "Reserves one controller from cell A and asserts Busy when cell B submits work using the same resource."
+        }
+      ]
+    },
+    {
+      "id": "I06",
+      "status": "uncovered",
+      "reason": "No reviewed binding is declared for rejection of samples from restarted or expired control-stream sessions.",
+      "tests": []
+    },
+    {
+      "id": "I07",
+      "status": "uncovered",
+      "reason": "No binding is declared for the complete atomic bundle of decision inputs, outcome, events and revisions. Reviewed T2 replay tests alone are not that complete assertion.",
+      "tests": []
+    },
+    {
+      "id": "I08",
+      "status": "declared",
+      "reason": "Terminal success and release prerequisites at domain and platform boundaries.",
+      "tests": [
+        {
+          "file": "crates/rx-domain/tests/contracts.rs",
+          "name": "terminal_success_does_not_release_and_conflicting_result_is_preserved",
+          "reason": "Successful conclusion remains Held; absent support handover rejects release, and contradictory results quarantine without rewriting success."
+        },
+        {
+          "file": "crates/rx-application/tests/transactions.rs",
+          "name": "resource_release_requires_all_current_handover_facts",
+          "reason": "After completion, false, missing, stale or wrong-generation handover observations reject release and preserve Held."
+        }
+      ]
+    },
+    {
+      "id": "I09",
+      "status": "uncovered",
+      "reason": "No binding is declared for combined gap, reboot and time-uncertainty reporting; evaluator freshness cases alone do not establish that reporting boundary.",
+      "tests": []
+    },
+    {
+      "id": "I10",
+      "status": "declared",
+      "reason": "Installed configuration alone does not commission a cell; no physical site qualification is established.",
+      "tests": [
+        {
+          "file": "crates/rx-application/tests/transactions.rs",
+          "name": "uncommissioned_cell_cannot_start_from_package_presence",
+          "reason": "Creates a run from installed configuration without qualification and asserts StartRun is rejected as NotCommissioned."
+        }
+      ]
+    },
+    {
+      "id": "I11",
+      "status": "uncovered",
+      "reason": "No reviewed binding jointly connects UI, BT and native-return paths to the authoritative platform conclusion ledger.",
+      "tests": []
+    },
+    {
+      "id": "I12",
+      "status": "uncovered",
+      "reason": "No platform-local binding is declared for persistence-independent local protection. The reviewed Host callback example belongs to solutions and does not inject failed persistence.",
+      "tests": []
+    },
+    {
+      "id": "OI01",
+      "status": "uncovered",
+      "reason": "No reviewed binding is declared for all admitted-operation envelope, qualification, dependency and current-scope identities together.",
+      "tests": []
+    },
+    {
+      "id": "OI02",
+      "status": "declared",
+      "reason": "Condition-evaluator UNKNOWN propagation and strict condition syntax; not all application condition bindings.",
+      "tests": [
+        {
+          "file": "crates/rx-domain/tests/contracts.rs",
+          "name": "three_valued_groups_and_invalid_hidden_branch",
+          "reason": "Asserts UNKNOWN is retained in required ALL/ANY combinations and an invalid hidden branch is rejected rather than ignored."
+        },
+        {
+          "file": "crates/rx-domain/tests/contracts.rs",
+          "name": "quality_alone_never_proves_freshness_generation_or_unit",
+          "reason": "GOOD-valued input with an unbounded age, wrong generation/unit/clock, future sample, excess uncertainty or dispute evaluates UNKNOWN."
+        },
+        {
+          "file": "crates/rx-domain/tests/contracts.rs",
+          "name": "condition_schema_is_closed",
+          "reason": "Adds an unsupported skip field to a condition document and asserts decoding fails instead of silently ignoring it."
+        }
+      ]
+    },
+    {
+      "id": "OI03",
+      "status": "uncovered",
+      "reason": "No binding is declared for production, setup and recovery writes with all corresponding cell-aware purpose/parent checks.",
+      "tests": []
+    },
+    {
+      "id": "OI04",
+      "status": "declared",
+      "reason": "Maintained-condition recovery cannot revive a revoked run; normal transient-wait clearing is outside this declaration.",
+      "tests": [
+        {
+          "file": "crates/rx-application/tests/transactions.rs",
+          "name": "maintained_condition_recovery_does_not_revive_an_old_mandate",
+          "reason": "Reports a maintained fact false then true and asserts the run remains RecoveryRequired with its ConditionLost block."
+        }
+      ]
+    },
+    {
+      "id": "OI05",
+      "status": "declared",
+      "reason": "Partial Arm acknowledgement is not a production mandate; access clearance is a separate boundary.",
+      "tests": [
+        {
+          "file": "crates/rx-application/tests/transactions.rs",
+          "name": "start_requires_all_hosts_and_cannot_be_completed_by_partial_ack",
+          "reason": "Acknowledges only one of two Hosts and asserts the attempt stays Arming, the run Prepared and mandate absent."
+        }
+      ]
+    },
+    {
+      "id": "OI06",
+      "status": "uncovered",
+      "reason": "No platform binding is declared for the complete permit field, consumption and expiry boundary; the Host map records limited gate scenarios.",
+      "tests": []
+    },
+    {
+      "id": "OI07",
+      "status": "uncovered",
+      "reason": "The reviewed generic controller-reservation test does not stage two support-reducing operations on one material with reciprocal support PASS. No material-support conflict binding is declared.",
+      "tests": []
+    },
+    {
+      "id": "OI08",
+      "status": "uncovered",
+      "reason": "No reviewed binding is declared for production restart while retaining every related case, person and external restriction.",
+      "tests": []
+    },
+    {
+      "id": "OI09",
+      "status": "uncovered",
+      "reason": "No reviewed binding spans acknowledgement, reset observation, work completion, revalidation and explicit new start as distinct actions.",
+      "tests": []
+    },
+    {
+      "id": "OI10",
+      "status": "uncovered",
+      "reason": "No reviewed binding is declared for the complete change-to-condition/qualification/clearance invalidation and new-epoch synchronization chain.",
+      "tests": []
+    },
+    {
+      "id": "OI11",
+      "status": "uncovered",
+      "reason": "No platform binding is declared for executing old tokens after rollback; a reviewed restart-state test is narrower than replay prevention.",
+      "tests": []
+    },
+    {
+      "id": "OI12",
+      "status": "uncovered",
+      "reason": "No reviewed binding establishes the prohibition on inferring actual safety-function performance from epistemic consistency, GOOD data or UI display.",
+      "tests": []
+    },
+    {
+      "id": "OI13",
+      "status": "uncovered",
+      "reason": "No reviewed binding is declared for control-stream session/epoch/sequence checks together with actual native-application ordering.",
+      "tests": []
+    },
+    {
+      "id": "OI14",
+      "status": "uncovered",
+      "reason": "No platform-local binding is declared for the local-protection obligation under DB or communication failure; callback independence alone is not this complete boundary.",
+      "tests": []
+    },
+    {
+      "id": "OI15",
+      "status": "declared",
+      "reason": "Budget unit separation, repeated work within one part and restoration; not every executor topology.",
+      "tests": [
+        {
+          "file": "crates/rx-domain/tests/cell_invariants.rs",
+          "name": "setup_and_material_budgets_are_not_interchangeable",
+          "reason": "Rejects operation consumption in a part budget and part consumption in an operation-count budget."
+        },
+        {
+          "file": "crates/rx-domain/tests/cell_invariants.rs",
+          "name": "last_counted_part_can_continue_but_a_new_part_cannot_be_created",
+          "reason": "Repeatedly references the already-counted part without another decrement, while rejecting creation of a new part after exhaustion."
+        },
+        {
+          "file": "crates/rx-domain/tests/restoration.rs",
+          "name": "restoring_run_budget_never_refunds_consumption",
+          "reason": "Serializes and restores a consumed part budget, retains remaining=1, rejects duplicate consumption and eventually rejects another new part."
+        }
+      ]
+    },
+    {
+      "id": "OI16",
+      "status": "declared",
+      "reason": "Software configuration presence versus cell commissioning; documentary approval alone is not validated here.",
+      "tests": [
+        {
+          "file": "crates/rx-application/tests/transactions.rs",
+          "name": "uncommissioned_cell_cannot_start_from_package_presence",
+          "reason": "An installed, unqualified cell may create a run but StartRun returns NotCommissioned."
+        }
+      ]
+    },
+    {
+      "id": "OI17",
+      "status": "uncovered",
+      "reason": "Pure ScopeEpochs tests are adjacent; no platform binding is declared for the Host old-Arm/Fence application behavior.",
+      "tests": []
+    },
+    {
+      "id": "OI18",
+      "status": "uncovered",
+      "reason": "No reviewed binding exposes the whole P-invalidation-to-H-application interval and establishes the allocation of required physical reactions.",
+      "tests": []
+    }
+  ]
+}

@@ -49,6 +49,8 @@ jobs:
         run: python3 tools/check_repository.py --event "$GITHUB_EVENT_PATH"
       - name: Validate JSON, local links and contract integrity
         run: python3 tools/check_repository.py
+      - name: Check invariant traceability
+        run: python3 tools/check_invariant_traceability.py
       - name: Check contract baselines and SDK export regressions
         run: |
           python3 tools/check_contract_baselines.py
