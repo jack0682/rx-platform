@@ -53,6 +53,11 @@ jobs:
         run: |
           python3 tools/check_contract_baselines.py
           python3 tools/test_export_host_sdk.py
+      - name: Check optional binding manifests without rewriting them
+        run: |
+          for checker in tools/update_*_binding.py; do
+            python3 "$checker" --check
+          done
 
   rust:
     name: Rust
@@ -83,6 +88,44 @@ jobs:
         run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
       - name: Test Rust workspace
         run: cargo test --workspace --all-features --locked
+
+  # Manual audits are independent of the required CI aggregate below.
+  # No cron is active; scheduling needs a separately reviewed default-branch change.
+  sdk_freshness:
+    name: SDK freshness audit (manual)
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          path: platform
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: jack0682/rx-solutions
+          ref: develop
+          persist-credentials: false
+          path: solutions
+      - name: Record compared revisions and check SDK freshness
+        run: |
+          git -C platform rev-parse HEAD
+          git -C solutions rev-parse HEAD
+          python3 platform/tools/check_host_sdk.py solutions/sdk
+
+  github_configuration:
+    name: GitHub configuration audit (manual)
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Audit server configuration with the read-only workflow token
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 tools/configure_github.py
 
   ci:
     name: ${{ github.event_name == 'pull_request' && 'CI' || 'Branch CI' }}
