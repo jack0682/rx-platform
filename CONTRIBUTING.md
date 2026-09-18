@@ -61,6 +61,7 @@ The Rust toolchain in `rust-toolchain.toml` and Python 3 are required.
 python3 .github/test_repository.py
 python3 .github/test_commit_policy.py
 python3 tools/check_repository.py
+python3 tools/check_invariant_traceability.py
 python3 tools/check_contract_baselines.py
 python3 tools/test_export_host_sdk.py
 for checker in tools/update_*_binding.py; do python3 "$checker" --check; done
@@ -96,3 +97,7 @@ No cron is active. Scheduling requires an explicit workflow change on the defaul
 ## License and security
 
 Contributions use the [Apache License 2.0](LICENSE). Submit only material you have the right to contribute, and preserve licenses and notices for third-party code, documents and assets. [NOTICE](NOTICE) contains RX notices and does not replace notices for external dependencies. Do not include credentials, equipment addresses or personal information in public PRs or issues. Follow the [security policy](SECURITY.md) when reporting vulnerabilities.
+
+## Invariant traceability
+
+The required repository job checks the [local invariant map](docs/invariant-traceability.md) against vendored definition IDs and named test declarations. It checks structure and references, not whether the tests semantically establish the invariants; uncovered entries remain explicit.
