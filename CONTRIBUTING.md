@@ -16,7 +16,7 @@ All PRs use merge commits. Squash and rebase merges are disabled so that reviewe
 
 ## Signed commits and the daily workflow
 
-Every commit, including merges, needs both a matching author `Signed-off-by` trailer and a verified OpenPGP signature. Read the [Developer Certificate of Origin](https://developercertificate.org/) before signing off. The trailer records your certification of contribution rights; the cryptographic signature authenticates the commit. Neither substitutes for the other.
+Every new commit, including merges, needs both a matching author `Signed-off-by` trailer and a verified OpenPGP signature. Read the [Developer Certificate of Origin](https://developercertificate.org/) before signing off. The trailer records your certification of contribution rights; the cryptographic signature authenticates the commit. Neither substitutes for the other. The two exact, unresolved historical exceptions and full-head CI scope are documented in [Recorded historical DCO incidents](GOVERNANCE.md#recorded-historical-dco-incidents); they do not certify the original authors retroactively.
 
 Configure a verified GitHub email and register your public GPG key, then install the repository's local hooks. See the [repository governance guide](GOVERNANCE.md) for key setup, branch updates, merge and recovery instructions.
 
