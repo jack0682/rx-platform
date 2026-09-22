@@ -16,7 +16,7 @@ All PRs use merge commits. Squash and rebase merges are disabled so that reviewe
 
 ## Signed commits and the daily workflow
 
-Every commit, including merges, needs both a matching author `Signed-off-by` trailer and a verified OpenPGP signature. Read the [Developer Certificate of Origin](https://developercertificate.org/) before signing off. The trailer records your certification of contribution rights; the cryptographic signature authenticates the commit. Neither substitutes for the other.
+Every new commit, including merges, needs both a matching author `Signed-off-by` trailer and a verified OpenPGP signature. Read the [Developer Certificate of Origin](https://developercertificate.org/) before signing off. The trailer records your certification of contribution rights; the cryptographic signature authenticates the commit. Neither substitutes for the other. The two exact, unresolved historical exceptions and full-head CI scope are documented in [Recorded historical DCO incidents](GOVERNANCE.md#recorded-historical-dco-incidents); they do not certify the original authors retroactively.
 
 Configure a verified GitHub email and register your public GPG key, then install the repository's local hooks. See the [repository governance guide](GOVERNANCE.md) for key setup, branch updates, merge and recovery instructions.
 
@@ -61,8 +61,10 @@ The Rust toolchain in `rust-toolchain.toml` and Python 3 are required.
 python3 .github/test_repository.py
 python3 .github/test_commit_policy.py
 python3 tools/check_repository.py
+python3 tools/check_invariant_traceability.py
 python3 tools/check_contract_baselines.py
 python3 tools/test_export_host_sdk.py
+for checker in tools/update_*_binding.py; do python3 "$checker" --check; done
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 cargo test --workspace --all-features --locked
@@ -84,6 +86,18 @@ Original designs and contracts live in [rx_docs](https://github.com/jack0682/rx_
 
 The platform command `python3 tools/check_host_sdk.py ../rx-solutions/sdk` checks agreement with the current platform source. Standalone solutions CI checks its SDK's own inventory; it does not prove compatibility with the latest platform. Run the cross-repository synchronization check when both repositories change. Regenerate SDK copies from platform sources instead of editing them directly.
 
+The required repository job checks all seven optional binding manifests with `--check`, including metadata that the Rust build's source-hash check does not compare. It never regenerates those manifests.
+
+The [CI guard boundaries](docs/ci-guards.md) explain why the two base protobuf schemas remain separate from those optional bindings and what the existing checks do not prove.
+
+Run `gh workflow run ci.yml --ref develop` to also run the SDK freshness and read-only GitHub configuration audits. The SDK audit compares the selected platform revision with a separate checkout of solutions `develop`, and logs both revisions. These manual jobs are excluded from the required `CI` aggregate and do not run on pushes or PRs. A failed audit remains visible as a failed job; a green aggregate does not establish audit success.
+
+No cron is active. Scheduling requires an explicit workflow change on the default branch during a future reviewed `main` promotion; promotion alone does not add a schedule. The configuration audit uses only the read-only workflow token. If GitHub denies access to administrative settings, retain that failure and run `python3 tools/configure_github.py` locally with an authorized account. Local success does not prove the workflow token has access. CI never applies server settings or receives an administrative token.
+
 ## License and security
 
 Contributions use the [Apache License 2.0](LICENSE). Submit only material you have the right to contribute, and preserve licenses and notices for third-party code, documents and assets. [NOTICE](NOTICE) contains RX notices and does not replace notices for external dependencies. Do not include credentials, equipment addresses or personal information in public PRs or issues. Follow the [security policy](SECURITY.md) when reporting vulnerabilities.
+
+## Invariant traceability
+
+The required repository job checks the [local invariant map](docs/invariant-traceability.md) against vendored definition IDs and named test declarations. It checks structure and references, not whether the tests semantically establish the invariants; uncovered entries remain explicit.

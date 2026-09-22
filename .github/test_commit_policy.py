@@ -50,6 +50,9 @@ class HookTests(unittest.TestCase):
         (self.repo / "tools").mkdir()
         for name in ("check_commit_policy.py", "install_git_hooks.py"):
             shutil.copy2(ROOT / "tools" / name, self.repo / "tools" / name)
+        (self.repo / ".github").mkdir()
+        shutil.copy2(ROOT / ".github/historical-dco-incidents.json", self.repo / ".github")
+        shutil.copy2(ROOT / "repository-settings.json", self.repo)
         shutil.copytree(ROOT / ".githooks", self.repo / ".githooks")
         self.command(sys.executable, "tools/install_git_hooks.py")
 
@@ -110,10 +113,39 @@ class HookTests(unittest.TestCase):
         tree = self.command("git", "rev-parse", "HEAD^{tree}").stdout.strip()
         sha = self.command("git", "commit-tree", "-S", tree, input="Missing attestation\n").stdout.strip()
         self.assertIn("missing author Signed-off-by", self.check("--range", sha, ok=False).stderr)
+
         self.command("git", "config", "user.name", "automation[bot]")
         self.command("git", "config", "user.email", "automation-bot@example.com")
         sha = self.command("git", "commit-tree", "-S", tree, input="Bot attestation missing\n").stdout.strip()
         self.assertIn("missing author Signed-off-by", self.check("--range", sha, ok=False).stderr)
+
+    def test_head_audit_rejects_unsigned_off_merge_hidden_by_incremental_range(self):
+        root = self.commit()
+        tree = self.command("git", "rev-parse", "HEAD^{tree}").stdout.strip()
+        signed = "Signed-off-by: Test Contributor <test@example.com>\n"
+        side = self.command("git", "commit-tree", "-S", tree, "-p", root,
+                            input="Side contribution\n\n" + signed).stdout.strip()
+        bad = self.command("git", "commit-tree", "-S", tree, "-p", root, "-p", side,
+                           input="New merge without author signoff\n").stdout.strip()
+        head = self.command("git", "commit-tree", "-S", tree, "-p", bad,
+                            input="Later compliant contribution\n\n" + signed).stdout.strip()
+        self.check("--range", f"{bad}..{head}")
+        self.assertIn(bad + ": missing author Signed-off-by",
+                      self.check("--head", head, ok=False).stderr)
+        self.check("--head", f"{bad}..{head}", ok=False)
+
+    def test_changed_or_missing_incident_ledger_fails_closed(self):
+        self.commit()
+        ledger = self.repo / ".github/historical-dco-incidents.json"
+        original = ledger.read_bytes()
+        data = json.loads(original)
+        data["incidents"][0]["commit"] = "a" * 40
+        ledger.write_text(json.dumps(data))
+        self.assertIn("incident ledger changed", self.check("--head", "HEAD", ok=False).stderr)
+        ledger.write_bytes(original)
+        self.check("--head", "HEAD")
+        ledger.rename(ledger.with_suffix(".saved"))
+        self.check("--head", "HEAD", ok=False)
 
     def test_actual_push_rejects_protected_updates_and_deletions(self):
         self.commit()
@@ -153,6 +185,30 @@ class HookTests(unittest.TestCase):
         result = self.command(sys.executable, "tools/install_git_hooks.py", ok=False)
         self.assertIn("Preserving custom core.hooksPath", result.stderr)
         self.assertEqual(self.command("git", "config", "--global", "--list").stdout, "")
+
+
+class HistoricalIncidentTests(unittest.TestCase):
+    def test_only_exact_repository_commit_author_tuple_is_admitted(self):
+        incidents = policy.historical_incidents()
+        self.assertEqual(len(incidents), 2)
+        for incident in incidents:
+            sha, author, repository = (incident[k] for k in ("commit", "author", "repository"))
+            record = {"sha": sha, "commit": {"verification": {
+                "verified": True, "signature": "-----BEGIN PGP SIGNATURE-----"}}}
+            def git(*args, input=None):
+                return author + "\0Historical merge\n" if args[0] == "show" else ""
+            with patch.object(policy, "git", git), patch.object(policy, "run", return_value=json.dumps(record)) as remote:
+                self.assertEqual(policy.check_commit(sha, repository, incidents=incidents,
+                                 policy_repository=repository), incident)
+                remote.assert_called_once()
+                with self.assertRaisesRegex(ValueError, "missing author Signed-off-by"):
+                    policy.check_commit("a"*40, repository, incidents=incidents, policy_repository=repository)
+                with self.assertRaisesRegex(ValueError, "missing author Signed-off-by"):
+                    policy.check_commit(sha, repository, incidents=incidents, policy_repository="jack0682/rx-platform")
+                record["commit"]["verification"]["verified"] = False
+                remote.return_value = json.dumps(record)
+                with self.assertRaisesRegex(ValueError, "signature verification failed"):
+                    policy.check_commit(sha, repository, incidents=incidents, policy_repository=repository)
 
 
 class GitHubVerificationTests(unittest.TestCase):
