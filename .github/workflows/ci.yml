@@ -36,14 +36,9 @@ jobs:
       - name: Check DCO and verified OpenPGP signatures
         env:
           GH_TOKEN: ${{ github.token }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
-          revision="$HEAD_SHA"
-          if [[ -n "$BASE_SHA" ]]; then
-            revision="$BASE_SHA..$HEAD_SHA"
-          fi
-          python3 tools/check_commit_policy.py --range "$revision" --github-repository "$GITHUB_REPOSITORY"
+          python3 tools/check_commit_policy.py --head "$HEAD_SHA" --github-repository "$GITHUB_REPOSITORY"
       - name: Validate PR branch route
         if: github.event_name == 'pull_request'
         run: python3 tools/check_repository.py --event "$GITHUB_EVENT_PATH"

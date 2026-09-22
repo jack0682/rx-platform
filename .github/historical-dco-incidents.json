@@ -1,0 +1,26 @@
+{
+  "schema": "rx.historical-dco-incidents.v1",
+  "policy": "Only the exact listed repository/commit/author tuples may lack an author signoff. Every signature is still verified. These are unresolved historical violations, not retroactive certifications. No time, branch, merge, bot or author-wide exemptions exist.",
+  "incidents": [
+    {
+      "repository": "jack0682/rx-solutions",
+      "commit": "041f4724cf3ab96debc9e8f08d25a64274d41ca0",
+      "author": "jack0682 <131640493+jack0682@users.noreply.github.com>",
+      "violation": "missing_author_signoff",
+      "status": "unresolved_historical_violation",
+      "recorded_at": "2026-09-22",
+      "evidence": "https://github.com/jack0682/rx-solutions/actions/runs/35045616482",
+      "reason": "The published merge lacks the author's DCO trailer. Preserve its original bytes and keep this violation visible while auditing every later commit strictly."
+    },
+    {
+      "repository": "jack0682/rx_docs",
+      "commit": "3df96357f43f4d2e9e81e871aaa7f844fc004fd2",
+      "author": "jack0682 <131640493+jack0682@users.noreply.github.com>",
+      "violation": "missing_author_signoff",
+      "status": "unresolved_historical_violation",
+      "recorded_at": "2026-09-22",
+      "evidence": "https://github.com/jack0682/rx_docs/actions/runs/35045639273",
+      "reason": "The published merge lacks the author's DCO trailer. Preserve its original bytes and keep this violation visible while auditing every later commit strictly."
+    }
+  ]
+}

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -10,6 +11,17 @@ import subprocess
 import sys
 
 PROTECTED = {"refs/heads/main", "refs/heads/develop"}
+ROOT = Path(__file__).resolve().parents[1]
+INCIDENTS = ROOT / ".github/historical-dco-incidents.json"
+# Changing this pin is a governance-policy change, never an automatic repair.
+INCIDENTS_SHA256 = "75f9e57637dd0793d8f678fa09e0d314b9c513112e7d93508c633e398b4c23e6"
+
+
+def historical_incidents():
+    data = INCIDENTS.read_bytes()
+    if hashlib.sha256(data).hexdigest() != INCIDENTS_SHA256:
+        raise ValueError("Historical DCO incident ledger changed; reviewed policy bytes are required")
+    return json.loads(data)["incidents"]
 
 
 def run(*command, input=None):
@@ -65,10 +77,15 @@ def check_signing_config():
         raise ValueError("Configure your existing OpenPGP signing key")
 
 
-def check_commit(sha, repository=None):
+def check_commit(sha, repository=None, *, incidents=(), policy_repository=None):
     author, message = git("show", "-s", "--format=%an <%ae>%x00%B", sha).split("\0", 1)
+    incident = None
     if not has_signoff(message, author):
-        raise ValueError(f"{sha}: missing author Signed-off-by: {author}")
+        incident = next((item for item in incidents
+                         if (item["repository"], item["commit"], item["author"])
+                         == (policy_repository, sha, author)), None)
+        if incident is None:
+            raise ValueError(f"{sha}: missing author Signed-off-by: {author}")
     if repository:
         record = json.loads(run("gh", "api", f"repos/{repository}/commits/{sha}"))
         verification = record.get("commit", {}).get("verification", {})
@@ -84,6 +101,7 @@ def check_commit(sha, repository=None):
         # GitHub web merges require the web-flow public key in the local keyring;
         # alternatively audit published commits with --github-repository.
         git("-c", "gpg.format=openpgp", "verify-commit", sha)
+    return incident
 
 
 def pre_push(lines):
@@ -126,6 +144,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--range", metavar="REV", help="Git revision or BASE..HEAD range")
+    mode.add_argument("--head", metavar="REV", help="Audit all ancestors of one head (identical PR/push CI scope)")
     mode.add_argument("--all", action="store_true", help="Audit local branches and tags")
     mode.add_argument("--prepare-message", metavar="PATH")
     mode.add_argument("--check-message", metavar="PATH")
@@ -145,19 +164,34 @@ def main():
     elif args.pre_push:
         pre_push(sys.stdin)
     else:
-        if args.range and args.range.startswith("-"):
+        revision = args.head or args.range
+        if revision and revision.startswith("-"):
             raise ValueError("A revision must not be an option")
-        options = ["--branches", "--tags"] if args.all else ["--end-of-options", args.range, "--"]
+        incidents = historical_incidents()
+        policy_repository = json.loads((ROOT / "repository-settings.json").read_text())["repository"]
+        if args.github_repository and args.github_repository != policy_repository:
+            raise ValueError("Signature repository must match the local policy repository")
+        if args.head:
+            # Resolve to a single commit; a BASE..HEAD range is not a head.
+            revision = git("rev-parse", "--verify", "--end-of-options", f"{args.head}^{{commit}}").strip()
+        options = ["--branches", "--tags"] if args.all else ["--end-of-options", revision, "--"]
         commits = git("rev-list", *options).splitlines()
         failures = []
+        recorded = []
         for sha in commits:
             try:
-                check_commit(sha, args.github_repository)
+                incident = check_commit(sha, args.github_repository,
+                                        incidents=incidents, policy_repository=policy_repository)
+                if incident:
+                    recorded.append(sha)
+                    print(f"HISTORICAL DCO VIOLATION (unresolved): {policy_repository}@{sha}; "
+                          "missing author signoff; recorded policy exception, not certification")
             except ValueError as exc:
                 failures.append(str(exc))
         if failures:
             raise ValueError("\n".join(failures))
-        print(f"OK: {len(commits)} commits have author sign-offs and verified OpenPGP signatures")
+        print(f"OK: {len(commits)} commits audited; {len(commits)-len(recorded)} author sign-offs; "
+              f"{len(recorded)} recorded historical DCO violations; all signatures verified OpenPGP")
     return 0
 
 
