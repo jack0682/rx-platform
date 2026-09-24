@@ -9,3 +9,7 @@ pub use verify::*;
 pub mod store;
 
 pub mod release;
+
+pub mod external_decision;
+
+pub mod operating_area;
