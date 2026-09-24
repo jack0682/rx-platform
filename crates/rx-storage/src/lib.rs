@@ -766,3 +766,5 @@ mod ownership_close_tests {
         );
     }
 }
+
+pub mod mailbox;
