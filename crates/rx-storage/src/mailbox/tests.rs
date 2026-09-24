@@ -1,4 +1,4 @@
-use rx_storage::mailbox::Mailbox;
+use super::Mailbox;
 #[test]
 fn publication_is_immutable_and_live_cooperating_writer_excluded() {
     let dir = tempfile::tempdir().unwrap();

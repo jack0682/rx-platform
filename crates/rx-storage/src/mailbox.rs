@@ -136,3 +136,6 @@ impl MailboxGuard {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests;
