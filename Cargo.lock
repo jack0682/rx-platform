@@ -1794,6 +1794,8 @@ dependencies = [
  "ed25519-dalek",
  "rustix",
  "rx-domain",
+ "rx-ports",
+ "rx-storage",
  "semver",
  "serde",
  "serde_json",
