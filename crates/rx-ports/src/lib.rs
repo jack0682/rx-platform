@@ -4,8 +4,25 @@ use rx_domain::types::{Counter, Digest, Id, Name};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+/// Local ownership failures; not persisted or serialized as a wire contract.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OwnershipFailure {
+    Contended,
+    Acquire,
+    ForeignProcess,
+    ConnectionClose,
+    Release,
+}
+#[derive(Debug, thiserror::Error)]
+#[error("exclusive ownership {kind:?}: {detail}")]
+pub struct OwnershipError {
+    pub kind: OwnershipFailure,
+    pub detail: String,
+}
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
+    #[error(transparent)]
+    Ownership(#[from] OwnershipError),
     #[error("application policy rejected command: {0}")]
     Rejected(rx_domain::fault::Rejection),
     #[error("store unavailable: {0}")]
