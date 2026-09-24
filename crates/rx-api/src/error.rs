@@ -98,6 +98,7 @@ impl From<WriterError<StoreError>> for ApiError {
                 Self::new(S::CONFLICT, "DELIVERY_CONFLICT")
             }
             WriterError::Rejected(StoreError::Invalid(_)) => Self::invalid(),
+            WriterError::Rejected(StoreError::Ownership(_)) => Self::unavailable(),
             // Never expose database paths, SQL or internals, or imply a failed reply undid a commit.
             _ => Self::unavailable(),
         }

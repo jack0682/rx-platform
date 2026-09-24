@@ -68,6 +68,7 @@ impl Changes {
                 WriterError::Rejected(error) => match error {
                     StoreError::Rejected(reason) => reason.to_string(),
                     StoreError::Unavailable(_) => "STORE_UNAVAILABLE".into(),
+                    StoreError::Ownership(error) => format!("STORE_OWNERSHIP_{:?}", error.kind),
                     StoreError::Integrity(_) => "STORE_INTEGRITY".into(),
                     StoreError::RevisionConflict(_) => "REVISION_CONFLICT".into(),
                     StoreError::KeyConflict => "KEY_CONFLICT".into(),

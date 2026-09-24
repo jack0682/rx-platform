@@ -1,18 +1,19 @@
 //! Local SQLite adapter. One process owns the lock and one worker owns this connection.
 //! No network or native-device calls may be made from a transaction callback.
+mod ownership;
+pub use ownership::ExclusiveFileLock;
+
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use rx_domain::{canonical, types::*};
 use rx_ports::*;
 use serde::de::DeserializeOwned;
-use std::{
-    fs::{File, OpenOptions},
-    path::Path,
-    time::Duration,
-};
+use std::{path::Path, time::Duration};
 
 pub struct SqliteRepository {
-    connection: Connection,
-    _ownership: File,
+    // This order is deliberate. Explicit close also confirms Connection::close
+    // before release; close failure keeps both resources until process exit.
+    connection: Option<Connection>,
+    ownership: Option<ExclusiveFileLock>,
 }
 fn unavailable(e: impl std::fmt::Display) -> StoreError {
     StoreError::Unavailable(e.to_string())
@@ -46,16 +47,7 @@ impl SqliteRepository {
             .parent()
             .ok_or_else(|| StoreError::Invalid("database needs parent path".into()))?;
         std::fs::create_dir_all(parent).map_err(unavailable)?;
-        let ownership = OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .read(true)
-            .write(true)
-            .open(path.with_extension("writer.lock"))
-            .map_err(unavailable)?;
-        ownership.try_lock().map_err(|e| {
-            StoreError::Unavailable(format!("another Runtime owns this store: {e}"))
-        })?;
+        let ownership = ExclusiveFileLock::acquire(path.with_extension("writer.lock"))?;
         // Version pin alone is insufficient; check the SQLite library actually linked.
         if rusqlite::version_number() < 3_051_003 {
             return Err(StoreError::Unavailable(
@@ -63,6 +55,15 @@ impl SqliteRepository {
             ));
         }
         let connection = Connection::open(path).map_err(unavailable)?;
+        let repository = Self {
+            connection: Some(connection),
+            ownership: Some(ownership),
+        };
+        repository.initialize()?;
+        Ok(repository)
+    }
+    fn initialize(&self) -> Result<()> {
+        let connection = self.connection()?;
         connection
             .busy_timeout(Duration::from_millis(250))
             .map_err(unavailable)?;
@@ -116,25 +117,73 @@ impl SqliteRepository {
                 .execute_batch(include_str!("../migrations/0006.sql"))
                 .map_err(unavailable)?;
         }
-        Ok(Self {
-            connection,
-            _ownership: ownership,
-        })
+        Ok(())
+    }
+    fn connection(&self) -> Result<&Connection> {
+        self.ownership
+            .as_ref()
+            .expect("open repository")
+            .check_process()?;
+        Ok(self.connection.as_ref().expect("open connection"))
+    }
+    fn connection_mut(&mut self) -> Result<&mut Connection> {
+        self.ownership
+            .as_ref()
+            .expect("open repository")
+            .check_process()?;
+        Ok(self.connection.as_mut().expect("open connection"))
+    }
+    /// Consume the repository; never release its ownership before SQLite confirms
+    /// close. Failure deliberately retains resources until this process exits.
+    pub fn close(mut self) -> Result<()> {
+        self.close_inner()
+    }
+    fn close_inner(&mut self) -> Result<()> {
+        let Some(owner) = self.ownership.take() else {
+            return Ok(());
+        };
+        if let Err(error) = owner.check_process() {
+            // Do not call SQLite destructors on a fork-inherited connection.
+            if let Some(connection) = self.connection.take() {
+                std::mem::forget(connection);
+            }
+            drop(owner); // creator check prevents inherited LOCK_UN
+            return Err(error.into());
+        }
+        // A dependency panic during close must not run an unlocking guard's
+        // destructor before connection closure has been confirmed.
+        let owner = std::mem::ManuallyDrop::new(owner);
+        if let Some(connection) = self.connection.take()
+            && let Err((connection, error)) = connection.close()
+        {
+            std::mem::forget(connection);
+            std::mem::ManuallyDrop::into_inner(owner).retain_until_process_exit();
+            return Err(OwnershipError {
+                    kind: OwnershipFailure::ConnectionClose,
+                    detail: format!(
+                        "SQLite close unconfirmed; this process retains connection and lock until exit; inherited copies may retain ownership longer: {error}"
+                    ),
+                }
+                .into());
+        }
+        std::mem::ManuallyDrop::into_inner(owner).close()?;
+        Ok(())
     }
     pub fn sqlite_version(&self) -> &'static str {
         rusqlite::version()
     }
     pub fn backup(&self, path: impl AsRef<Path>) -> Result<()> {
+        self.connection()?; // reject inherited access before path observation
         if path.as_ref().exists() {
             return Err(StoreError::Invalid("backup destination must be new".into()));
         }
-        self.connection
+        self.connection()?
             .backup("main", path, None)
             .map_err(unavailable)
     }
     pub fn check_integrity(&self) -> Result<()> {
         let result: String = self
-            .connection
+            .connection()?
             .query_row("PRAGMA quick_check", [], |r| r.get(0))
             .map_err(unavailable)?;
         if result != "ok" {
@@ -144,16 +193,23 @@ impl SqliteRepository {
     }
 }
 
+impl Drop for SqliteRepository {
+    fn drop(&mut self) {
+        let _ = self.close_inner();
+    }
+}
+
 impl Repository for SqliteRepository {
     fn pending_outbox_after(
         &mut self,
         after: Option<&Id>,
         limit: usize,
     ) -> Result<Vec<OutboxRecord>> {
+        self.connection()?;
         if limit == 0 || limit > 128 {
             return Err(StoreError::Invalid("outbox batch must be 1..128".into()));
         }
-        let mut query=self.connection.prepare("SELECT id,state,document FROM outbox WHERE state IN ('NEW','EMIT_ENTERED') AND (?1 IS NULL OR id>?1) ORDER BY id LIMIT ?2").map_err(unavailable)?;
+        let mut query=self.connection()?.prepare("SELECT id,state,document FROM outbox WHERE state IN ('NEW','EMIT_ENTERED') AND (?1 IS NULL OR id>?1) ORDER BY id LIMIT ?2").map_err(unavailable)?;
         let rows = query
             .query_map(params![after.map(Id::as_str), limit as i64], |r| {
                 Ok((
@@ -174,10 +230,10 @@ impl Repository for SqliteRepository {
         .collect()
     }
     fn control_events_after(&mut self, after: Counter, limit: usize) -> Result<Vec<StoredEvent>> {
-        read_events(&self.connection, "control_events", after, limit)
+        read_events(self.connection()?, "control_events", after, limit)
     }
     fn control_snapshot(&mut self) -> Result<(Counter, Vec<Record>)> {
-        let tx = self.connection.transaction().map_err(unavailable)?;
+        let tx = self.connection_mut()?.transaction().map_err(unavailable)?;
         let seq = read_head(&tx, "control_events")?;
         let records = read_entities(&tx, "control_entities")?;
         tx.commit().map_err(unavailable)?;
@@ -185,7 +241,7 @@ impl Repository for SqliteRepository {
     }
     fn journal_head(&mut self) -> Result<Counter> {
         let seq: i64 = self
-            .connection
+            .connection()?
             .query_row("SELECT COALESCE(MAX(seq),0) FROM events", [], |row| {
                 row.get(0)
             })
@@ -193,10 +249,11 @@ impl Repository for SqliteRepository {
         counter(seq)
     }
     fn pending_outbox(&mut self, limit: usize) -> Result<Vec<OutboxRecord>> {
+        self.connection()?;
         if limit == 0 || limit > 128 {
             return Err(StoreError::Invalid("outbox batch must be 1..128".into()));
         }
-        let mut query=self.connection.prepare("SELECT id,state,document FROM outbox WHERE state IN ('NEW','EMIT_ENTERED') ORDER BY id LIMIT ?1").map_err(unavailable)?;
+        let mut query=self.connection()?.prepare("SELECT id,state,document FROM outbox WHERE state IN ('NEW','EMIT_ENTERED') ORDER BY id LIMIT ?1").map_err(unavailable)?;
         let rows = query
             .query_map([limit as i64], |r| {
                 Ok((
@@ -220,18 +277,29 @@ impl Repository for SqliteRepository {
         &mut self,
         operation: impl FnOnce(&mut dyn rx_ports::Transaction) -> Result<T>,
     ) -> Result<T> {
-        let transaction = self
-            .connection
-            .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(unavailable)?;
-        let value = operation(&mut SqliteTransaction {
-            transaction: &transaction,
-        })?;
-        transaction.commit().map_err(unavailable)?;
+        let creator = self.ownership.as_ref().expect("open repository").creator();
+        let transaction = TransactionScope {
+            transaction: Some(
+                self.connection_mut()?
+                    .transaction_with_behavior(TransactionBehavior::Immediate)
+                    .map_err(unavailable)?,
+            ),
+            creator,
+        };
+        let outcome = operation(&mut SqliteTransaction {
+            transaction: transaction.transaction.as_ref().expect("live transaction"),
+            creator,
+        });
+        // The callback may fork. Refuse its inherited commit even when it
+        // returns Ok, and never run SQLite rollback from the foreign process.
+        ownership::check_creator(creator)?;
+        let value = outcome?;
+        transaction.commit()?;
         Ok(value)
     }
+
     fn snapshot(&mut self) -> Result<(Counter, Vec<Record>)> {
-        let tx = self.connection.transaction().map_err(unavailable)?;
+        let tx = self.connection_mut()?.transaction().map_err(unavailable)?;
         let seq: i64 = tx
             .query_row("SELECT COALESCE(MAX(seq),0) FROM events", [], |r| r.get(0))
             .map_err(unavailable)?;
@@ -263,11 +331,12 @@ impl Repository for SqliteRepository {
         Ok((counter(seq)?, records))
     }
     fn events_after(&mut self, after: Counter, limit: usize) -> Result<Vec<StoredEvent>> {
+        self.connection()?;
         if limit == 0 || limit > 128 {
             return Err(StoreError::Invalid("event batch must be 1..128".into()));
         }
         let mut query = self
-            .connection
+            .connection()?
             .prepare("SELECT seq,event_id,document FROM events WHERE seq>?1 ORDER BY seq LIMIT ?2")
             .map_err(unavailable)?;
         let rows = query
@@ -292,11 +361,42 @@ impl Repository for SqliteRepository {
     }
 }
 
+struct TransactionScope<'a> {
+    transaction: Option<rusqlite::Transaction<'a>>,
+    creator: u32,
+}
+impl TransactionScope<'_> {
+    fn commit(mut self) -> Result<()> {
+        ownership::check_creator(self.creator)?;
+        self.transaction
+            .take()
+            .expect("live transaction")
+            .commit()
+            .map_err(unavailable)
+    }
+}
+impl Drop for TransactionScope<'_> {
+    fn drop(&mut self) {
+        if self.creator != std::process::id()
+            && let Some(transaction) = self.transaction.take()
+        {
+            std::mem::forget(transaction);
+        }
+        // In the creator, normal SQLite rollback runs on error/unwind.
+    }
+}
 struct SqliteTransaction<'a, 'b> {
     transaction: &'a rusqlite::Transaction<'b>,
+    creator: u32,
+}
+impl SqliteTransaction<'_, '_> {
+    fn check_process(&self) -> Result<()> {
+        Ok(ownership::check_creator(self.creator)?)
+    }
 }
 impl rx_ports::Transaction for SqliteTransaction<'_, '_> {
     fn control_head(&mut self) -> Result<Counter> {
+        self.check_process()?;
         read_head(self.transaction, "control_events")
     }
     fn append_control(
@@ -305,6 +405,7 @@ impl rx_ports::Transaction for SqliteTransaction<'_, '_> {
         entity: &Record,
         event: &Document,
     ) -> Result<Counter> {
+        self.check_process()?;
         let event_bytes = encode(event)?;
         self.transaction
             .execute(
@@ -318,6 +419,7 @@ impl rx_ports::Transaction for SqliteTransaction<'_, '_> {
         Ok(seq)
     }
     fn outbox(&mut self, id: &Id) -> Result<Option<OutboxRecord>> {
+        self.check_process()?;
         let row = self
             .transaction
             .query_row(
@@ -337,6 +439,7 @@ impl rx_ports::Transaction for SqliteTransaction<'_, '_> {
         .transpose()
     }
     fn scan(&mut self, prefix: &str) -> Result<Vec<Record>> {
+        self.check_process()?;
         if prefix.is_empty() || prefix.contains(['%', '_']) {
             return Err(StoreError::Invalid("invalid internal key prefix".into()));
         }
@@ -364,6 +467,7 @@ impl rx_ports::Transaction for SqliteTransaction<'_, '_> {
         .collect()
     }
     fn get(&mut self, key: &Name) -> Result<Option<Record>> {
+        self.check_process()?;
         let row = self
             .transaction
             .query_row(
@@ -388,6 +492,7 @@ impl rx_ports::Transaction for SqliteTransaction<'_, '_> {
         expected: Option<Counter>,
         document: &Document,
     ) -> Result<Record> {
+        self.check_process()?;
         let current = self.get(key)?;
         if current.as_ref().map(|r| r.revision) != expected {
             return Err(StoreError::RevisionConflict(key.to_string()));
@@ -405,6 +510,7 @@ impl rx_ports::Transaction for SqliteTransaction<'_, '_> {
         })
     }
     fn lookup(&mut self, scope: &RequestScope) -> Result<Option<SavedRequest>> {
+        self.check_process()?;
         let row = self
             .transaction
             .query_row(
@@ -426,6 +532,7 @@ impl rx_ports::Transaction for SqliteTransaction<'_, '_> {
         .transpose()
     }
     fn remember(&mut self, scope: &RequestScope, request: &SavedRequest) -> Result<()> {
+        self.check_process()?;
         if let Some(old) = self.lookup(scope)? {
             if old != *request {
                 return Err(StoreError::KeyConflict);
@@ -445,6 +552,7 @@ impl rx_ports::Transaction for SqliteTransaction<'_, '_> {
         Ok(())
     }
     fn append(&mut self, event_id: &Id, document: &Document) -> Result<Counter> {
+        self.check_process()?;
         let old: Option<(i64, Vec<u8>)> = self
             .transaction
             .query_row(
@@ -470,6 +578,7 @@ impl rx_ports::Transaction for SqliteTransaction<'_, '_> {
         Ok(Counter(self.transaction.last_insert_rowid() as u64))
     }
     fn enqueue(&mut self, id: &Id, document: &Document) -> Result<()> {
+        self.check_process()?;
         let old: Option<Vec<u8>> = self
             .transaction
             .query_row(
@@ -500,6 +609,7 @@ impl rx_ports::Transaction for SqliteTransaction<'_, '_> {
         expected: OutboxState,
         next: OutboxState,
     ) -> Result<()> {
+        self.check_process()?;
         let (from, to) = match (expected, next) {
             (OutboxState::New, OutboxState::EmitEntered) => ("NEW", "EMIT_ENTERED"),
             (OutboxState::New, OutboxState::Voided) => ("NEW", "VOIDED"),
@@ -598,4 +708,61 @@ fn read_events(
         })
     })
     .collect()
+}
+
+#[cfg(test)]
+mod ownership_close_tests {
+    use super::*;
+    #[test]
+    fn sqlite_close_failure_retains_ownership_until_process_exit() {
+        const CHILD: &str = "RX_STORAGE_CLOSE_FAILURE_PROBE";
+        if let Some(root) = std::env::var_os(CHILD) {
+            let root = std::path::PathBuf::from(root);
+            let store = SqliteRepository::open(root.join("state.db")).unwrap();
+            // A real unfinalized statement makes sqlite3_close fail. This private
+            // test does not add a Connection/statement export to the public API.
+            let statement = store.connection().unwrap().prepare("SELECT 1").unwrap();
+            std::mem::forget(statement);
+            let error = store.close().unwrap_err();
+            assert!(
+                matches!(&error, StoreError::Ownership(e) if e.kind == OwnershipFailure::ConnectionClose)
+            );
+            std::fs::write(root.join("refused"), error.to_string()).unwrap();
+            let end = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            while !root.join("finish").exists() {
+                assert!(std::time::Instant::now() < end);
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            return;
+        }
+        let root = tempfile::tempdir().unwrap();
+        struct Child(std::process::Child);
+        impl Drop for Child {
+            fn drop(&mut self) {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+        let log = std::fs::File::create(root.path().join("child.log")).unwrap();
+        let mut child = Child(std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "ownership_close_tests::sqlite_close_failure_retains_ownership_until_process_exit", "--nocapture"])
+            .env(CHILD, root.path())
+            .stdout(std::process::Stdio::from(log.try_clone().unwrap()))
+            .stderr(std::process::Stdio::from(log)).spawn().unwrap());
+        let end = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while !root.path().join("refused").exists() {
+            assert!(child.0.try_wait().unwrap().is_none());
+            assert!(std::time::Instant::now() < end);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(
+            matches!(SqliteRepository::open(root.path().join("state.db")), Err(StoreError::Ownership(e)) if e.kind==OwnershipFailure::Contended)
+        );
+        std::fs::write(root.path().join("finish"), "finish").unwrap();
+        assert!(child.0.wait().unwrap().success());
+        assert!(SqliteRepository::open(root.path().join("state.db")).is_ok());
+        println!(
+            "SQLITE_CLOSE_UNCONFIRMED: no unlock; contender refused until holder process exits"
+        );
+    }
 }
