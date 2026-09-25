@@ -21,3 +21,10 @@ clear files or blindly reissue after an unknown publication outcome.
 Only the issuer receives the private-key mount. The host receives a directory,
 never key bytes or a signer command. The tool does not authenticate physical facts,
 issue equipment safety/quality approvals or establish production key custody.
+
+
+G4 uses the same tool for two compiled development entries. The supplied private
+key selects its matching compiled public-key record; the request must name that
+record's key and issuer before evaluation. An A key cannot act as B or revoke B's
+reference. COMPACT's maximum TTL is 15000ms; SUPPORT's remains 30000ms. There is no
+key/area enrollment configuration. See the [rule and isolation contract](../../crates/rx-package/OPERATING_AREA.md).

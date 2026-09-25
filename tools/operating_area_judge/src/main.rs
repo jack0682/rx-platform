@@ -30,7 +30,7 @@ fn public_key(key: &Path) -> Result<[u8; 32]> {
     }
     Ok(output.stdout[12..].try_into()?)
 }
-fn sign(key: &Path, bytes: &[u8]) -> Result<SignatureEnvelope> {
+fn sign(key: &Path, key_id: &Name, bytes: &[u8]) -> Result<SignatureEnvelope> {
     let directory = tempfile::tempdir()?;
     let path = directory.path().join("message");
     std::fs::write(&path, bytes)?;
@@ -44,7 +44,7 @@ fn sign(key: &Path, bytes: &[u8]) -> Result<SignatureEnvelope> {
         return Err("judge/signature-failed".into());
     }
     Ok(SignatureEnvelope {
-        key: Name::new(policy::KEY_ID)?,
+        key: key_id.clone(),
         signature: output.stdout.iter().map(|b| format!("{b:02x}")).collect(),
     })
 }
@@ -55,9 +55,11 @@ fn main() -> Result<()> {
     }
     let id = Id::new(&args[2])?;
     let key = PathBuf::from(&args[3]);
-    if public_key(&key)? != policy::PUBLIC_KEY {
-        return Err("judge/key-not-authored-development-key".into());
-    }
+    let public = public_key(&key)?;
+    let area = policy::catalog()?
+        .iter()
+        .find(|a| a.public_key == public)
+        .ok_or("judge/key-not-authored-development-key")?;
     let mailbox = Mailbox::open(&args[1])?;
     let guard = mailbox.lock()?;
     let request = guard
@@ -67,17 +69,20 @@ fn main() -> Result<()> {
     if info.id != id {
         return Err("judge/request-id".into());
     }
-    let key_id = Name::new(policy::KEY_ID)?;
+    let key_id = Name::new(area.key_id)?;
+    if info.key != key_id || info.issuer.as_str() != area.issuer {
+        return Err("judge/issuer-scope".into());
+    }
     if args[0] == "decide" {
         let decision = Id::new(uuid::Uuid::new_v4().to_string())?;
         match policy::judge(&info, decision, Counter(args[4].parse()?)) {
             Ok(claim) => {
-                let signature = sign(&key, &claim.signing_message(&key_id)?)?;
+                let signature = sign(&key, &key_id, &claim.signing_message(&key_id)?)?;
                 let signed = SignedDecision { claim, signature };
                 guard.publish_once(&format!("decision-{id}.json"), &canonical::bytes(&signed)?)?;
                 println!(
                     "{}",
-                    serde_json::json!({"result":"SIGNED_DEVELOPMENT_APPROVAL","rule":policy::RULE,"decision":signed.claim.decision,"physical_authority":"NONE"})
+                    serde_json::json!({"result":"SIGNED_DEVELOPMENT_APPROVAL","rule":area.rule,"decision":signed.claim.decision,"physical_authority":"NONE"})
                 );
             }
             Err(denial) => {
@@ -94,8 +99,8 @@ fn main() -> Result<()> {
             .ok_or("judge/verified-reference-absent")?;
         let reference: Reference = canonical::decode_json(&bytes)?;
         if reference.challenge != id
-            || reference.key.as_str() != policy::KEY_ID
-            || reference.issuer.as_str() != policy::ISSUER
+            || reference.key.as_str() != area.key_id
+            || reference.issuer.as_str() != area.issuer
         {
             return Err("judge/revocation-reference-scope".into());
         }
@@ -104,7 +109,7 @@ fn main() -> Result<()> {
             target: reference,
             reason: Name::new(&args[4])?,
         };
-        let signature = sign(&key, &claim.signing_message(&key_id)?)?;
+        let signature = sign(&key, &key_id, &claim.signing_message(&key_id)?)?;
         guard.publish_once(
             &format!("revocation-{id}.json"),
             &canonical::bytes(&SignedRevocation { claim, signature })?,

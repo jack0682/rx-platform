@@ -52,3 +52,131 @@ fn judge_approves_only_its_bounded_nonactuating_report_rule() {
     assert!(judge(&bad, id(), Counter(1000)).is_err());
     assert!(judge(&good, id(), Counter(MAX_TTL_MS + 1)).is_err());
 }
+
+#[test]
+fn catalog_rejects_each_ambiguous_declaration_before_map_construction() {
+    assert!(validate_catalog(&[SUPPORT]).is_ok());
+    assert!(validate_catalog(catalog().unwrap()).is_ok());
+    for (label, entry, reason) in [
+        (
+            "area",
+            Area {
+                area: SUPPORT.area,
+                ..COMPACT
+            },
+            "duplicate-area",
+        ),
+        (
+            "issuer",
+            Area {
+                issuer: SUPPORT.issuer,
+                ..COMPACT
+            },
+            "duplicate-issuer",
+        ),
+        (
+            "key-id",
+            Area {
+                key_id: SUPPORT.key_id,
+                ..COMPACT
+            },
+            "duplicate-key-id",
+        ),
+        (
+            "public-key",
+            Area {
+                public_key: SUPPORT.public_key,
+                ..COMPACT
+            },
+            "duplicate-public-key",
+        ),
+        (
+            "program",
+            Area {
+                program: SUPPORT.program,
+                ..COMPACT
+            },
+            "duplicate-program",
+        ),
+    ] {
+        let error = validate_catalog(&[SUPPORT, entry]).unwrap_err();
+        assert!(error.contains(reason));
+        println!("catalog-{label}: {error}");
+    }
+    let mut entries = Vec::new();
+    for i in 0..9 {
+        let name = Box::leak(format!("test/area-{i}").into_boxed_str());
+        entries.push(Area {
+            key_id: name,
+            issuer: name,
+            area: name,
+            program: name,
+            public_key: [i + 1; 32],
+            ..SUPPORT
+        });
+    }
+    assert!(validate_catalog(&entries[..8]).is_ok());
+    for bad in [&entries[..0], &entries[..9]] {
+        let error = validate_catalog(bad).unwrap_err();
+        assert!(error.contains("count"));
+        println!("catalog-count-{}: {error}", bad.len());
+    }
+}
+
+#[test]
+fn each_area_checks_its_own_limits_role_and_program() {
+    for a in catalog().unwrap() {
+        let mut info = request();
+        info.key = n(a.key_id);
+        info.issuer = n(a.issuer);
+        info.operating_area = n(a.area);
+        info.role = n(a.role);
+        info.owner.program = n(a.program);
+        info.max_ttl_ms = Counter(a.max_ttl_ms);
+        info.subject["task"]["operating_area"] = a.area.into();
+        info.subject["subject"]["program"] = a.program.into();
+        assert!(judge(&info, id(), Counter(1000)).is_ok());
+        for (field, value) in [
+            ("required_native_packages", 5000),
+            ("required_support_profiles", 32),
+        ] {
+            let mut candidate = info.clone();
+            candidate.subject["task"][field] = value.to_string().into();
+            assert_eq!(
+                judge(&candidate, id(), Counter(1000)).is_ok(),
+                a.area == SUPPORT.area
+            );
+        }
+        assert_eq!(
+            judge(&info, id(), Counter(25000)).is_ok(),
+            a.area == SUPPORT.area
+        );
+        let other = if a.area == SUPPORT.area {
+            COMPACT
+        } else {
+            SUPPORT
+        };
+        let mut wrong = info.clone();
+        wrong.role = n(other.role);
+        assert_eq!(
+            judge(&wrong, id(), Counter(1000)).unwrap_err().reason,
+            "judge/role-kind-program"
+        );
+        let mut wrong = info.clone();
+        wrong.owner.program = n(other.program);
+        assert_eq!(
+            judge(&wrong, id(), Counter(1000)).unwrap_err().reason,
+            "judge/role-kind-program"
+        );
+        let mut wrong = info.clone();
+        wrong.operating_area = n(other.area);
+        assert_eq!(
+            judge(&wrong, id(), Counter(1000)).unwrap_err().reason,
+            "judge/operating-area"
+        );
+        println!(
+            "{}: own approval; own rule, foreign role/program/area refusals",
+            a.area
+        );
+    }
+}
