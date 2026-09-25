@@ -11,7 +11,8 @@ parser.add_argument("destination", type=Path)
 args = parser.parse_args()
 root = Path(__file__).resolve().parents[1]
 source = root / "proto"
-files = [*sorted(source.rglob("*.proto")), source / "semantic_fields.json"]
+files = [*sorted(source.rglob("*.proto")), source / "semantic_fields.json", source / "README.md",
+         source / "strict-wire-v1" / "README.md", source / "strict-wire-v1" / "vectors.json"]
 manifest = {"schema": "rx.protocol-source-bundle.v1", "files": {}}
 for path in files:
     relative = path.relative_to(source)

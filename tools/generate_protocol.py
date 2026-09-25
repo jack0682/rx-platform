@@ -335,6 +335,8 @@ g.message("LookupConfiguration", "context:base.CallContext#1 request_id:Id#2 bin
 g.message("ConfigurationPayload", "reference:base.ArtifactRef#1 payload:bytes#2")
 g.service("HostConfiguration", [("Inspect", "InspectConfiguration", "ConfigurationPayload"),("Apply", "ApplyConfiguration", "ConfigurationPayload"),("Lookup", "LookupConfiguration", "ConfigurationPayload")])
 
+g.write()
+
 g = Schema("rx.host.qualification.v1", "rx/host/qualification/v1/qualification.proto", ("rx/contract/v1/contract.proto", "rx/cell/v1/cell.proto"))
 g.message("InspectQualification", "context:base.CallContext#1 binding_hash:Digest#2")
 g.message("AcceptQualification", "call:rx.cell.v1.CellCall#1 binding_hash:Digest#2 reference:base.ArtifactRef#3 payload:bytes#4")
