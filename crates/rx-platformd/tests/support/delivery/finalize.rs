@@ -108,7 +108,7 @@ fn qualification_policy(
         pool,
         "rx.delivery-limitations.v1",
         json!({
-            "schema":"rx.delivery-limitations.v1","environment":"SIMULATION","native_backend":"FILE_SIMULATION",
+            "schema":"rx.delivery-limitations.v1","environment":"SIMULATION","native_backend":if target.steps[0].intent.target.as_str()=="device/file-simulation" {"FILE_SIMULATION"} else {"EXPLICIT_SIMULATION_ADAPTER"},
             "physical_cell":"NOT_COMMISSIONED","real_device_endpoints":[],"claim":"software commissioning evidence only; no physical safety or field acceptance"
         }),
     )?;
@@ -121,7 +121,7 @@ fn qualification_policy(
         (
             q::Area::Equipment,
             "equipment",
-            "Actual FILE_SIMULATION Host identity, binding, durable journal and ready-source observation",
+            "Actual selected SIMULATION Host identity, binding, durable journal and ready-source observation",
         ),
         (
             q::Area::CellIntegration,
@@ -479,12 +479,18 @@ pub fn export() -> Result<()> {
         &output.join("qualification-materials/policy.json"),
         &q_policy,
     )?;
+    let backend = if let Ok(path) = std::env::var("RX_CELL_ADAPTER_DESCRIPTOR") {
+        let adapter: serde_json::Value = canonical::decode_json(&std::fs::read(path)?)?;
+        json!({"kind":"VALIDATED_DRIVER","profile":adapter["profile"],"driver_digest":adapter["source_digest"],"endpoint":adapter["endpoint"]})
+    } else {
+        json!({"kind":"FILE_SIMULATION"})
+    };
     write_json(
         &output.join("host-config/startup.template.json"),
         &json!({
             "schema":"rx.host-startup.v1","installation":seed.installation,"release_digest":seed.release_digest,"host":HOST,
             "bind":"0.0.0.0:7444","data_directory":"/data/host","runtime_directory":"/run/rx-host",
-            "bindings":{"path":"/config/host/bindings.json","sha256":"PATCH_FROM_PARENT_COMPOSED_BINDINGS"},"backend":{"kind":"FILE_SIMULATION"},
+            "bindings":{"path":"/config/host/bindings.json","sha256":"PATCH_FROM_PARENT_COMPOSED_BINDINGS"},"backend":backend,
             "tls":tls.h_server.files,"allowed_platform_certificates":BTreeMap::from([(tls.p_client.fingerprint,platform_peer.clone())]),
             "publisher":{"uri":"https://p:7443","server_name":"p","tls":tls.publisher.files,"store_generation":"PATCH_AFTER_FIRST_PLATFORM_START"},"publication_drain_ms":"5000"
         }),

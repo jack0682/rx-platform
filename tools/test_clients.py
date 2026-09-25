@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Installed C++/Python peers against actual P/H and public commissioning gates.
 
-FILE_SIMULATION only. No robot adapter, private DB seed, client-owned authority,
+Explicit SIMULATION backend only. No private DB seed, client-owned authority,
 new runtime entrypoint or claim of completed G5/ROBOTIS integration.
 """
 from pathlib import Path
@@ -64,7 +64,7 @@ class Peer:
 
 class Scenario:
     def __init__(self,docker,language,mode,client_image):
-        self.docker=docker;self.language=language;self.mode=mode;self.client_image=client_image;self.peer=None;self.c=None
+        self.docker=docker;self.language=language;self.mode=mode;self.client_image=client_image;self.peer=None;self.c=None;self.adapter=bool(os.environ.get("RX_CELL_ADAPTER_DESCRIPTOR"))
     def context(self,key=None,revision=None):
         value={'session_id':self.session,'call_id':uid()}
         if key:value['request_key']=key
@@ -78,10 +78,15 @@ class Scenario:
         return session['session_id']
     def start_services(self,c):
         self.c=c;c['client_image']=self.client_image;d=self.docker;s=c['s_image']['Id'];final=c['final']
+        if self.adapter:
+            c['observe_native_effects']=self.native_entries
+            c['native_scope']='DYNAMIXEL_PROTOCOL2_PING_SIMULATED_TRANSPORT_ONLY'
+            c['host_fixture_limitations']=['Fictional RX DYNAMIXEL model65500; protocol2 Ping; no physical qualification']
         hc=d.volume('h-config');hd=d.volume('h-data');hr=d.volume('h-runtime')
         d.put(s,hc,final/'host-config');d.prepare_permissions(s,[hc+':/config',hd+':/data',hr+':/work'])
         hm=[hc+':/config/host:ro',hd+':/data:rw',hr+':/run/rx-host:rw']
-        d.command(s,'/opt/rx/bin/rx-hostd',['init','/config/host/startup.json'],hm,'h-init')
+        if self.adapter:self.adapter_refusals(c,hm)
+        d.command(os.environ.get('RX_LEGACY_HOST_INITIALIZER_IMAGE',s),'/opt/rx/bin/rx-hostd',['init','/config/host/startup.json'],hm,'h-init')
         host=d.start(s,'h','s','/opt/rx/bin/rx-hostd',['run','/config/host/startup.json'],hm)
         proxy_volume=d.volume('proxy-control');scratch=d.volume('proxy-data');work=d.volume('proxy-work')
         d.prepare_permissions(self.client_image,[proxy_volume+':/config',scratch+':/data',work+':/work'])
@@ -95,13 +100,45 @@ class Scenario:
         self.hello={'peer_id':scope['principal'],'role':'ROLE_EXECUTOR','boot_id':uid(),'installation_id':scope['installation'],'store_generation':c['installation']['store_generation'],'release_digest':b64(scope['release']),'shared_clock_id':c['installation']['clock_id'],'supported_versions':[{'major':1,'schema_hash':self.base_hash}]}
         self.session=self.negotiate()
         return {'h':host,'e':self.peer.name,'h_data':hd,'e_data':scratch,'proxy':proxy,'proxy_control':proxy_volume}
+    def adapter_refusals(self,c,mounts):
+        d=self.docker;image=c['s_image']['Id'];private=c['materials'].temporary/'adapter-refusals';private.mkdir()
+        original=json.loads((c['final']/'host-config/startup.json').read_text());rows=[]
+        def refuse(label,value,expected,extra=()):
+            path=private/(label+'.json');path.write_text(json.dumps(value));path.chmod(0o644)
+            cmd=['docker','run','--rm','--read-only','--network','none','--cap-drop','ALL','--security-opt','no-new-privileges','--user','10001:10001']
+            for mount in [*mounts,str(path)+':/negative.json:ro',*extra]:cmd+=['-v',mount]
+            cmd+=['--entrypoint','/opt/rx/bin/rx-hostd',image,'inspect','/negative.json']
+            r=subprocess.run(cmd,capture_output=True,text=True)
+            rows.append({'label':label,'argv':cmd,'exit':r.returncode,'stdout':r.stdout,'stderr':r.stderr})
+            publish_new(d.evidence/(label+'.json'),rows[-1])
+            assert r.returncode!=0 and expected in r.stdout+r.stderr,rows[-1]
+        for label,key,value,expected in [('host-real-endpoint','endpoint','/dev/ttyUSB0','DXL_REAL_ENDPOINT_UNSUPPORTED'),('host-unknown-profile','profile','rx/other-driver','DXL_PROFILE_OR_SOURCE_UNSUPPORTED'),('host-wrong-source','driver_digest','11'*32,'DXL_PROFILE_OR_SOURCE_UNSUPPORTED')]:
+            config=json.loads(json.dumps(original));config['backend'][key]=value;refuse(label,config,expected)
+        bindings=json.loads((c['final']/'host-config/bindings.json').read_text());bindings[0]['allowed_intents'][0]['body']['program']['program']['sha256']='22'*32
+        raw=encoded(bindings);bad=private/'bindings.json';bad.write_bytes(raw);bad.chmod(0o644)
+        config=json.loads(json.dumps(original));config['bindings']={'path':'/negative/bindings.json','sha256':hashlib.sha256(raw).hexdigest()}
+        refuse('host-wrong-ping-artifact',config,'DXL_PING_CONTRACT_REQUIRED',[str(bad)+':/negative/bindings.json:ro'])
+        holder=d.holder(image,[]);binary=private/'helper';d.run('cp',holder+':/opt/rx/bin/rx-dynamixel-ping',str(binary));content=bytearray(binary.read_bytes());content[-1]^=1;binary.write_bytes(content);binary.chmod(0o755)
+        refuse('host-helper-content-tamper',original,'release/content-mismatch',[str(binary)+':/opt/rx/bin/rx-dynamixel-ping:ro'])
+        inventory=private/'inventory.json';d.run('cp',holder+':/opt/rx/manifests/runtime-files.json',str(inventory));value=json.loads(inventory.read_text());value['files']['bin/rx-dynamixel-ping']=hashlib.sha256(content).hexdigest();inventory.write_text(json.dumps(value));inventory.chmod(0o644)
+        refuse('host-forged-helper-inventory',original,'release/content-mismatch',[str(binary)+':/opt/rx/bin/rx-dynamixel-ping:ro',str(inventory)+':/opt/rx/manifests/runtime-files.json:ro'])
+        publish_new(d.evidence/'host-adapter-refusals.json',{'status':'HOST_ADAPTER_REFUSALS_PASS','rows':rows,'native_processes_started':0})
     def inspect_cell(self):
         return self.peer.call('rx.cell.v1.CellService/Inspect',{'context':self.context(),'cell_id':self.c['delivery']['cell']})
     def overview_run(self,run_id):
         overview=self.c['users']['operator'].get('/api/v1/overview')
         cell=next(v for v in overview['cells'] if v['cell']['value']['id']==self.c['delivery']['cell'])
         return next(v for v in cell['runs'] if v['value']['id']==run_id)
+    def native_entries(self):
+        script="import sqlite3,json; c=sqlite3.connect('file:/data/host/native-dynamixel/native.sqlite3?mode=ro',uri=True); print(json.dumps([json.loads(r[0])['value'] for r in c.execute(\"select document from entities where key like 'dynamixel-operation/%'\")]))"
+        return json.loads(self.docker.run('exec',self.c['h'],'/usr/bin/python3','-c',script))
+    def helper_calls(self):
+        script="from pathlib import Path; p=Path('/data/host/native-dynamixel/helper-invocations.jsonl'); print(p.read_text() if p.exists() else '',end='')"
+        raw=self.docker.run('exec',self.c['h'],'/usr/bin/python3','-c',script)
+        return [json.loads(line) for line in raw.splitlines() if line.startswith('{')]
     def effects(self):
+        if self.adapter:
+            return [v for v in self.native_entries() if v['capture'] is not None]
         raw=self.docker.run('exec',self.c['h'],'/usr/bin/python3','-c',"from pathlib import Path; p=Path('/data/host/device/effects.jsonl'); print(p.read_text() if p.exists() else '',end='')")
         if raw and not raw.endswith('}'):
             return []
@@ -148,8 +185,18 @@ class Scenario:
         forged_reply=self.peer.call(method,forged,ok=False);assert not forged_reply['ok'],forged_reply
         assert self.effects()==[]
         if self.mode=='unknown':
-            self.docker.run('exec',c['h'],'/bin/sh','-c',"touch /data/host/device/effects.jsonl && chmod 400 /data/host/device/effects.jsonl")
-            receipt=self.peer.call(method,request)
+            if self.adapter:
+                # Separate OS observer kills the helper during its fixed modeled latency.
+                # No Host/helper fault switch or operation is replayed.
+                script="import os,time,json,signal;from pathlib import Path;p=Path('/data/host/native-dynamixel/helper-invocations.jsonl');end=time.monotonic()+15\nwhile time.monotonic()<end:\n if p.exists():\n  rows=[json.loads(l) for l in p.read_text().splitlines() if l.startswith('{')]\n  if rows:\n   v=rows[-1];os.kill(v['pid'],signal.SIGKILL);print(json.dumps({'killed_helper':v}),flush=True);break\n time.sleep(.002)\nelse: raise RuntimeError('no helper observed')"
+                observer=subprocess.Popen(['docker','exec',c['h'],'/usr/bin/python3','-c',script],stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+                receipt=self.peer.call(method,request)
+                out,err=observer.communicate(timeout=20)
+                publish_new(self.docker.evidence/'native-loss-observer.json',{'exit':observer.returncode,'stdout':out,'stderr':err})
+                assert observer.returncode==0 and 'killed_helper' in out
+            else:
+                self.docker.run('exec',c['h'],'/bin/sh','-c',"touch /data/host/device/effects.jsonl && chmod 400 /data/host/device/effects.jsonl")
+                receipt=self.peer.call(method,request)
         else:
             self.proxy_mode('drop-return')
             pending=self.peer.send({'method':method,'request':request,'timeout':10})
@@ -170,6 +217,11 @@ class Scenario:
             assert len(self.effects())==1
         self.peer.action('reconnect');same=self.negotiate();assert same==self.session
         after=self.get_operation(operation);assert after['operation_id']==operation and after['outcome']==view['outcome']
+        other='cpp' if self.language=='python' else 'python'
+        cross_peer=Peer(self.docker,c,other,c['final']/'executor-config','sdk-same-instance')
+        cross_session=self.negotiate(peer=cross_peer);assert cross_session==self.session
+        cross_receipt=cross_peer.call(method,request);assert cross_receipt==receipt
+        cross_peer.close()
         self.peer.close()
         # A new client incarnation can query, but does not make a new work identity.
         self.peer=Peer(self.docker,c,self.language,c['final']/'executor-config','sdk-restarted')
@@ -178,20 +230,33 @@ class Scenario:
         self.peer.close()
         other='cpp' if self.language=='python' else 'python'
         self.peer=Peer(self.docker,c,other,c['final']/'executor-config','sdk-cross-language')
+        retired=self.peer.call('rx.contract.v1.SessionService/Open',self.hello,ok=False)
+        assert not retired['ok'] and retired['code']=='UNAUTHENTICATED',retired
         self.session=self.negotiate(boot=uid());cross=self.get_operation(operation)
         assert cross['operation_id']==operation
         if self.mode=='loss': assert cross['outcome']=='OUTCOME_SUCCEEDED'
         else: assert cross.get('execution_knowledge')=='KNOWLEDGE_UNKNOWN' or cross.get('outcome')=='OUTCOME_UNRESOLVED'
         self.peer.close()
-        publish_new(self.docker.evidence/'result.json',{'status':'CLIENT_RUNTIME_PASS','language':self.language,'mode':self.mode,'platform_image':c['p_image']['Id'],'solutions_image':c['s_image']['Id'],'client_image':self.client_image,'runtime_clock':c['installation']['clock_id'],'receipt':receipt,'view':view,'after_client_restart':restarted,'cross_language':other,'cross_language_view':cross,'same_request_reply_preserved':True,'wrong_identity_refusal':refused,'forged_parent_refusal':forged_reply,'native_effects':self.effects(),'robot_connected':False,'sdk_baseline_complete':False,'robotis_bundle_complete':False,'limitations':['FILE_SIMULATION, no ROBOTIS adapter; G5.2 required','Client process/transport exit is not operation cancellation','No clean whole-cell shutdown claim for deliberate unknown case']})
+        if self.adapter:
+            calls=self.helper_calls();entries=self.native_entries();assert len(calls)==1 and len(entries)==1
+            assert calls[0]['instance']==entries[0]['instance']
+            publish_new(self.docker.evidence/'dynamixel-native-observation.json',{'calls':calls,'entries':entries,'cross_language_same_request_receipt':cross_receipt,'same_host':c['h'],'simulated_transport':True,'physical_qualification':'NOT_PERFORMED'})
+        publish_new(self.docker.evidence/'result.json',{'status':'CLIENT_RUNTIME_PASS','language':self.language,'mode':self.mode,'platform_image':c['p_image']['Id'],'solutions_image':c['s_image']['Id'],'client_image':self.client_image,'runtime_clock':c['installation']['clock_id'],'receipt':receipt,'view':view,'after_client_restart':restarted,'cross_language':other,'cross_language_view':cross,'same_request_reply_preserved':True,'wrong_identity_refusal':refused,'forged_parent_refusal':forged_reply,'native_effects':self.effects(),'robot_connected':False,'simulated_adapter_connected':self.adapter,'physical_qualification':'NOT_PERFORMED','sdk_baseline_complete':False,'robotis_bundle_complete':False,'limitations':[('DYNAMIXEL read-only simulated Ping only' if self.adapter else 'FILE_SIMULATION, no ROBOTIS adapter; G5.2 required'),'Client process/transport exit is not operation cancellation','No clean whole-cell shutdown claim for deliberate unknown case']})
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--language',choices=['python','cpp'],required=True)
     parser.add_argument('--mode',choices=['loss','unknown'],required=True)
     parser.add_argument('--platform-image',required=True);parser.add_argument('--solutions-image',required=True);parser.add_argument('--client-image',required=True)
+    parser.add_argument('--legacy-host-initializer-image',help='Cross-version FILE_SIMULATION persistence probe; only init uses this selected old image')
+    parser.add_argument('--adapter-descriptor',type=Path,help='Offline selected S simulation adapter descriptor; not runtime authority')
     parser.add_argument('--release-evidence',type=Path,required=True);parser.add_argument('--evidence',type=Path,required=True)
-    a=parser.parse_args();e=a.evidence.absolute();e.mkdir(parents=True,exist_ok=False);d=Docker(e);scenario=Scenario(d,a.language,a.mode,d.image(a.client_image)['Id'])
+    a=parser.parse_args();
+    if a.legacy_host_initializer_image:
+        if a.adapter_descriptor:parser.error('legacy initializer probe covers existing FILE_SIMULATION only')
+        os.environ['RX_LEGACY_HOST_INITIALIZER_IMAGE']=a.legacy_host_initializer_image
+    if a.adapter_descriptor:os.environ['RX_CELL_ADAPTER_DESCRIPTOR']=str(a.adapter_descriptor.resolve())
+    e=a.evidence.absolute();e.mkdir(parents=True,exist_ok=False);d=Docker(e);scenario=Scenario(d,a.language,a.mode,d.image(a.client_image)['Id'])
     try:
         with tempfile.TemporaryDirectory(prefix='private-',dir=e) as directory:
             private=Path(directory);p=d.image(a.platform_image);s=d.image(a.solutions_image)
@@ -200,7 +265,7 @@ def main():
             materials=Materials(ROOT,private,e,d,s['Id']);materials.create_seed(s['Architecture']);package,compiled,compiler=materials.compile()
             identity=hashlib.sha256(Path(__file__).read_bytes()+(ROOT/'clients/tests/loss_proxy.py').read_bytes()).hexdigest()
             final=materials.finalize(package,compiled,compiler,port,bundle,identity)
-            exercise(d,materials,final,bundle,p,s,port,identity,a.release_evidence.resolve(),'independent',start_services=scenario.start_services,after_commissioning=scenario.after_commissioning)
+            exercise(d,materials,final,bundle,p,s,port,identity,a.release_evidence.resolve(),'independent',start_services=scenario.start_services,after_commissioning=scenario.after_commissioning,expected_backend="VALIDATED_DRIVER" if scenario.adapter else "FILE_SIMULATION")
     finally:
         if scenario.peer and scenario.peer.process.poll() is None:
             scenario.peer.process.stdin.close()
