@@ -53,3 +53,9 @@ must occur after inventory generation and add only `release.json` and
 exported runtime filesystem for the specific private key, without printing it.
 Pre-signed inert test fixtures require no secret in CI. They are development
 content, not qualified executables or a product signing authority.
+
+The reviewed development-key ceremony and recovery contract is
+[`DEVELOPMENT_KEY_CUSTODY.md`](DEVELOPMENT_KEY_CUSTODY.md). Its attack catalog is
+[`release_rotation_attacks.v1.json`](release_rotation_attacks.v1.json). The
+procedure must exist and be reviewed before a replacement key is generated;
+creating a key does not by itself establish custody.
