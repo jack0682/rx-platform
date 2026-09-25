@@ -1,0 +1,919 @@
+{
+  "schema": "rx.strict-wire-conformance.v1",
+  "profile": "strict-wire-v1",
+  "authorship": "Rule-authored fixed inputs and expectations; no encoder/decoder used to generate this corpus. Recipes only perform declared byte arithmetic.",
+  "cases": [
+    {
+      "name": "empty-ordinary-message",
+      "rule": "SW14",
+      "message": "rx.contract.v1.TimePoint",
+      "schema": "public",
+      "input": {
+        "hex": ""
+      },
+      "status": "OK"
+    },
+    {
+      "name": "ordinary-enum-omitted",
+      "rule": "SW11",
+      "message": "rx.contract.v1.PeerHello",
+      "schema": "public",
+      "input": {
+        "hex": ""
+      },
+      "status": "OK"
+    },
+    {
+      "name": "ordinary-explicit-zero",
+      "rule": "SW14",
+      "message": "rx.contract.v1.TimePoint",
+      "schema": "public",
+      "input": {
+        "hex": "1000"
+      },
+      "status": "OK"
+    },
+    {
+      "name": "optional-absent",
+      "rule": "SW14",
+      "message": "rx.contract.v1.CallContext",
+      "schema": "public",
+      "input": {
+        "hex": ""
+      },
+      "status": "OK"
+    },
+    {
+      "name": "optional-present-zero",
+      "rule": "SW14",
+      "message": "rx.contract.v1.CallContext",
+      "schema": "public",
+      "input": {
+        "hex": "2000"
+      },
+      "status": "OK"
+    },
+    {
+      "name": "oneof-present-false",
+      "rule": "SW08",
+      "message": "rx.contract.v1.TypedValue",
+      "schema": "public",
+      "input": {
+        "hex": "0800"
+      },
+      "status": "OK"
+    },
+    {
+      "name": "oneof-present-true",
+      "rule": "SW10",
+      "message": "rx.contract.v1.TypedValue",
+      "schema": "public",
+      "input": {
+        "hex": "0801"
+      },
+      "status": "OK"
+    },
+    {
+      "name": "oneof-zigzag-minus-one",
+      "rule": "SW10",
+      "message": "rx.contract.v1.TypedValue",
+      "schema": "public",
+      "input": {
+        "hex": "1001"
+      },
+      "status": "OK"
+    },
+    {
+      "name": "uint64-maximum",
+      "rule": "SW04",
+      "message": "rx.contract.v1.TimePoint",
+      "schema": "public",
+      "input": {
+        "hex": "10ffffffffffffffffff01"
+      },
+      "status": "OK"
+    },
+    {
+      "name": "uint32-maximum",
+      "rule": "SW10",
+      "message": "rx.contract.v1.Version",
+      "schema": "public",
+      "input": {
+        "hex": "08ffffffff0f"
+      },
+      "status": "OK"
+    },
+    {
+      "name": "nonminimal-value",
+      "rule": "SW04",
+      "message": "rx.contract.v1.TimePoint",
+      "schema": "public",
+      "input": {
+        "hex": "108000"
+      },
+      "status": "OK",
+      "roundtrip_status": "OK"
+    },
+    {
+      "name": "nonminimal-tag",
+      "rule": "SW04",
+      "message": "rx.contract.v1.TimePoint",
+      "schema": "public",
+      "input": {
+        "hex": "8a000161"
+      },
+      "status": "OK",
+      "roundtrip_status": "OK"
+    },
+    {
+      "name": "unordered-fields",
+      "rule": "SW05",
+      "message": "rx.contract.v1.TimePoint",
+      "schema": "public",
+      "input": {
+        "hex": "10010a0161"
+      },
+      "status": "OK",
+      "roundtrip_status": "OK"
+    },
+    {
+      "name": "unicode-string",
+      "rule": "SW13",
+      "message": "rx.contract.v1.TimePoint",
+      "schema": "public",
+      "input": {
+        "hex": "0a04f09f9880"
+      },
+      "status": "OK"
+    },
+    {
+      "name": "opaque-bytes",
+      "rule": "SW13",
+      "message": "rx.executor.v1.ReadPayload",
+      "schema": "public",
+      "input": {
+        "hex": "1202fffe"
+      },
+      "status": "OK"
+    },
+    {
+      "name": "known-enum",
+      "rule": "SW11",
+      "message": "rx.contract.v1.PeerHello",
+      "schema": "public",
+      "input": {
+        "hex": "1004"
+      },
+      "status": "OK"
+    },
+    {
+      "name": "nested-empty-ordinary-message",
+      "rule": "SW14",
+      "message": "rx.contract.v1.Body",
+      "schema": "public",
+      "input": {
+        "hex": "1a00"
+      },
+      "status": "OK"
+    },
+    {
+      "name": "nested-oneof-present",
+      "rule": "SW08",
+      "message": "rx.contract.v1.Body",
+      "schema": "public",
+      "input": {
+        "hex": "1a0412020801"
+      },
+      "status": "OK"
+    },
+    {
+      "name": "finite-negative-zero",
+      "rule": "SW12",
+      "message": "rx.contract.v1.TypedValue",
+      "schema": "public",
+      "input": {
+        "hex": "190000000000000080"
+      },
+      "status": "OK"
+    },
+    {
+      "name": "finite-double-one",
+      "rule": "SW12",
+      "message": "rx.contract.v1.TypedValue",
+      "schema": "public",
+      "input": {
+        "hex": "19000000000000f03f"
+      },
+      "status": "OK"
+    },
+    {
+      "name": "packed-reals",
+      "rule": "SW09",
+      "message": "rx.contract.v1.RealVector",
+      "schema": "public",
+      "input": {
+        "hex": "0a10000000000000f03f0000000000000040"
+      },
+      "status": "OK"
+    },
+    {
+      "name": "unpacked-reals",
+      "rule": "SW09",
+      "message": "rx.contract.v1.RealVector",
+      "schema": "public",
+      "input": {
+        "hex": "09000000000000f03f090000000000000040"
+      },
+      "status": "OK"
+    },
+    {
+      "name": "mixed-packed-unpacked",
+      "rule": "SW09",
+      "message": "rx.contract.v1.RealVector",
+      "schema": "public",
+      "input": {
+        "hex": "0a08000000000000f03f090000000000000040"
+      },
+      "status": "OK"
+    },
+    {
+      "name": "multiple-packed-segments",
+      "rule": "SW09",
+      "message": "rx.contract.v1.RealVector",
+      "schema": "public",
+      "input": {
+        "hex": "0a08000000000000f03f0a080000000000000040"
+      },
+      "status": "OK"
+    },
+    {
+      "name": "empty-packed-segment",
+      "rule": "SW09",
+      "message": "rx.contract.v1.RealVector",
+      "schema": "public",
+      "input": {
+        "hex": "0a00"
+      },
+      "status": "OK"
+    },
+    {
+      "name": "tag-zero",
+      "rule": "SW05",
+      "message": "rx.contract.v1.TimePoint",
+      "schema": "public",
+      "input": {
+        "hex": "00"
+      },
+      "status": "INVALID_ARGUMENT"
+    },
+    {
+      "name": "unknown-tag",
+      "rule": "SW05",
+      "message": "rx.contract.v1.TimePoint",
+      "schema": "public",
+      "input": {
+        "hex": "a00601"
+      },
+      "status": "INVALID_ARGUMENT"
+    },
+    {
+      "name": "field-number-overflow",
+      "rule": "SW05",
+      "message": "rx.contract.v1.TimePoint",
+      "schema": "public",
+      "input": {
+        "hex": "80808080800100"
+      },
+      "status": "INVALID_ARGUMENT"
+    },
+    {
+      "name": "truncated-key",
+      "rule": "SW04",
+      "message": "rx.contract.v1.TimePoint",
+      "schema": "public",
+      "input": {
+        "hex": "80"
+      },
+      "status": "INVALID_ARGUMENT"
+    },
+    {
+      "name": "truncated-varint",
+      "rule": "SW04",
+      "message": "rx.contract.v1.TimePoint",
+      "schema": "public",
+      "input": {
+        "hex": "1080"
+      },
+      "status": "INVALID_ARGUMENT"
+    },
+    {
+      "name": "overflow-tenth-byte",
+      "rule": "SW04",
+      "message": "rx.contract.v1.TimePoint",
+      "schema": "public",
+      "input": {
+        "hex": "10ffffffffffffffffff02"
+      },
+      "status": "INVALID_ARGUMENT"
+    },
+    {
+      "name": "unterminated-ten-byte-varint",
+      "rule": "SW04",
+      "message": "rx.contract.v1.TimePoint",
+      "schema": "public",
+      "input": {
+        "concat": [
+          {
+            "hex": "10"
+          },
+          {
+            "repeat": {
+              "hex": "80",
+              "count": 10
+            }
+          }
+        ]
+      },
+      "status": "INVALID_ARGUMENT"
+    },
+    {
+      "name": "truncated-length",
+      "rule": "SW04",
+      "message": "rx.contract.v1.TimePoint",
+      "schema": "public",
+      "input": {
+        "hex": "0a80"
+      },
+      "status": "INVALID_ARGUMENT"
+    },
+    {
+      "name": "length-beyond-message",
+      "rule": "SW04",
+      "message": "rx.contract.v1.TimePoint",
+      "schema": "public",
+      "input": {
+        "hex": "0a0261"
+      },
+      "status": "INVALID_ARGUMENT"
+    },
+    {
+      "name": "length-overflow",
+      "rule": "SW04",
+      "message": "rx.contract.v1.TimePoint",
+      "schema": "public",
+      "input": {
+        "hex": "0affffffffffffffffff01"
+      },
+      "status": "INVALID_ARGUMENT"
+    },
+    {
+      "name": "wrong-wire-type",
+      "rule": "SW05",
+      "message": "rx.contract.v1.TimePoint",
+      "schema": "public",
+      "input": {
+        "hex": "0801"
+      },
+      "status": "INVALID_ARGUMENT"
+    },
+    {
+      "name": "groups-not-supported",
+      "rule": "SW05",
+      "message": "rx.contract.v1.TimePoint",
+      "schema": "public",
+      "input": {
+        "hex": "0b0c"
+      },
+      "status": "INVALID_ARGUMENT"
+    },
+    {
+      "name": "duplicate-singular-equal",
+      "rule": "SW07",
+      "message": "rx.contract.v1.TimePoint",
+      "schema": "public",
+      "input": {
+        "hex": "0a01610a0161"
+      },
+      "status": "INVALID_ARGUMENT"
+    },
+    {
+      "name": "duplicate-singular-different",
+      "rule": "SW07",
+      "message": "rx.contract.v1.TimePoint",
+      "schema": "public",
+      "input": {
+        "hex": "0a01610a0162"
+      },
+      "status": "INVALID_ARGUMENT"
+    },
+    {
+      "name": "duplicate-optional",
+      "rule": "SW07",
+      "message": "rx.contract.v1.CallContext",
+      "schema": "public",
+      "input": {
+        "hex": "20002001"
+      },
+      "status": "INVALID_ARGUMENT"
+    },
+    {
+      "name": "missing-oneof",
+      "rule": "SW08",
+      "message": "rx.contract.v1.TypedValue",
+      "schema": "public",
+      "input": {
+        "hex": ""
+      },
+      "status": "INVALID_ARGUMENT"
+    },
+    {
+      "name": "two-oneof-arms",
+      "rule": "SW08",
+      "message": "rx.contract.v1.TypedValue",
+      "schema": "public",
+      "input": {
+        "hex": "08011000"
+      },
+      "status": "INVALID_ARGUMENT"
+    },
+    {
+      "name": "repeated-oneof-arm",
+      "rule": "SW08",
+      "message": "rx.contract.v1.TypedValue",
+      "schema": "public",
+      "input": {
+        "hex": "08000800"
+      },
+      "status": "INVALID_ARGUMENT"
+    },
+    {
+      "name": "nested-missing-oneof",
+      "rule": "SW08",
+      "message": "rx.contract.v1.Body",
+      "schema": "public",
+      "input": {
+        "hex": "1a021200"
+      },
+      "status": "INVALID_ARGUMENT"
+    },
+    {
+      "name": "bool-outside-range",
+      "rule": "SW10",
+      "message": "rx.contract.v1.TypedValue",
+      "schema": "public",
+      "input": {
+        "hex": "0802"
+      },
+      "status": "INVALID_ARGUMENT"
+    },
+    {
+      "name": "uint32-overflow",
+      "rule": "SW10",
+      "message": "rx.contract.v1.Version",
+      "schema": "public",
+      "input": {
+        "hex": "088080808010"
+      },
+      "status": "INVALID_ARGUMENT"
+    },
+    {
+      "name": "explicit-enum-zero",
+      "rule": "SW11",
+      "message": "rx.contract.v1.PeerHello",
+      "schema": "public",
+      "input": {
+        "hex": "1000"
+      },
+      "status": "INVALID_ARGUMENT"
+    },
+    {
+      "name": "unknown-enum",
+      "rule": "SW11",
+      "message": "rx.contract.v1.PeerHello",
+      "schema": "public",
+      "input": {
+        "hex": "107f"
+      },
+      "status": "INVALID_ARGUMENT"
+    },
+    {
+      "name": "negative-enum",
+      "rule": "SW11",
+      "message": "rx.contract.v1.PeerHello",
+      "schema": "public",
+      "input": {
+        "hex": "10ffffffffffffffffff01"
+      },
+      "status": "INVALID_ARGUMENT"
+    },
+    {
+      "name": "double-nan",
+      "rule": "SW12",
+      "message": "rx.contract.v1.TypedValue",
+      "schema": "public",
+      "input": {
+        "hex": "19000000000000f87f"
+      },
+      "status": "INVALID_ARGUMENT"
+    },
+    {
+      "name": "packed-double-nan",
+      "rule": "SW12",
+      "message": "rx.contract.v1.RealVector",
+      "schema": "public",
+      "input": {
+        "hex": "0a08000000000000f87f"
+      },
+      "status": "INVALID_ARGUMENT"
+    },
+    {
+      "name": "double-infinity",
+      "rule": "SW12",
+      "message": "rx.contract.v1.TypedValue",
+      "schema": "public",
+      "input": {
+        "hex": "19000000000000f07f"
+      },
+      "status": "INVALID_ARGUMENT"
+    },
+    {
+      "name": "packed-double-infinity",
+      "rule": "SW12",
+      "message": "rx.contract.v1.RealVector",
+      "schema": "public",
+      "input": {
+        "hex": "0a08000000000000f07f"
+      },
+      "status": "INVALID_ARGUMENT"
+    },
+    {
+      "name": "double-negative-infinity",
+      "rule": "SW12",
+      "message": "rx.contract.v1.TypedValue",
+      "schema": "public",
+      "input": {
+        "hex": "19000000000000f0ff"
+      },
+      "status": "INVALID_ARGUMENT"
+    },
+    {
+      "name": "packed-double-negative-infinity",
+      "rule": "SW12",
+      "message": "rx.contract.v1.RealVector",
+      "schema": "public",
+      "input": {
+        "hex": "0a08000000000000f0ff"
+      },
+      "status": "INVALID_ARGUMENT"
+    },
+    {
+      "name": "truncated-fixed64",
+      "rule": "SW04",
+      "message": "rx.contract.v1.TypedValue",
+      "schema": "public",
+      "input": {
+        "hex": "19000000"
+      },
+      "status": "INVALID_ARGUMENT"
+    },
+    {
+      "name": "truncated-packed-fixed64",
+      "rule": "SW04",
+      "message": "rx.contract.v1.RealVector",
+      "schema": "public",
+      "input": {
+        "hex": "0a0700000000000000"
+      },
+      "status": "INVALID_ARGUMENT"
+    },
+    {
+      "name": "utf8-overlong",
+      "rule": "SW13",
+      "message": "rx.contract.v1.TimePoint",
+      "schema": "public",
+      "input": {
+        "delimited": {
+          "tag": 1,
+          "body": {
+            "hex": "c080"
+          }
+        }
+      },
+      "status": "INVALID_ARGUMENT"
+    },
+    {
+      "name": "utf8-surrogate",
+      "rule": "SW13",
+      "message": "rx.contract.v1.TimePoint",
+      "schema": "public",
+      "input": {
+        "delimited": {
+          "tag": 1,
+          "body": {
+            "hex": "eda080"
+          }
+        }
+      },
+      "status": "INVALID_ARGUMENT"
+    },
+    {
+      "name": "utf8-above-unicode",
+      "rule": "SW13",
+      "message": "rx.contract.v1.TimePoint",
+      "schema": "public",
+      "input": {
+        "delimited": {
+          "tag": 1,
+          "body": {
+            "hex": "f4908080"
+          }
+        }
+      },
+      "status": "INVALID_ARGUMENT"
+    },
+    {
+      "name": "utf8-incomplete",
+      "rule": "SW13",
+      "message": "rx.contract.v1.TimePoint",
+      "schema": "public",
+      "input": {
+        "delimited": {
+          "tag": 1,
+          "body": {
+            "hex": "e282"
+          }
+        }
+      },
+      "status": "INVALID_ARGUMENT"
+    },
+    {
+      "name": "utf8-stray-continuation",
+      "rule": "SW13",
+      "message": "rx.contract.v1.TimePoint",
+      "schema": "public",
+      "input": {
+        "delimited": {
+          "tag": 1,
+          "body": {
+            "hex": "80"
+          }
+        }
+      },
+      "status": "INVALID_ARGUMENT"
+    },
+    {
+      "name": "size-1048576",
+      "rule": "SW01",
+      "message": "rx.executor.v1.ReadPayload",
+      "schema": "public",
+      "input": {
+        "delimited": {
+          "tag": 2,
+          "body": {
+            "repeat": {
+              "hex": "00",
+              "count": 1048572
+            }
+          }
+        }
+      },
+      "status": "OK"
+    },
+    {
+      "name": "size-1048577",
+      "rule": "SW01",
+      "message": "rx.executor.v1.ReadPayload",
+      "schema": "public",
+      "input": {
+        "delimited": {
+          "tag": 2,
+          "body": {
+            "repeat": {
+              "hex": "00",
+              "count": 1048573
+            }
+          }
+        }
+      },
+      "status": "RESOURCE_EXHAUSTED"
+    },
+    {
+      "name": "field-budget-65536",
+      "rule": "SW03",
+      "message": "rx.contract.v1.PeerHello",
+      "schema": "public",
+      "input": {
+        "repeat": {
+          "hex": "3200",
+          "count": 65536
+        }
+      },
+      "status": "OK"
+    },
+    {
+      "name": "field-budget-65537",
+      "rule": "SW03",
+      "message": "rx.contract.v1.PeerHello",
+      "schema": "public",
+      "input": {
+        "repeat": {
+          "hex": "3200",
+          "count": 65537
+        }
+      },
+      "status": "RESOURCE_EXHAUSTED"
+    },
+    {
+      "name": "packed-budget-65535",
+      "rule": "SW03",
+      "message": "rx.contract.v1.RealVector",
+      "schema": "public",
+      "input": {
+        "delimited": {
+          "tag": 1,
+          "body": {
+            "repeat": {
+              "hex": "0000000000000000",
+              "count": 65535
+            }
+          }
+        }
+      },
+      "status": "OK"
+    },
+    {
+      "name": "packed-budget-65536",
+      "rule": "SW03",
+      "message": "rx.contract.v1.RealVector",
+      "schema": "public",
+      "input": {
+        "delimited": {
+          "tag": 1,
+          "body": {
+            "repeat": {
+              "hex": "0000000000000000",
+              "count": 65536
+            }
+          }
+        }
+      },
+      "status": "RESOURCE_EXHAUSTED"
+    },
+    {
+      "name": "unpacked-limit-reencode-over-budget",
+      "rule": "SW03",
+      "message": "rx.contract.v1.RealVector",
+      "schema": "public",
+      "input": {
+        "repeat": {
+          "hex": "090000000000000000",
+          "count": 65536
+        }
+      },
+      "status": "OK",
+      "roundtrip_status": "RESOURCE_EXHAUSTED"
+    },
+    {
+      "name": "depth-63",
+      "rule": "SW02",
+      "message": "rx.strict_test.v1.Node",
+      "schema": "guard",
+      "input": {
+        "nest": {
+          "tag": 1,
+          "levels": 63,
+          "leaf": {
+            "hex": ""
+          }
+        }
+      },
+      "status": "OK"
+    },
+    {
+      "name": "depth-64",
+      "rule": "SW02",
+      "message": "rx.strict_test.v1.Node",
+      "schema": "guard",
+      "input": {
+        "nest": {
+          "tag": 1,
+          "levels": 64,
+          "leaf": {
+            "hex": ""
+          }
+        }
+      },
+      "status": "INVALID_ARGUMENT"
+    },
+    {
+      "name": "absent-map",
+      "rule": "SW06",
+      "message": "rx.strict_test.v1.MapProbe",
+      "schema": "guard",
+      "input": {
+        "hex": ""
+      },
+      "status": "OK"
+    },
+    {
+      "name": "encoded-map",
+      "rule": "SW06",
+      "message": "rx.strict_test.v1.MapProbe",
+      "schema": "guard",
+      "input": {
+        "hex": "0a00"
+      },
+      "status": "INVALID_ARGUMENT"
+    },
+    {
+      "name": "float32-one",
+      "rule": "SW12",
+      "message": "rx.strict_test.v1.Scalars",
+      "schema": "guard",
+      "input": {
+        "hex": "0d0000803f"
+      },
+      "status": "OK"
+    },
+    {
+      "name": "float32-infinity",
+      "rule": "SW12",
+      "message": "rx.strict_test.v1.Scalars",
+      "schema": "guard",
+      "input": {
+        "hex": "0d0000807f"
+      },
+      "status": "INVALID_ARGUMENT"
+    },
+    {
+      "name": "truncated-fixed32",
+      "rule": "SW04",
+      "message": "rx.strict_test.v1.Scalars",
+      "schema": "guard",
+      "input": {
+        "hex": "150000"
+      },
+      "status": "INVALID_ARGUMENT"
+    },
+    {
+      "name": "fixed32-and-fixed64",
+      "rule": "SW09",
+      "message": "rx.strict_test.v1.Scalars",
+      "schema": "guard",
+      "input": {
+        "hex": "1501000000190100000000000000"
+      },
+      "status": "OK"
+    },
+    {
+      "name": "sint32-maximum-raw",
+      "rule": "SW10",
+      "message": "rx.strict_test.v1.Scalars",
+      "schema": "guard",
+      "input": {
+        "hex": "20ffffffff0f"
+      },
+      "status": "OK"
+    },
+    {
+      "name": "sint32-overflow",
+      "rule": "SW10",
+      "message": "rx.strict_test.v1.Scalars",
+      "schema": "guard",
+      "input": {
+        "hex": "208080808010"
+      },
+      "status": "INVALID_ARGUMENT"
+    },
+    {
+      "name": "packed-booleans",
+      "rule": "SW09",
+      "message": "rx.strict_test.v1.Scalars",
+      "schema": "guard",
+      "input": {
+        "hex": "32020001"
+      },
+      "status": "OK"
+    },
+    {
+      "name": "packed-invalid-boolean",
+      "rule": "SW10",
+      "message": "rx.strict_test.v1.Scalars",
+      "schema": "guard",
+      "input": {
+        "hex": "320102"
+      },
+      "status": "INVALID_ARGUMENT"
+    },
+    {
+      "name": "repeated-boolean-unpacked",
+      "rule": "SW09",
+      "message": "rx.strict_test.v1.Scalars",
+      "schema": "guard",
+      "input": {
+        "hex": "30003001"
+      },
+      "status": "OK"
+    }
+  ]
+}

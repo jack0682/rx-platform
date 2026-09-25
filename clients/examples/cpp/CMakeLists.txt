@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.22)
+project(rx_external_client LANGUAGES CXX)
+find_package(rxclcpp CONFIG REQUIRED)
+find_package(nlohmann_json CONFIG REQUIRED)
+add_executable(rxclcpp-peer main.cpp)
+target_link_libraries(rxclcpp-peer PRIVATE rxclcpp::rxclcpp nlohmann_json::nlohmann_json)
+target_compile_options(rxclcpp-peer PRIVATE -Wall -Wextra -Werror)

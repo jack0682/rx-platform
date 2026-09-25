@@ -1,0 +1,13 @@
+syntax = "proto3";
+package rx.strict_test.v1;
+// TCK descriptor only; no production RPC or added application contract.
+message Node { Node child = 1; }
+message MapProbe { map<string, string> entries = 1; }
+message Scalars {
+  float real32 = 1;
+  fixed32 fixed32_value = 2;
+  fixed64 fixed64_value = 3;
+  sint32 zigzag32 = 4;
+  bool boolean = 5;
+  repeated bool booleans = 6;
+}

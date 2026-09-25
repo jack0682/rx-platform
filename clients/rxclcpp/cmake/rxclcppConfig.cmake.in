@@ -1,0 +1,7 @@
+@PACKAGE_INIT@
+include(CMakeFindDependencyMacro)
+# Protobuf C++ offers no cross-version ABI compatibility. Use the build's version.
+find_dependency(Protobuf @Protobuf_VERSION@ EXACT)
+find_dependency(gRPC CONFIG)
+include("${CMAKE_CURRENT_LIST_DIR}/rxclcppTargets.cmake")
+check_required_components(rxclcpp)
