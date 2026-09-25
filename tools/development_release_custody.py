@@ -46,6 +46,14 @@ def decrypt_envelope(path):
     return run(["gpg", "--batch", "--quiet", "--decrypt", str(path)])
 
 
+def validate_envelope(path):
+    metadata = path.lstat()
+    if path.is_symlink() or not stat.S_ISREG(metadata.st_mode):
+        raise ValueError("custody envelope must be a real regular file")
+    if metadata.st_mode & 0o077:
+        raise ValueError("custody envelope must be owner-only")
+
+
 def secret_fingerprints():
     output = run(["gpg", "--batch", "--with-colons", "--list-secret-keys"])
     fingerprints = set()
@@ -113,6 +121,8 @@ def load_record(path):
 
 def verify(primary, backup, record):
     value = load_record(record)
+    validate_envelope(primary)
+    validate_envelope(backup)
     if primary.parent.stat().st_dev == backup.parent.stat().st_dev:
         raise ValueError("custody copies must use distinct filesystem devices")
     private_primary = decrypt_envelope(primary)
