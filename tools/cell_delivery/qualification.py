@@ -29,7 +29,7 @@ def references(value:object) -> dict[str,dict]:
     return result
 
 
-def build_report(job:dict, validator:str, materials:Path, evidence_by_area:dict, output:Path)->dict:
+def build_report(job:dict, validator:str, materials:Path, evidence_by_area:dict, output:Path, *, scope:str="FILE_SIMULATION_DELIVERY_ONLY")->dict:
     if set(evidence_by_area)!=AREAS:raise ValueError('all six independently measured areas required')
     if len(job['request']['cells'])!=1:raise ValueError('this acceptance harness covers one isolated simulation cell')
     target=job['request']['cells'][0];profile=target['profile']
@@ -43,11 +43,11 @@ def build_report(job:dict, validator:str, materials:Path, evidence_by_area:dict,
         if not assertions or any(value is not True for value in assertions.values()):
             raise ValueError(f"{criterion['area']} lacks actual passing assertions")
         body={'schema':criterion['evidence_schema'],'cell':profile['cell'],'criterion':criterion['id'],
-              'scope':'FILE_SIMULATION_DELIVERY_ONLY','assertions':assertions,
+              'scope':scope,'assertions':assertions,
               'observations':measured['observations'],'limitations':measured['limitations']}
         ref,raw=reference(body);generated[ref['sha256']]=raw
         checks.append({'cell':profile['cell'],'criterion':criterion['id'],'verdict':'PASS','evidence':[ref],
-                       'note':f"Measured {criterion['area']} assertions for isolated software/file-device delivery only; no field qualification."})
+                       'note':f"Measured {criterion['area']} assertions for isolated software simulation delivery only; no field qualification."})
     report={'schema':'rx.requalification-report.v1','request':job['request'],'validator':validator,'checks':checks}
     for digest,ref in references(report).items():
         raw=generated.get(digest)

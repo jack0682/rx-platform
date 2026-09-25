@@ -1,4 +1,4 @@
-"""Shipped-image installation and HTTP commissioning acceptance; FILE_SIMULATION only."""
+"""Shipped-image installation and HTTP commissioning acceptance; explicit SIMULATION backend only."""
 from __future__ import annotations
 import hashlib
 import json
@@ -19,7 +19,7 @@ def check_role_files(final:Path, browser:dict)->None:
         if list(root.rglob('signing-fixtures.json')):raise ValueError('signing seed leaked into runtime configuration')
 
 
-def patch_s(final:Path, installation:dict, engine_sha:str)->None:
+def patch_s(final:Path, installation:dict, engine_sha:str, expected_backend:str="FILE_SIMULATION")->None:
     data=json.loads((final/'host-config/binding-input.json').read_text())
     initial=data['initial_cell'];target=data['target_cell']
     assert initial['environment']==target['environment']=='SIMULATION'
@@ -32,7 +32,7 @@ def patch_s(final:Path, installation:dict, engine_sha:str)->None:
              'environment':'SIMULATION','purposes':['PRODUCTION']}
     publish_new(final/'host-config/bindings.json',[binding])
     host=json.loads((final/'host-config/startup.template.json').read_text())
-    assert host['backend']['kind']=='FILE_SIMULATION'
+    assert host['backend']['kind']==expected_backend
     host['publisher']['store_generation']=installation['store_generation']
     host['bindings']['sha256']=hashlib.sha256((final/'host-config/bindings.json').read_bytes()).hexdigest()
     publish_new(final/'host-config/startup.json',host)
@@ -42,7 +42,7 @@ def patch_s(final:Path, installation:dict, engine_sha:str)->None:
     publish_new(final/'executor-config/cell.json',executor)
 
 
-def exercise(docker,materials,final:Path,bundle:Path,p_image:dict,s_image:dict,port:int,validator:str,release_evidence:Path,composition:str,*,start_services=None,after_commissioning=None)->None:
+def exercise(docker,materials,final:Path,bundle:Path,p_image:dict,s_image:dict,port:int,validator:str,release_evidence:Path,composition:str,*,start_services=None,after_commissioning=None,expected_backend="FILE_SIMULATION")->None:
     browser=json.loads((final/'browser-fixture.json').read_text())
     delivery=json.loads((final/'delivery.json').read_text())
     target=json.loads((final/'reference/target-cell.json').read_text())
@@ -78,7 +78,7 @@ def exercise(docker,materials,final:Path,bundle:Path,p_image:dict,s_image:dict,p
     engine=materials.temporary/'rx-bt-engine'
     source=docker.holder(s_image['Id'],[])
     docker.run('cp',source+':/opt/rx/bin/rx-bt-engine',str(engine))
-    patch_s(final,installation,hashlib.sha256(engine.read_bytes()).hexdigest())
+    patch_s(final,installation,hashlib.sha256(engine.read_bytes()).hexdigest(),expected_backend)
     context={'docker':docker,'materials':materials,'final':final,'browser':browser,'delivery':delivery,
              'target':target,'installation':installation,'p':p,'p_image':p_image,'s_image':s_image,
              'imports':imports,'validator':validator,'release_evidence':release_evidence,'composition':composition,
