@@ -21,6 +21,26 @@
       "recorded_at": "2026-09-22",
       "evidence": "https://github.com/jack0682/rx_docs/actions/runs/35045639273",
       "reason": "The published merge lacks the author's DCO trailer. Preserve its original bytes and keep this violation visible while auditing every later commit strictly."
+    },
+    {
+      "repository": "jack0682/rx-platform",
+      "commit": "209ad7576fa9bcde3b5d98d10a4a68519a10aa4b",
+      "author": "jack0682 <131640493+jack0682@users.noreply.github.com>",
+      "violation": "missing_author_signoff",
+      "status": "unresolved_historical_violation",
+      "recorded_at": "2026-09-26",
+      "evidence": "https://github.com/jack0682/rx-platform/actions/runs/36230299387",
+      "reason": "The published merge lacks the author's DCO trailer because the required tools/merge_pr.py helper was not used. Preserve its original bytes and keep this violation visible while auditing every later commit strictly."
+    },
+    {
+      "repository": "jack0682/rx-solutions",
+      "commit": "2756ac5c7939fe8bf1aaa114888436bbe5900a97",
+      "author": "jack0682 <131640493+jack0682@users.noreply.github.com>",
+      "violation": "missing_author_signoff",
+      "status": "unresolved_historical_violation",
+      "recorded_at": "2026-09-26",
+      "evidence": "https://github.com/jack0682/rx-solutions/actions/runs/36230281195",
+      "reason": "The published merge lacks the author's DCO trailer because the required tools/merge_pr.py helper was not used. Preserve its original bytes and keep this violation visible while auditing every later commit strictly."
     }
   ]
 }

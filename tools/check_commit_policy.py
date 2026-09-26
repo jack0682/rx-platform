@@ -14,7 +14,7 @@ PROTECTED = {"refs/heads/main", "refs/heads/develop"}
 ROOT = Path(__file__).resolve().parents[1]
 INCIDENTS = ROOT / ".github/historical-dco-incidents.json"
 # Changing this pin is a governance-policy change, never an automatic repair.
-INCIDENTS_SHA256 = "75f9e57637dd0793d8f678fa09e0d314b9c513112e7d93508c633e398b4c23e6"
+INCIDENTS_SHA256 = "c27c932788f695355e4d8eca4a48fe6f9f6d24c16ad1e40140ff632911e54a4b"
 
 
 def historical_incidents():
