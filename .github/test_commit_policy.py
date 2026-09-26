@@ -190,7 +190,7 @@ class HookTests(unittest.TestCase):
 class HistoricalIncidentTests(unittest.TestCase):
     def test_only_exact_repository_commit_author_tuple_is_admitted(self):
         incidents = policy.historical_incidents()
-        self.assertEqual(len(incidents), 2)
+        self.assertEqual(len(incidents), 4)
         for incident in incidents:
             sha, author, repository = (incident[k] for k in ("commit", "author", "repository"))
             record = {"sha": sha, "commit": {"verification": {
@@ -203,8 +203,12 @@ class HistoricalIncidentTests(unittest.TestCase):
                 remote.assert_called_once()
                 with self.assertRaisesRegex(ValueError, "missing author Signed-off-by"):
                     policy.check_commit("a"*40, repository, incidents=incidents, policy_repository=repository)
+                wrong_repository = next(
+                    item["repository"] for item in incidents
+                    if item["repository"] != repository
+                )
                 with self.assertRaisesRegex(ValueError, "missing author Signed-off-by"):
-                    policy.check_commit(sha, repository, incidents=incidents, policy_repository="jack0682/rx-platform")
+                    policy.check_commit(sha, repository, incidents=incidents, policy_repository=wrong_repository)
                 record["commit"]["verification"]["verified"] = False
                 remote.return_value = json.dumps(record)
                 with self.assertRaisesRegex(ValueError, "signature verification failed"):
