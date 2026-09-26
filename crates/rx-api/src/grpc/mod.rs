@@ -327,6 +327,9 @@ fn failure(error: WriterError<StoreError>) -> Status {
         WriterError::Rejected(StoreError::RevisionConflict(_) | StoreError::OutboxConflict) => {
             Status::aborted("REVISION_OR_DELIVERY_CONFLICT")
         }
+        WriterError::Rejected(StoreError::Ownership(_)) => {
+            Status::unavailable("no durable response; reconcile before retrying a mutation")
+        }
         _ => Status::unavailable("no durable response; reconcile before retrying a mutation"),
     }
 }

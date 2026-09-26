@@ -41,3 +41,23 @@ SIMULATION permit TTL is explicitly 1 second in the public envelope/profile, sep
 Host/Executor networks are isolated. Only P terminal HTTPS is exposed on loopback and connected to a separate terminal bridge. Python terminal connections validate the generated CA and leaf certificate. The test browser skips registering the temporary CA with OS trust but uses a separate terminal client certificate.
 
 Cleanup is limited to simulation containers, networks, and volumes owned by this run. Shutdown performed for cleanup after failure is not counted as product normal-shutdown evidence. Actual device support, site commissioning, unattended operating reliability, and all restoration scenarios are outside this PASS scope. Supervisor-mode PASS is likewise limited to this file-device cell and the startup/shutdown paths inspected.
+
+## Installed client and selected-adapter scenes
+
+`tools/test_clients.py` reuses the public preparation/commissioning path but uses the installed
+C++ or Python client as the executor peer. Its default remains FILE_SIMULATION. An explicit
+`--adapter-descriptor` can supply the exact S-owned simulated adapter artifact bodies before
+signing and compilation; the Host's fixed profile validation and runtime admission still
+apply. G5.2 uses this for the single DYNAMIXEL protocol2 Ping simulation helper, without adding
+a driver to either client library or a new runtime authorization API.
+
+These scenes test lost receipts, same-request cross-language replay on the same live Host,
+retired-boot refusal and fresh-boot queries. In adapter UNKNOWN scenes an independent OS
+observer kills the actual helper during its fixed modeled latency; no product fault flag
+or synthetic success is used. The result records simulated-adapter and physical/noncompletion
+flags separately. This is not the full quantity-2 material workflow described above.
+
+`--legacy-host-initializer-image` separately tests that a prior FILE_SIMULATION Host's new
+installation can be opened by the selected current Host image. It cannot be combined with
+an adapter descriptor. The image choice and resulting public request/response evidence must
+be retained; this is a compatibility probe, not a database migration or authority bypass.

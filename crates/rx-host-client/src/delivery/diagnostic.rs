@@ -47,6 +47,11 @@ fn fields(error: &Error) -> (&'static str, String, String) {
                 reason.to_string(),
                 "application policy rejected command".into(),
             ),
+            StoreError::Ownership(error) => (
+                "STATE_STORE",
+                format!("OWNERSHIP_{:?}", error.kind),
+                error.detail.clone(),
+            ),
             StoreError::Unavailable(message) => {
                 ("STATE_STORE", "UNAVAILABLE".into(), message.clone())
             }

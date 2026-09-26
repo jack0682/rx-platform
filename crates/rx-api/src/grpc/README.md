@@ -1,6 +1,6 @@
 # Platform peer communication boundary
 
-`PlatformIngress` connects an actual TLS listener to the existing dedicated writer. It is not automatically activated in the local HTTP executable. The earlier `EvidenceIngress` name is a compatibility alias. This is currently a composition API; resident process configuration for the two product images remains future work.
+`PlatformIngress` connects an actual mTLS listener to the existing dedicated writer. The resident `rx-platformd` serves it from the configured gRPC listener alongside terminal HTTPS. The separate local development HTTP executable does not automatically activate it. The earlier `EvidenceIngress` name is a compatibility alias. G5.1 language clients use this existing resident surface; base Operation.Submit/Lookup remain deliberately unimplemented and cell admission is mandatory.
 
 ## Exposed surface
 

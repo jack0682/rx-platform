@@ -1,0 +1,28 @@
+{
+  "ceremony_version": "1",
+  "development_signing_custody": "ESTABLISHED_BY_TWO_COPY_RECOVERY_REHEARSAL",
+  "dual_root_window": false,
+  "envelope_sha256": {
+    "backup": "0675f60dcc4c9cd2974a3988bdd43e02adb4e1214ebc8d3461dd155782ba8812",
+    "primary": "c5d38ca108801ae694ba0200867fdbfc32e00cc48b905d9a2bb745355617dbee"
+  },
+  "generated_at": "2026-09-25T14:57:39.150107+00:00",
+  "key_id": "rx/development-release-2026-09-r2",
+  "offline_revocation_freshness": "NOT_ESTABLISHED",
+  "plaintext_key_persisted": false,
+  "previous_key_id": "rx/development-release-2026-09",
+  "previous_public_key_sha256": "f7f49fe2b305a062c198ffe33c5ed42c9465710430d8f3bebc355bb304a3e81a",
+  "previous_root_status": "RETIRED_NOT_ACCEPTED",
+  "product_signing_custody": "NOT_ESTABLISHED",
+  "public_key": "ab03a3f496364992cb1fb97d192d8749465e07df57ecc9b32887f017fd44cf18",
+  "recovery_fingerprints": [
+    "7527E36F9EB3667236B5B0919C9FE74DE196CD5A",
+    "ADFCB49D34DB9B5EEE10DFFED2278D81EB1F721E"
+  ],
+  "schema": "rx.development-release-custody.v1",
+  "storage": {
+    "backup": "REMOVABLE_MEDIA_ENCRYPTED",
+    "primary": "OWNER_LOCAL_ENCRYPTED",
+    "separate_filesystems": true
+  }
+}

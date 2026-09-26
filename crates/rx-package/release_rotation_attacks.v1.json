@@ -1,0 +1,31 @@
+{
+  "schema": "rx.release-rotation-attacks.v1",
+  "status": "PRECOMMITTED_BEFORE_KEY_GENERATION",
+  "rule": "An attack counts only when executed; every defense requires a one-at-a-time removal control",
+  "attacks": [
+    {"id":"A1-runtime-environment","target":"compiled root","attack":"Set release key id/public key environment inputs","expected":"release/unknown-key or release/invalid-signature","control":"Private mutant reads the injected root and accepts the matching attacker signature"},
+    {"id":"A1-runtime-file","target":"compiled root","attack":"Mount a runtime root/key file beside metadata","expected":"release/unknown-key or release/invalid-signature","control":"Private mutant reads the mounted root and accepts the matching attacker signature"},
+    {"id":"A1-build-env-cfg-feature","target":"compiled root","attack":"Build with attacker environment, cfg and all declared features","expected":"root bytes remain source literal","control":"Private source mutation replaces the literal and changes acceptance"},
+    {"id":"A2-old-root-binary-new-release","target":"root rotation","attack":"Verify the new release with the old-root binary","expected":"release/unknown-key","control":"Old release remains accepted by the old-root binary"},
+    {"id":"A2-new-root-binary-old-release","target":"root rotation","attack":"Verify the old release with the new-root binary","expected":"release/unknown-key","control":"New release is accepted by the new-root binary"},
+    {"id":"A3-dual-root-window","target":"root rotation","attack":"Present old and new signatures to the same new binary","expected":"only new signature accepted","control":"Private dual-root mutant accepts both"},
+    {"id":"B1-old-key","target":"signer selection","attack":"Old-key signed release under the new root","expected":"release/unknown-key","control":"Old-root binary accepts the archived old release"},
+    {"id":"B2-foreign-key-normal-id","target":"signature verification","attack":"Foreign private key signs using the normal key id","expected":"release/invalid-signature","control":"Private signature-verification bypass accepts it"},
+    {"id":"B3-normal-key-wrong-id","target":"key-id gate","attack":"Current key signs a message bound to a wrong key id","expected":"release/unknown-key","control":"Private key-id-check removal accepts it"},
+    {"id":"B4-signature-malleability","target":"strict signature parsing","attack":"Truncate, bit-flip, uppercase/re-encode and whitespace-reformat signature envelopes","expected":"malformed or invalid-signature; harmless JSON whitespace preserves the same authenticated value","control":"Private signature-verification bypass accepts a valid-length corrupt signature"},
+    {"id":"B5-domain-confusion","target":"domain separation","attack":"Use a release-manifest signature made under the revocation domain","expected":"release/invalid-signature","control":"Private release-domain mutation accepts it"},
+    {"id":"C1-version-rollback","target":"durable floor","attack":"Admit a current release then replay a lower current-key version","expected":"release/rollback","control":"Private floor comparison removal accepts it"},
+    {"id":"C2-version-zero-boundary","target":"version validation","attack":"Verify signed version zero and maximum-u64 metadata","expected":"zero malformed; maximum verifies but is not admitted in the persistent sequence","control":"Private positive-version check removal accepts zero"},
+    {"id":"C3-same-version-equivocation","target":"durable floor","attack":"Admit different content at an already accepted version","expected":"release/rollback","control":"Private same-version digest comparison removal accepts it"},
+    {"id":"D1-revoked-release","target":"revocation application","attack":"Verify/admit a release identity listed as revoked","expected":"release/revoked","control":"Private revoked-membership check removal accepts it"},
+    {"id":"D2-old-key-revocations","target":"revocation signer","attack":"Submit an old-key signed revocation list","expected":"release/unknown-key","control":"Old-root binary authenticates the archived list"},
+    {"id":"D3-revocation-rollback-shrink","target":"durable revocation floor","attack":"After a newer superset, submit an older or shrinking list","expected":"release/rollback","control":"Private version/subset check removal accepts it"},
+    {"id":"D4-offline-freshness","target":"freshness","attack":"Replay the latest-known signed list indefinitely into fresh state","expected":"documented NOT_ESTABLISHED, not a false refusal claim","control":"No trustworthy control exists without time or online monotonic authority"},
+    {"id":"E1-adjacent-index-forgery","target":"DHI source content pins","attack":"Forge only the adjacent source index while archive bytes differ","expected":"DHI_SOURCE_CONTENT_PIN_MISMATCH","control":"Private legacy index-trusting mutation accepts it"},
+    {"id":"E2-sdk-divergence","target":"exported SDK","attack":"Change one exported solutions SDK byte","expected":"named SDK mismatch","control":"Unchanged generated SDK is byte-identical"},
+    {"id":"E3-post-sign-content-swap","target":"inventory authentication","attack":"Replace inventory bytes or an indexed file after signing","expected":"release/content-mismatch","control":"Private inventory-digest or file-digest check removal accepts the matching substitution"},
+    {"id":"F1-git-leak","target":"private-key publication","attack":"Scan current publishable files and every committed blob for private bytes","expected":"PRIVATE_KEY_ABSENT","control":"Private fixture repository containing the key is detected"},
+    {"id":"F2-image-leak","target":"runtime image","attack":"Scan the flattened runtime filesystem for private bytes","expected":"PRIVATE_KEY_ABSENT","control":"Private fixture image containing the key is detected"},
+    {"id":"F3-single-copy-loss","target":"custody recovery","attack":"Use each encrypted envelope independently and compare signing/public-key results","expected":"either copy recovers the same key and signature","control":"Wrong recovery identity or changed envelope fails"}
+  ]
+}

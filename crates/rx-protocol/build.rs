@@ -51,6 +51,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             ],
             std::slice::from_ref(&root),
         )?;
+    // Separate TCK-only descriptors: no generated public types or RPC services.
+    let mut probes = tonic_prost_build::Config::new();
+    probes.protoc_executable(protoc_bin_vendored::protoc_bin_path()?);
+    probes.file_descriptor_set_path(output.join("strict_probe_descriptor.bin"));
+    probes.compile_protos(
+        &[root.join("strict-wire-v1/probe.proto")],
+        std::slice::from_ref(&root),
+    )?;
     println!("cargo:rerun-if-changed={}", root.display());
     Ok(())
 }

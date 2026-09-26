@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools==84.0.0", "wheel==0.48.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rxclpy"
+version = "0.1.0"
+description = "RX generated-contract client; runtime-owned admission and outcomes"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+dependencies = ["protobuf==7.36.2", "grpcio==1.84.0"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+rxclpy = ["_bundle/**/*", "_bundle/*", "_build.json", "py.typed"]

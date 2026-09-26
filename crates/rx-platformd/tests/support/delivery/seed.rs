@@ -8,6 +8,27 @@ use std::collections::BTreeSet;
 
 pub fn export() -> Result<()> {
     let output = new_output()?;
+    // Offline fixture input from the selected S adapter; never runtime authority.
+    let adapter = std::env::var("RX_CELL_ADAPTER_DESCRIPTOR")
+        .ok()
+        .map(|p| -> Result<serde_json::Value> { Ok(canonical::decode_json(&std::fs::read(p)?)?) })
+        .transpose()?;
+    let backend = if adapter.is_some() {
+        "VALIDATED_DRIVER"
+    } else {
+        "FILE_SIMULATION"
+    };
+    let completion = adapter.as_ref().map_or("rx.sim.completed.v1", |v| {
+        v["intent_contract"]["completion"]
+            .as_str()
+            .unwrap_or("invalid")
+    });
+    let target = adapter.as_ref().map_or("device/file-simulation", |v| {
+        v["intent_contract"]["target"].as_str().unwrap_or("invalid")
+    });
+    let cancel = adapter.as_ref().map_or("rx.sim.stop.v1", |v| {
+        v["intent_contract"]["cancel"].as_str().unwrap_or("invalid")
+    });
     let installation = id();
     let architecture = match std::env::var("RX_CELL_DELIVERY_ARCH")
         .as_deref()
@@ -53,24 +74,33 @@ pub fn export() -> Result<()> {
     )?;
     let envelope = material(
         "rx.operating-envelope.v1",
-        json!({"schema":"rx.operating-envelope.v1","cell":CELL,"environment":"SIMULATION","purpose":"PRODUCTION","maximum_part_attempts":10,"native_backend":"FILE_SIMULATION","physical_motion_authorized":false,"dispatch_permit_validity_ns":"1000000000","read_snapshot_validity_ns":"100000000","timing_basis":"FILE_SIMULATION: Prepare and Authorize cross separate 100ms dispatcher ticks; native/condition/grant expiry checks remain mandatory"}),
+        json!({"schema":"rx.operating-envelope.v1","cell":CELL,"environment":"SIMULATION","purpose":"PRODUCTION","maximum_part_attempts":10,"native_backend":backend,"physical_motion_authorized":false,"dispatch_permit_validity_ns":"1000000000","read_snapshot_validity_ns":"100000000","timing_basis":"SIMULATION: Prepare and Authorize cross separate 100ms dispatcher ticks; native/condition/grant expiry checks remain mandatory"}),
     )?;
     let site = material(
         "rx.site-config.v1",
         json!({"schema":"rx.site-config.v1","installation":installation,"cell":CELL,"environment":"SIMULATION","native_endpoints":[],"source":"ready"}),
     )?;
-    let profile = material(
-        "rx.device-profile.v1",
-        json!({"schema":"rx.device-profile.v1","environment":"SIMULATION","backend":"FILE_SIMULATION","ready_source":"ready","condition_id":"sim/ready","native_result":{"schema":"rx.sim.completed.v1","success_code":"0"},"physical_device":null,"dispatch_window_scope":"FILE_SIMULATION_ONLY","dispatch_permit_validity_ns":"1000000000"}),
-    )?;
-    let program = material(
-        "rx.sim.program.v1",
-        json!({"schema":"rx.sim.program.v1","effect":"FILE_SIMULATION_RECORD_ONLY","cell":CELL}),
-    )?;
-    let parameters = material(
-        "rx.sim.parameters.v1",
-        json!({"schema":"rx.sim.parameters.v1","operation":"cycle","physical_parameters":null}),
-    )?;
+    let defaults = json!({
+        "profile":{"schema":"rx.device-profile.v1","environment":"SIMULATION","backend":"FILE_SIMULATION","ready_source":"ready","condition_id":"sim/ready","native_result":{"schema":"rx.sim.completed.v1","success_code":"0"},"physical_device":null,"dispatch_window_scope":"FILE_SIMULATION_ONLY","dispatch_permit_validity_ns":"1000000000"},
+        "program":{"schema":"rx.sim.program.v1","effect":"FILE_SIMULATION_RECORD_ONLY","cell":CELL},
+        "parameters":{"schema":"rx.sim.parameters.v1","operation":"cycle","physical_parameters":null}
+    });
+    let selected = adapter.as_ref().map_or(&defaults, |v| &v["materials"]);
+    if selected["profile"]["environment"] != "SIMULATION" {
+        return Err("delivery adapter must be simulated".into());
+    }
+    let mut supplied = |key: &str| -> Result<ArtifactRef> {
+        let value = &selected[key];
+        material(
+            value["schema"]
+                .as_str()
+                .ok_or("adapter artifact schema absent")?,
+            value.clone(),
+        )
+    };
+    let profile = supplied("profile")?;
+    let program = supplied("program")?;
+    let parameters = supplied("parameters")?;
     let initial_recipe = material(
         "rx.uncompiled-process-reference.v1",
         json!({"schema":"rx.uncompiled-process-reference.v1","process":"delivery/cycle","status":"AWAITING_SIGNED_S_COMPILATION"}),
@@ -83,15 +113,15 @@ pub fn export() -> Result<()> {
     };
     let intent = Intent {
         kind: Kind::FiniteAction,
-        target: name("device/file-simulation"),
+        target: name(target),
         profile_digest: profile.sha256,
         site_config_digest: site.sha256,
         calibration_digests: vec![],
         resource_set: vec![name("controller/simulation")],
         execution_timeout_ms: Counter(5000),
         prepare_validity_ms: Counter(1000),
-        completion_rule: name("rx.sim.completed.v1"),
-        cancel_rule: name("rx.sim.stop.v1"),
+        completion_rule: name(completion),
+        cancel_rule: name(cancel),
         body: Body::Program(ProgramGoal {
             program: program.clone(),
             parameter_set: parameters.clone(),
@@ -132,7 +162,7 @@ pub fn export() -> Result<()> {
             condition_revision: Counter(1),
             handover_max_age_ns: Counter(500_000_000),
             completion: CompletionRule::Native {
-                schema: name("rx.sim.completed.v1"),
+                schema: name(completion),
                 success: vec![Integer(0)],
                 failure: vec![Integer(1)],
                 postconditions: vec![ready],

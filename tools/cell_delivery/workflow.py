@@ -1,4 +1,4 @@
-"""Measured FILE_SIMULATION commissioning, followed by registered-terminal product UI execution."""
+"""Measured selected SIMULATION commissioning, followed by registered-terminal product UI execution."""
 from __future__ import annotations
 import hashlib
 import json
@@ -72,19 +72,23 @@ def run(c:dict)->None:
     equipment=main_cell(overview(),cell)['diagnostics']
     current_journals=json.loads(docker.run('exec',c['h'],'cat','/data/host/installation.json'))
     assert current_journals==original_journals
-    effects=docker.run('exec',c['h'],'/bin/sh','-c','if [ -f /data/host/device/effects.jsonl ]; then cat /data/host/device/effects.jsonl; fi')
+    if 'observe_native_effects' in c:
+        native_observation=c['observe_native_effects']()
+        effects=json.dumps(native_observation) if native_observation else ''
+    else:
+        effects=docker.run('exec',c['h'],'/bin/sh','-c','if [ -f /data/host/device/effects.jsonl ]; then cat /data/host/device/effects.jsonl; fi')
     assert effects.strip()==''
     assert not main_cell(overview(),cell)['runs']
     observations={
-        'SOFTWARE':{'assertions':{'actual_signed_compiler_passed':result['compiler_checks_passed'],'actual_target_matches_policy':applied['change']['after']['sha256']==delivery['target_configuration_digest']},'observations':{'compiler':result,'process_review':job,'applied_configuration':applied['change']['after']},'limitations':['Software/file-device process only; no physical validation.']},
-        'EQUIPMENT':{'assertions':{'file_device_current_sources':bool(equipment['sources']) and all(v['usable'] for v in equipment['sources']),'host_service_ready_unarmed':host['phase']=='SOFTWARE_READY_UNARMED','same_kernel_clock':host['clock_id']==c['installation']['clock_id'],'unchanged_durable_host_journals':current_journals==original_journals},'observations':{'host':host,'diagnostics':equipment,'installation_journals':current_journals},'limitations':['FILE_SIMULATION health is not a physical interlock or mechanical qualification.', *c.get('host_fixture_limitations',[])]},
+        'SOFTWARE':{'assertions':{'actual_signed_compiler_passed':result['compiler_checks_passed'],'actual_target_matches_policy':applied['change']['after']['sha256']==delivery['target_configuration_digest']},'observations':{'compiler':result,'process_review':job,'applied_configuration':applied['change']['after']},'limitations':['Selected software simulation process only; no physical validation.']},
+        'EQUIPMENT':{'assertions':{'selected_simulation_current_sources':bool(equipment['sources']) and all(v['usable'] for v in equipment['sources']),'host_service_ready_unarmed':host['phase']=='SOFTWARE_READY_UNARMED','same_kernel_clock':host['clock_id']==c['installation']['clock_id'],'unchanged_durable_host_journals':current_journals==original_journals},'observations':{'host':host,'diagnostics':equipment,'installation_journals':current_journals},'limitations':['Simulated native health is not a physical interlock or mechanical qualification.', *c.get('host_fixture_limitations',[])]},
         'CELL_INTEGRATION':{'assertions':{'configuration_applied_unqualified':applied['change']['state']=='APPLIED_UNQUALIFIED','host_metadata_acknowledged_before_apply':commission.pre_apply_detail['host_configuration']['all_hosts_acknowledged'],'committed_host_proofs_present':bool(applied['change']['application']['host_proofs']),'actual_requalification_fences_confirmed':qdetail['fences_confirmed']},'observations':{'change':applied['change'],'host_configuration_before_apply':commission.pre_apply_detail['host_configuration'],'committed_host_proofs':applied['change']['application']['host_proofs'],'fences':qjob['request']['fences'],'reviewed_clearance_snapshot':commission.clearance_snapshot,'proposed_clear_block_ids':commission.clear_candidates},'limitations':['No production Run exists yet; actual material cycle is tested after explicit activation.']},
         'RECOVERY':{'assertions':{'sealed_release_recovery_tests_verified':len(release_proof['verified_tests'])==3,'host_journal_identity_continuous':current_journals==original_journals,'same_original_intake_request_recovers_exact_receipt':encoded(first)==encoded(second),'runtime_restrictions_have_exact_recorded_origins':bool(qjob['request']['runtime_restrictions'])},'observations':{'sealed_release_evidence':release_proof,'original_and_recovered_receipt':first,'runtime_origins':qjob['request']['runtime_restrictions']},'limitations':['Receipt recovery and restart restriction provenance only; native UNKNOWN recovery and process restart rebind are not certified.']},
         'PROTECTION':{'assertions':{'unconfigured_physical_start_rejected':candidate['blocking_reason']=='NOT_COMMISSIONED','read_did_not_create_start_permission':candidate['can_request'] is False},'observations':negative_denial,'limitations':['Software admission boundary only. Physical protective devices are unconfigured and not assessed.']},
         'OPERATIONS':{'assertions':{'operator_cannot_submit_engineer_intake':role_denial['status']==403,'separate_human_roles':len({engineer.get('/api/v1/overview')['user']['principal'],reviewer.get('/api/v1/overview')['user']['principal'],release.get('/api/v1/overview')['user']['principal']})==3,'main_run_count_zero_before_qualification':not main_cell(current,cell)['runs'],'native_effects_zero_before_qualification':effects.strip()==''},'observations':{'role_denial':role_denial,'terminal':c['browser']['terminal']},'limitations':['Registered-terminal/API commissioning controls; operator motion UI is exercised after activation.']},
     }
     qreport=materials.temporary/'qualification-report'
-    report=build_report(qjob,c['validator'],c['final']/'qualification-materials',observations,qreport)
+    report=build_report(qjob,c['validator'],c['final']/'qualification-materials',observations,qreport,scope=c.get('native_scope','FILE_SIMULATION_DELIVERY_ONLY'))
     qpolicy=json.loads((c['final']/'config/qualification-policy.json').read_text());qkey=qpolicy['keys'][0]['id']
     signature=materials.sign({'key':qkey,'qualification_report':str(qreport/'qualification.json')},'qualification')
     metadata=json.loads(signature.with_suffix('.metadata.json').read_text())
