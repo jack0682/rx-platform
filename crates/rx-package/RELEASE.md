@@ -6,6 +6,13 @@ keys. The root is **development-only**. Product release-key custody, rotation an
 ceremony are **NOT_ESTABLISHED**. Replacing the trusted verifier can replace its
 root: neither the verifier binary nor the OS authenticates itself here.
 
+The current development root is `rx/development-release-2026-09-r2`. Its
+two-copy encrypted custody and recovery rehearsal are
+`ESTABLISHED_BY_TWO_COPY_RECOVERY_REHEARSAL`. The previous
+`rx/development-release-2026-09` root is `RETIRED_NOT_ACCEPTED`; there is no
+dual-root compatibility window. These development facts do not establish
+product signing custody.
+
 A `rx.release.v1` manifest signs channel, positive monotonic version and SHA256 of
 the exact inventory bytes. Its identity uses `RX-RELEASE-IDENTITY-v1` and canonical
 JSON. The inventory indexes every relative artifact and the one supported external
@@ -44,12 +51,21 @@ trusted installation stability and OS remain required between checking and exec.
 No physical qualification, operating-area approval or continuous permission is
 conferred by signatures or persistent history.
 
-`tools/sign_release.py` is an offline authoring tool requiring an owner-only key
-file and OpenSSL. Its output contains public metadata only. The key must never
-enter Git, a Docker build context, runtime image or log. The image signing stage
-must occur after inventory generation and add only `release.json` and
-`revocations.json`; never regenerate the inventory to include its own signature.
-`tools/check_release_key_custody.py` checks the actual committed trees and optional
-exported runtime filesystem for the specific private key, without printing it.
+`tools/sign_release.py` is an offline authoring tool requiring a reviewed,
+owner-only encrypted custody envelope plus its public ceremony record. It pipes
+decrypted bytes directly to OpenSSL and does not accept a plaintext key path.
+Its output contains public metadata only. The key must never enter Git, a Docker
+build context, runtime image or log. The image signing stage must occur after
+inventory generation and add only `release.json` and `revocations.json`; never
+regenerate the inventory to include its own signature.
+`tools/check_release_key_custody.py` decrypts a reviewed envelope in memory and
+checks every committed blob, current publishable files and an optional flattened
+runtime filesystem for the specific private bytes, without printing them.
 Pre-signed inert test fixtures require no secret in CI. They are development
 content, not qualified executables or a product signing authority.
+
+The reviewed development-key ceremony and recovery contract is
+[`DEVELOPMENT_KEY_CUSTODY.md`](DEVELOPMENT_KEY_CUSTODY.md). Its attack catalog is
+[`release_rotation_attacks.v1.json`](release_rotation_attacks.v1.json). The
+procedure must exist and be reviewed before a replacement key is generated;
+creating a key does not by itself establish custody.
