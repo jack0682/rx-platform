@@ -47,3 +47,5 @@ pub mod runtime_invalidation;
 pub mod operator_start;
 
 pub mod host_recovery;
+
+pub mod software_skill;
