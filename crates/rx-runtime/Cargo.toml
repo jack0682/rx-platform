@@ -6,6 +6,7 @@ edition.workspace = true
 publish.workspace = true
 
 [dependencies]
+serde_json.workspace = true
 rx-package = {path="../rx-package"}
 tokio = { version = "1", features = ["sync", "rt"] }
 thiserror.workspace = true

@@ -1,5 +1,9 @@
 # RX Platform
 
+The [local simulation skill service](crates/rx-api/SOFTWARE_SKILLS.md) reuses RX's
+application rules, state writer, storage and Operation model for authored Python
+computations. Its installer and execution worker are provided by rx-solutions.
+
 [![CI](https://github.com/jack0682/rx-platform/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/jack0682/rx-platform/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
 
