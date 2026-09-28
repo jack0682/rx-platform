@@ -16,6 +16,92 @@ fn read(tx: &mut dyn Transaction, id: &Id) -> Result<(Counter, binding::Record)>
     }
     Ok((revision, value))
 }
+/// Binding standing of one plan Host, derived from its durable intent and the Host
+/// generation currently registered for every intent cell. It never grants application,
+/// configuration, qualification or execution authority.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Standing {
+    /// No intent was issued in this P runtime, or no baseline has been captured.
+    BaselineRequired,
+    /// The baseline belongs to the Host generation that is registered now.
+    BaselineCurrent,
+    /// A baseline exists but the registered generation no longer matches it and no
+    /// commit is confirmed for the current generation.
+    CommitUnconfirmed,
+    /// The recorded commit match was read from the Host generation registered now.
+    CommitCurrent,
+}
+fn registered(tx: &mut dyn Transaction, record: &binding::Record) -> Result<Option<(Id, Id, Id)>> {
+    let mut current = None;
+    for cell in record.intent.before_cells.keys() {
+        let Some(row) = tx.get(&key("host", (cell, &record.intent.host)))? else {
+            return Ok(None);
+        };
+        let h: HostRegistration = decode(&row, HOST)?;
+        let tuple = (h.session, h.boot_id, h.delivery_journal);
+        if current.as_ref().is_some_and(|old| old != &tuple) {
+            return Ok(None);
+        }
+        current = Some(tuple);
+    }
+    Ok(current)
+}
+pub(super) fn standings(
+    tx: &mut dyn Transaction,
+    meta: &Installation,
+    change: &crate::process_change::Change,
+) -> Result<BTreeMap<Name, Standing>> {
+    let mut result = BTreeMap::new();
+    let Some(plan) = &change.host_binding_plan else {
+        return Ok(result);
+    };
+    let plan_digest = plan.digest().map_err(StoreError::Invalid)?;
+    for host in plan.hosts.keys() {
+        let slot = key("hostbindingintentslot", (&change.id, host));
+        let record = match tx.get(&slot)? {
+            Some(row) => {
+                let id: Id = decode(&row, REF)?;
+                Some(read(tx, &id)?.1)
+            }
+            None => None,
+        };
+        let standing = match record {
+            Some(r)
+                if r.intent.runtime_boot == meta.runtime_boot
+                    && r.intent.host_plan_digest == plan_digest
+                    && r.baseline.is_some() =>
+            {
+                let current = registered(tx, &r)?;
+                let baseline = r.baseline.as_ref().map(|b| &b.snapshot);
+                let committed = (r.phase == binding::Phase::MetadataMatched)
+                    .then_some(())
+                    .and(r.observation.as_ref())
+                    .map(|o| &o.snapshot);
+                match current {
+                    Some((session, boot, journal))
+                        if committed.is_some_and(|s| {
+                            s.host_boot == boot && s.delivery_journal == journal
+                        }) && r.observed_session.as_ref() == Some(&session) =>
+                    {
+                        Standing::CommitCurrent
+                    }
+                    Some((_, boot, journal))
+                        if committed.is_none()
+                            && baseline.is_some_and(|s| {
+                                s.host_boot == boot && s.delivery_journal == journal
+                            }) =>
+                    {
+                        Standing::BaselineCurrent
+                    }
+                    _ => Standing::CommitUnconfirmed,
+                }
+            }
+            _ => Standing::BaselineRequired,
+        };
+        result.insert(host.clone(), standing);
+    }
+    Ok(result)
+}
 fn identity(c: &CellConfiguration) -> binding::CellIdentity {
     binding::CellIdentity {
         definition: c.definition.sha256,

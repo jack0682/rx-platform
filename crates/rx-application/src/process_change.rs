@@ -186,6 +186,8 @@ pub struct Change {
 #[serde(tag = "kind", rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum Blocker {
     HostBindingChangeRequired,
+    HostBindingBaselineRequired { host: Name },
+    HostBindingCommitUnconfirmed { host: Name },
     PreparationRequired,
     RequalificationRequired,
     ContextChanged,

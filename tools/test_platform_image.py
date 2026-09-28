@@ -261,12 +261,32 @@ with tempfile.TemporaryDirectory(prefix='rx-platform-image-') as temporary:
                         contexts={h['host']:h['context'] for c in registered['cells'] for h in c['diagnostics']['hosts']}
                         if contexts.get('host/sim')=='CURRENT':break
                         assert time.monotonic()<until,contexts;time.sleep(.2)
-                try:api('/api/v1/process-change/prepare',{'request_key':str(uuid.uuid4()),'command':{'target':transition(change),'refresh':False}},reviewer_cookie)
+                def blockers():
+                    value,_=api('/api/v1/process-change?cell=cell%2Fa&id='+change['id'],cookie=cookie)
+                    return value,[v['kind'] for v in value['blockers']],value['blockers']
+                prepare={'request_key':str(uuid.uuid4()),'command':{'target':transition(change),'refresh':False}}
+                if binding_host:
+                    # The baseline belongs to the registered Host generation, so P may fence it.
+                    prepared,_=api('/api/v1/process-change/prepare',prepare,reviewer_cookie)
+                    assert prepared['state']=='STAGED' and prepared['preparation']['fences'],prepared
+                    until=time.monotonic()+20
+                    while True:
+                        change_detail,kinds,listed=blockers()
+                        if 'HOST_FENCE_UNCONFIRMED' not in kinds:break
+                        assert time.monotonic()<until,listed;time.sleep(.2)
+                    assert {'kind':'HOST_BINDING_COMMIT_UNCONFIRMED','host':'host/sim'} in listed and 'HOST_BINDING_CHANGE_REQUIRED' in kinds,listed
+                    assert 'HOST_BINDING_BASELINE_REQUIRED' not in kinds,listed
+                    guard_route,guard_command='/api/v1/process-change/configure-hosts',transition(prepared)
+                else:
+                    guard_route,guard_command='/api/v1/process-change/prepare',prepare['command']
+                try:api(guard_route,{'request_key':str(uuid.uuid4()),'command':guard_command},reviewer_cookie)
                 except urllib.error.HTTPError as blocked:
-                    assert blocked.code in (409,422);deployment_denial={'status':blocked.code,'body':json.loads(blocked.read())}
-                else:raise AssertionError('Host binding replacement guard unexpectedly passed')
-                change_detail,_=api('/api/v1/process-change?cell=cell%2Fa&id='+change['id'],cookie=cookie)
-                assert any(v['kind']=='HOST_BINDING_CHANGE_REQUIRED' for v in change_detail['blockers'])
+                    assert blocked.code in (409,422);deployment_denial={'route':guard_route,'status':blocked.code,'body':json.loads(blocked.read())}
+                else:raise AssertionError('Host binding replacement guard unexpectedly passed at '+guard_route)
+                change_detail,kinds,listed=blockers()
+                assert 'HOST_BINDING_CHANGE_REQUIRED' in kinds and change_detail['change']['state']=='STAGED' and not change_detail['activation_authorized']
+                if not binding_host:
+                    assert {'kind':'HOST_BINDING_BASELINE_REQUIRED','host':'host/sim'} in listed and change_detail['change']['preparation'] is None,listed
                 deployment={'process_intake':process_intake,'process_report':process_report,'process_decision':process_decision,'change':change_detail,'guard':deployment_denial,'status':'HOST_BINDING_CHANGE_REQUIRED','binding_intents':binding_intents,'same_intents_on_retry':True}
 
 
@@ -278,10 +298,15 @@ with tempfile.TemporaryDirectory(prefix='rx-platform-image-') as temporary:
                 review_test={'request':job['request'],'report':report,'version':version,'pre_approval_detail':detail,'detail':approved_detail,'repeat_returns_same_report_version':True,'self_approval_denied':True,'decision':decision,'binding_plan':reviewed_plan,'binding_options':selected,'composition':composition,'compose_recovery_preserved':True,'deployment':deployment}
             package_test={'status':'PASS','receipt':receipt,'view':page['packages'][0],'repeat_returns_identical_receipt':True,'no_run_or_qualification':True,'policy_sha256':hashlib.sha256(policy_bytes).hexdigest(),'device_catalog':device_catalog,'device_review':review_test}
         stop_started=time.monotonic();run('docker','stop','--time','15',service);stop_seconds=time.monotonic()-stop_started
-        stopped=json.loads(run('docker','inspect',service))[0];expected_exit=2 if binding_host else 0;assert stopped['State']['ExitCode']==expected_exit,(stopped['State'],subprocess.run(['docker','logs','--tail','60',service],stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True).stdout[-6000:],stop_seconds)
+        stopped=json.loads(run('docker','inspect',service))[0]
         run('docker','cp',service+':/data/runtime/platform-status.json',str(Path(temporary)/'stopped.json'))
-        after=json.loads((Path(temporary)/'stopped.json').read_text());assert after['phase']=='PROCESS_STOPPED';assert after['stop']['lifecycle']['phase']=='STOP_COMMITTED';assert not after['physical_shutdown_assessed']
-        expected_attention=[{'cell':'cell/a','host':'host/sim','kind':'HOST_FENCE_UNCONFIRMED'}] if binding_host else []
+        after=json.loads((Path(temporary)/'stopped.json').read_text())
+        # Stop revokes every cell and fences registered Hosts; P does not wait for their acknowledgement.
+        # A live Host may therefore remain HOST_FENCE_UNCONFIRMED, which must be reported with exit 2.
+        fence_attention=[{'cell':'cell/a','host':'host/sim','kind':'HOST_FENCE_UNCONFIRMED'}]
+        expected_attention=after['stop']['attention'] if binding_host and after['stop']['attention']==fence_attention else []
+        assert stopped['State']['ExitCode']==(2 if expected_attention else 0),(stopped['State'],after['stop'],subprocess.run(['docker','logs','--tail','60',service],stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True).stdout[-6000:],stop_seconds)
+        assert after['phase']=='PROCESS_STOPPED';assert after['stop']['lifecycle']['phase']=='STOP_COMMITTED';assert not after['physical_shutdown_assessed']
         assert after['stop']['attention']==expected_attention and after['stop']['attention_count']==str(len(expected_attention)),after['stop']
         image=json.loads(run('docker','image','inspect',args.image))[0]
         result={'schema':'rx.platform-image-smoke.v1','status':'PASS','image_id':image['Id'],'os':image['Os'],'architecture':image['Architecture'],'user':inspected['Config']['User'],'read_only_root':True,'cap_drop':['ALL'],'https_health':health,'startup':before,'stop':after,'package_intake':package_test,'device_review_image':args.device_review_image,'binding_host_image':args.binding_host_image,'binding_host_ready':binding_ready,'stop_exit_code':stopped['State']['ExitCode'],'limitations':['uncommissioned draft authority','no Host/controller launch','no physical shutdown qualification','config/data volumes and test certificates were disposable']}
