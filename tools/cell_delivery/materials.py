@@ -59,8 +59,10 @@ class Materials:
         if metadata.exists():shutil.copyfile(metadata,self.evidence/(label+'.signing-metadata.json'))
         return signature
 
-    def create_seed(self, architecture: str) -> None:
-        self.exporter('export_delivery_seed',{'RX_CELL_DELIVERY_OUTPUT':str(self.seed),'RX_CELL_DELIVERY_ARCH':architecture},'export-seed')
+    def create_seed(self, architecture: str, composition_draft: str | None = None) -> None:
+        environment={'RX_CELL_DELIVERY_OUTPUT':str(self.seed),'RX_CELL_DELIVERY_ARCH':architecture}
+        if composition_draft is not None:environment['RX_CELL_DELIVERY_COMPOSE_DRAFT']=composition_draft
+        self.exporter('export_delivery_seed',environment,'export-seed')
         if not (self.seed/'signing-fixtures.json').is_file(): raise RuntimeError('test signing fixtures missing')
         shutil.copytree(self.seed,self.public_seed,ignore=shutil.ignore_patterns('signing-fixtures.json'))
         if list(self.public_seed.rglob('signing-fixtures.json')):raise RuntimeError('private signer leaked into compiler inputs')

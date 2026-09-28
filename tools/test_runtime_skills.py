@@ -60,6 +60,34 @@ def recovery_evidence(docker, image, solutions, temporary):
     return directory/'release-evidence.json', client
 
 
+def author_installed_process(c, client, request_id):
+    """Compare actual P-authored bytes and reassembly before any package review/activation."""
+    private=c['materials'].temporary/'initial-author';private.mkdir(mode=0o700)
+    browser=c['browser'];final=c['final'];d=c['docker']
+    password=private/'password';password.write_text(browser['credentials']['engineer']);password.chmod(0o600)
+    connection=private/'connection.json'
+    connection.write_text(json.dumps({'schema':'rx.runtime-skill-connection.v1','origin':browser['origin'],
+        'ca':str(final/browser['ca']),'certificate':str(final/browser['certificate']),
+        'private_key':str(final/browser['private_key']),'principal':'engineer','password_file':str(password)}))
+    connection.chmod(0o600)
+    command=[sys.executable,str(client/'rx'),'runtime','--connection',str(connection),'--state-dir',str(private/'journal'),
+        'compose','delivery/composed','--cell',c['delivery']['cell'],'--step','step/cycle','--step','step/cycle','--request-id',request_id]
+    reply=subprocess.run(command,capture_output=True,text=True,timeout=100)
+    if reply.returncode:raise RuntimeError('initial authoring failed: '+reply.stderr[-3000:])
+    authored=json.loads(reply.stdout)
+    expected=json.loads((c['materials'].seed/'compile-input.json').read_text())
+    assert authored['compile_input']==expected and not authored['execution_authorized']
+    public=private/'public';public.mkdir();publish_new(public/'online-compile-input.json',authored['compile_input'])
+    d.put(c['s_image']['Id'],c['materials'].compiler_work,public)
+    assembled=json.loads(d.command(c['s_image']['Id'],'/opt/rx/bin/rx-process-package',
+        ['assemble','/work/online-compile-input.json','/config/package-recipe.json','/work/online-candidate'],
+        [c['materials'].compiler_config+':/config:ro',c['materials'].compiler_work+':/work:rw'],'online-package-assemble'))
+    assert assembled['manifest_digest']==c['delivery']['package']['manifest']
+    c['installed_composition']=authored
+    publish_new(d.evidence/'installed-composition.json',{'status':'PASS','authored':authored,'assembly':assembled,
+        'scope':'Actual online P export and reassembled manifest equal the predeclared package before public review and activation; no live policy substitution'})
+
+
 def invoke_scene(context, active):
     c = context; d = c['docker']; final = c['final']; browser = c['browser']
     client = c['installed_client']; private = c['materials'].temporary/'runtime-client'; private.mkdir(mode=0o700)
@@ -132,30 +160,35 @@ def invoke_scene(context, active):
     def native():
         raw=d.run('exec',c['h'],'/bin/sh','-c','if [ -f /data/host/device/effects.jsonl ]; then cat /data/host/device/effects.jsonl; fi')
         return [json.loads(line) for line in raw.splitlines() if line]
-    effects_before = wait_for(native,lambda rows:len(rows)==1,timeout=30)
+    expected_operations=len(c['target']['steps'])
+    effects_before = wait_for(native,lambda rows:len(rows)==expected_operations,timeout=30)
     recovered = call('recover',result_id)
     assert (journal/'start.request.json').read_bytes()==original
     assert recovered['run_id']==prepared['id'] and recovered['result']['run']['value']['state']=='COMPLETED'
     assert recovered['result']['result_owner']=='PLATFORM' and not recovered['result']['details_truncated']
+    assert len(recovered['result']['work'])==expected_operations
+    assert recovered['result']['binding']['package_digest']==c['delivery']['package']['manifest']
     assert all(w['operation']['outcome']=='SUCCEEDED' and w['operation']['disposition']=='RELEASED' for w in recovered['result']['work'])
     assert all(p['value']['disposition']=='CONFIRMED_COMPLETED' for p in recovered['result']['parts'])
     repeated = call('recover',result_id)
-    assert repeated['run_id']==recovered['run_id'] and len(native())==1
+    assert repeated['run_id']==recovered['run_id'] and len(native())==expected_operations
     next_id = str(uuid.uuid4())
     following = call('run',name,'--cell',cell,'--request-id',next_id,'--count','1')
     assert following['run_id']!=recovered['run_id'] and following['result']['run']['value']['state']=='COMPLETED'
-    effects = native();assert len(effects)==2
+    assert len(following['result']['work'])==expected_operations
+    effects = native();assert len(effects)==2*expected_operations
     operations={w['operation']['operation_id'] for r in [recovered,following] for w in r['result']['work']}
     assert operations=={effect['operation'] for effect in effects}
-    assert len({effect['invocation'] for effect in effects})==2
+    assert len({effect['invocation'] for effect in effects})==2*expected_operations
     publish_new(d.evidence/'runtime-skill-requests.json',{
         'original_start_request':json.loads(original),'recovered_start_reply':json.loads((journal/'start.reply.json').read_bytes()),
         'fault':'real consumer SIGKILL after P StartRun response and before durable receipt storage',
         'consumer_exit':cut.returncode,'native_effect_before_recovery':effects_before,'same_request_bytes_preserved':True})
     publish_new(d.evidence/'result.json',{'schema':'rx.runtime-skill-acceptance.v1','status':'PASS',
         'platform_image':c['p_image']['Id'],'solutions_image':c['s_image']['Id'],'catalog':catalog,
+        'installed_draft':c['installed_composition']['draft_id'], 'operations_per_run':expected_operations,
         'original':recovered,'next':following,'independent_native_effects':effects,'physical_execution':'NOT_PERFORMED',
-        'scope':'Installed bound-process skill facade through actual P/mTLS/Executor/Host FILE_SIMULATION, no P DB seed or local outcome authority',
+        'scope':'Online CLI-authored process, public review/activation and actual P/mTLS/Executor/Host FILE_SIMULATION execution, no P DB seed or local outcome authority',
         'limitations':['One approved bound process; no dynamic skill parameters or Python-to-Host registration in this slice.',
             'Consumer crash/receipt recovery is exercised; P or Host restart settlement is not claimed.',
             'Test-only external commissioning/signing material; no field qualification or one-command P/H/E installer claim.']})
@@ -180,14 +213,16 @@ def main():
             for line in manifest.read_text().splitlines():
                 digest,path=line.split('  ',1);relative=path.removeprefix('/source/')
                 assert relative!=path and hashlib.sha256((ROOT/relative).read_bytes()).hexdigest()==digest,relative
-            materials=Materials(ROOT,temporary,evidence,d,s['Id']);materials.create_seed(s['Architecture'])
+            composition_request=str(uuid.uuid4())
+            composition_draft=str(uuid.uuid5(uuid.UUID(composition_request),'rx.runtime-skill.draft'))
+            materials=Materials(ROOT,temporary,evidence,d,s['Id']);materials.create_seed(s['Architecture'],composition_draft)
             package,compiled,compiler=materials.compile()
             with socket.socket() as sock:sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]
             validator=hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
             final=materials.finalize(package,compiled,compiler,port,None,validator)
             def after(c,active):
                 c['installed_client']=client;invoke_scene(c,active)
-            exercise(d,materials,final,None,p,s,port,validator,recovery,'independent',after_commissioning=after)
+            exercise(d,materials,final,None,p,s,port,validator,recovery,'independent',after_commissioning=after,before_commissioning=lambda c:author_installed_process(c,client,composition_request))
             print(json.dumps({'status':'PASS','evidence':str(evidence),'scope':'actual P/Host/Executor runtime skill invocation'}))
         finally:d.cleanup()
 
