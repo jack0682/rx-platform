@@ -156,6 +156,39 @@ fn token(path: PathBuf) -> Result<[u8; 32], Box<dyn std::error::Error>> {
     }
     Ok(Sha256::digest(raw.as_bytes()).into())
 }
+fn prepare_store(data: &std::path::Path) -> Result<bool, Box<dyn std::error::Error>> {
+    use std::io::Write;
+    let marker = data.join("installation.profile");
+    let database = data.join("skills.db");
+    if marker.exists() {
+        if !marker.symlink_metadata()?.is_file()
+            || std::fs::read(&marker)? != b"rx.local-sim.installation.v1\n"
+        {
+            return Err("invalid local simulation installation descriptor".into());
+        }
+        if !database
+            .symlink_metadata()
+            .is_ok_and(|m| m.is_file() && m.len() >= 100)
+        {
+            return Err(
+                "existing installation database missing; automatic recreation refused".into(),
+            );
+        }
+        return Ok(false);
+    } else {
+        if data.read_dir()?.next().is_some() {
+            return Err("nonempty data directory has no installation descriptor".into());
+        }
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(marker)?;
+        file.write_all(b"rx.local-sim.installation.v1\n")?;
+        file.sync_all()?;
+        std::fs::File::open(data)?.sync_all()?;
+    }
+    Ok(true)
+}
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<_> = std::env::args().skip(1).collect();
@@ -171,11 +204,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if client == worker {
         return Err("separate client and worker identities required".into());
     }
+    let new_installation = prepare_store(&data)?;
     let writer = W::start(move || {
-        Ok(Application(Engine::open(
-            SqliteRepository::open(data.join("skills.db"))?,
-            now(),
-        )?))
+        let repository = SqliteRepository::open(data.join("skills.db"))?;
+        Ok(Application(if new_installation {
+            Engine::open(repository, now())?
+        } else {
+            Engine::open_existing(repository, now())?
+        }))
     })
     .await
     .map_err(|e| format!("writer start: {e}"))?;
@@ -215,4 +251,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     writer.close();
     writer.closed().await;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn lost_database_and_descriptor_are_not_fresh_installations() {
+        let dir = tempfile::tempdir().unwrap();
+        prepare_store(dir.path()).unwrap();
+        assert!(prepare_store(dir.path()).is_err());
+        let path = dir.path().join("skills.db");
+        let repository = SqliteRepository::open(&path).unwrap();
+        repository.close().unwrap();
+        prepare_store(dir.path()).unwrap();
+        std::fs::rename(&path, dir.path().join("preserved.db")).unwrap();
+        assert!(prepare_store(dir.path()).is_err());
+        assert!(!path.exists());
+        let unrelated = tempfile::tempdir().unwrap();
+        std::fs::write(unrelated.path().join("keep"), "existing content").unwrap();
+        assert!(prepare_store(unrelated.path()).is_err());
+    }
 }

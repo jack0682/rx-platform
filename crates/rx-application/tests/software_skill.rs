@@ -115,3 +115,13 @@ fn versions_schema_physical_scope_and_worker_ownership_are_enforced() {
         Outcome::Unresolved
     );
 }
+
+#[test]
+fn existing_mode_refuses_an_empty_replacement_database() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("replacement.db");
+    assert!(Engine::open_existing(SqliteRepository::open(&path).unwrap(), 1).is_err());
+    let mut repository = SqliteRepository::open(&path).unwrap();
+    use rx_ports::Repository;
+    assert!(repository.snapshot().unwrap().1.is_empty());
+}
