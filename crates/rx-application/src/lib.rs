@@ -48,4 +48,5 @@ pub mod operator_start;
 
 pub mod host_recovery;
 
+pub mod runtime_skill;
 pub mod software_skill;

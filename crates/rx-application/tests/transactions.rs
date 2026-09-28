@@ -11,6 +11,8 @@ mod producer_runtime_restart_tests;
 mod qualification_defaults;
 #[path = "support/runtime_invalidation_tests.rs"]
 mod runtime_invalidation_tests;
+#[path = "support/runtime_skill_tests.rs"]
+mod runtime_skill_tests;
 use rx_domain::{condition::Condition, fault::Rejection, intent::*, types::*};
 use rx_ports::{Record, Repository, StoreError, StoredEvent};
 use rx_storage::SqliteRepository;

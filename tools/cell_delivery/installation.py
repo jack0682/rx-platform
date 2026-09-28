@@ -51,7 +51,8 @@ def exercise(docker,materials,final:Path,bundle:Path,p_image:dict,s_image:dict,p
     imports=docker.volume('imports');ui=docker.volume('ui')
     docker.put(p_image['Id'],p_config,final/'config')
     docker.put(p_image['Id'],imports,final/'import')
-    docker.put(p_image['Id'],ui,bundle)
+    if bundle is not None:
+        docker.put(p_image['Id'],ui,bundle)
     docker.prepare_permissions(p_image['Id'],[p_config+':/config',p_data+':/data',p_work+':/work'])
     # Public import contents need readable ownership for later append-only publications too.
     docker.prepare_permissions(p_image['Id'],[imports+':/config',p_data+':/data',p_work+':/work'])
