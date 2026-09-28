@@ -10,6 +10,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
+pub mod metrics;
+pub mod process;
+
 const SKILL: &str = "rx.local-sim.skill.v1";
 const RUN: &str = "rx.local-sim.run.v1";
 const LIMIT: usize = 1000;
@@ -52,6 +55,8 @@ pub struct Run {
     pub output: Option<Value>,
     pub error: Option<String>,
     pub duration_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<process::Parent>,
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -134,6 +139,62 @@ fn shape(spec: &BTreeMap<String, String>, value: &Value) -> Result<()> {
     }
     Ok(())
 }
+fn schema(spec: &BTreeMap<String, String>) -> Result<()> {
+    if spec.len() > 32
+        || spec.iter().any(|(n, t)| {
+            !symbol(n)
+                || !matches!(
+                    t.as_str(),
+                    "string" | "integer" | "number" | "boolean" | "object" | "array"
+                )
+        })
+    {
+        return Err(invalid("invalid field schema"));
+    }
+    Ok(())
+}
+fn admit(
+    tx: &mut dyn Transaction,
+    request: Start,
+    now: u64,
+    parent: Option<process::Parent>,
+) -> Result<Run> {
+    if let Some(row) = tx.get(&run_key(&request.request_id)?)? {
+        let prior: Run = decode(&row, RUN)?;
+        if prior.request != request || prior.parent != parent {
+            return Err(StoreError::KeyConflict);
+        }
+        return Ok(prior);
+    }
+    process::authorize_child(tx, &request.request_id, parent.as_ref())?;
+    let row = tx
+        .get(&skill_key(&request.skill, &request.version)?)?
+        .ok_or_else(|| invalid("skill version not registered"))?;
+    let skill: Skill = decode(&row, SKILL)?;
+    shape(&skill.package.inputs, &request.input)?;
+    if parent.is_none() && process::allocated_runs(tx)? >= LIMIT {
+        return Err(invalid(
+            "installation run limit reached; preserve/export this installation",
+        ));
+    }
+    let digest =
+        canonical::digest("RX-LOCAL-SIM-RUN-v1", &(&request, skill.digest)).map_err(invalid)?;
+    let run = Run {
+        operation: Operation::admitted(request.request_id.clone(), digest),
+        request,
+        package_digest: skill.digest,
+        submitted_ms: now,
+        started_ms: None,
+        finished_ms: None,
+        worker: None,
+        output: None,
+        error: None,
+        duration_ms: None,
+        parent,
+    };
+    save_run(tx, &run, None, "ADMITTED")?;
+    Ok(run)
+}
 fn save_run(
     tx: &mut dyn Transaction,
     run: &Run,
@@ -214,17 +275,7 @@ impl<R: Repository> Engine<R> {
             ));
         }
         for spec in [&package.inputs, &package.outputs] {
-            if spec.len() > 32
-                || spec.iter().any(|(n, t)| {
-                    !symbol(n)
-                        || !matches!(
-                            t.as_str(),
-                            "string" | "integer" | "number" | "boolean" | "object" | "array"
-                        )
-                })
-            {
-                return Err(invalid("invalid field schema"));
-            }
+            schema(spec)?;
         }
         let digest = canonical::digest("RX-LOCAL-SIM-SKILL-v1", &package).map_err(invalid)?;
         let skill = Skill { digest, package };
@@ -252,42 +303,7 @@ impl<R: Repository> Engine<R> {
         })
     }
     pub fn submit(&mut self, request: Start, now: u64) -> Result<Run> {
-        let sk = skill_key(&request.skill, &request.version)?;
-        self.repository.transact(|tx| {
-            if let Some(row) = tx.get(&run_key(&request.request_id)?)? {
-                let prior: Run = decode(&row, RUN)?;
-                if prior.request != request {
-                    return Err(StoreError::KeyConflict);
-                }
-                return Ok(prior);
-            }
-            let row = tx
-                .get(&sk)?
-                .ok_or_else(|| invalid("skill version not registered"))?;
-            let skill: Skill = decode(&row, SKILL)?;
-            shape(&skill.package.inputs, &request.input)?;
-            if tx.scan("local-sim/run/")?.len() >= LIMIT {
-                return Err(invalid(
-                    "installation run limit reached; preserve/export this installation",
-                ));
-            }
-            let digest = canonical::digest("RX-LOCAL-SIM-RUN-v1", &(&request, skill.digest))
-                .map_err(invalid)?;
-            let run = Run {
-                operation: Operation::admitted(request.request_id.clone(), digest),
-                request,
-                package_digest: skill.digest,
-                submitted_ms: now,
-                started_ms: None,
-                finished_ms: None,
-                worker: None,
-                output: None,
-                error: None,
-                duration_ms: None,
-            };
-            save_run(tx, &run, None, "ADMITTED")?;
-            Ok(run)
-        })
+        self.repository.transact(|tx| admit(tx, request, now, None))
     }
     pub fn runs(&mut self) -> Result<Vec<Run>> {
         self.repository.transact(|tx| {
@@ -308,6 +324,7 @@ impl<R: Repository> Engine<R> {
     }
     pub fn claim(&mut self, worker: Id, now: u64) -> Result<Option<(Run, Skill)>> {
         self.repository.transact(|tx| {
+            process::advance(tx, now)?;
             let rows = tx.scan("local-sim/run/")?;
             let mut queued = Vec::new();
             for row in rows {
@@ -328,6 +345,9 @@ impl<R: Repository> Engine<R> {
                     .ok_or_else(|| invalid("skill missing"))?,
                 SKILL,
             )?;
+            if skill.digest != run.package_digest {
+                return Err(StoreError::Integrity("run/package digest differs".into()));
+            }
             run.operation.sent().map_err(invalid)?;
             run.worker = Some(worker);
             run.started_ms = Some(now);

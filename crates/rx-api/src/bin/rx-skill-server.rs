@@ -2,12 +2,12 @@
 //! Contains no Python execution, device transport, or physical commissioning path.
 use axum::{
     Json, Router,
-    extract::{DefaultBodyLimit, Path, State},
+    extract::{DefaultBodyLimit, Path, Query, State},
     http::{HeaderMap, StatusCode},
     response::Html,
     routing::{get, post},
 };
-use rx_application::software_skill::{Engine, Finish, Package, Start};
+use rx_application::software_skill::{Engine, Finish, Package, Start, metrics, process};
 use rx_domain::types::Id;
 use rx_runtime::{
     software_skill::{Application, Command},
@@ -83,7 +83,9 @@ fn writer_error(e: WriterError<rx_ports::StoreError>) -> Error {
     }
 }
 async fn health() -> Json<Value> {
-    Json(json!({"profile":"LOCAL_SIM","version":"0.3.0-rc.1","physical_control":false}))
+    Json(
+        json!({"profile":"LOCAL_SIM","version":"0.4.0-dev.1","physical_control":false,"capabilities":["skills","serial-skill-processes","versioned-skill-metrics"]}),
+    )
 }
 async fn skills(State(a): State<App>, h: HeaderMap) -> Result<Json<Value>, Error> {
     auth(&h, &a.client)?;
@@ -100,6 +102,52 @@ async fn register(
 async fn runs(State(a): State<App>, h: HeaderMap) -> Result<Json<Value>, Error> {
     auth(&h, &a.client)?;
     request(&a, Command::Runs).await
+}
+async fn processes(State(a): State<App>, h: HeaderMap) -> Result<Json<Value>, Error> {
+    auth(&h, &a.client)?;
+    request(&a, Command::Processes).await
+}
+async fn register_process(
+    State(a): State<App>,
+    h: HeaderMap,
+    Json(p): Json<process::Definition>,
+) -> Result<Json<Value>, Error> {
+    auth(&h, &a.client)?;
+    request(&a, Command::RegisterProcess(p)).await
+}
+async fn process_runs(State(a): State<App>, h: HeaderMap) -> Result<Json<Value>, Error> {
+    auth(&h, &a.client)?;
+    request(&a, Command::ProcessRuns).await
+}
+async fn start_process(
+    State(a): State<App>,
+    h: HeaderMap,
+    Json(r): Json<process::StartProcess>,
+) -> Result<Json<Value>, Error> {
+    auth(&h, &a.client)?;
+    request(&a, Command::StartProcess(r, now())).await
+}
+async fn process_run(
+    State(a): State<App>,
+    h: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<Value>, Error> {
+    auth(&h, &a.client)?;
+    request(
+        &a,
+        Command::ProcessRun(
+            Id::new(id).map_err(|_| error(StatusCode::BAD_REQUEST, "invalid process run ID"))?,
+        ),
+    )
+    .await
+}
+async fn metrics(
+    State(a): State<App>,
+    h: HeaderMap,
+    Query(window): Query<metrics::Window>,
+) -> Result<Json<Value>, Error> {
+    auth(&h, &a.client)?;
+    request(&a, Command::Metrics(window)).await
 }
 async fn submit(
     State(a): State<App>,
@@ -226,6 +274,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/v1/skills", get(skills).post(register))
         .route("/v1/runs", get(runs).post(submit))
         .route("/v1/runs/{id}", get(run))
+        .route("/v1/processes", get(processes).post(register_process))
+        .route("/v1/process-runs", get(process_runs).post(start_process))
+        .route("/v1/process-runs/{id}", get(process_run))
+        .route("/v1/metrics", get(metrics))
         .route("/internal/claim", post(claim))
         .route("/internal/finish", post(finish))
         .route("/internal/abandon", post(abandon))
