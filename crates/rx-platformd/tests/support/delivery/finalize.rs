@@ -49,24 +49,37 @@ fn target(
         || resolved.source_digest != rx_package::content_digest(&bytes(&source)?)
         || bytes(&resolved.bindings)? != bytes(&input.bindings)?
         || !resolved.conditions.is_empty()
-        || !matches!(&resolved.root.body,CompiledBody::Operation {binding} if binding.as_str()==ALIAS)
     {
         return Err("actual S resolved output is not the exact one-action seed/package".into());
     }
-    let actual = resolved
-        .bindings
-        .get(&name(ALIAS))
-        .ok_or("compiled binding absent")?;
-    if actual.host != initial.steps[0].host
-        || actual.intent.digest()? != initial.steps[0].intent.digest()?
-    {
-        return Err("compiled action differs from installed seed".into());
-    }
-    // Same transformation as process_change::Prepared for this deliberately one-operation input.
-    // Public Change.after remains the final oracle; no application/qualification is performed here.
+    // Limit the offline expectation to a leaf or sequence of identical installed actions.
+    // P's independently produced Change.after must still match this exact target.
     let mut target = initial.clone();
-    target.steps[0].id = resolved.root.id.clone();
-    target.steps[0].predecessors.clear();
+    target.steps.clear();
+    for node in rx_process_contract::validation::nodes(resolved) {
+        match &node.body {
+            CompiledBody::Sequence { .. } => {}
+            CompiledBody::Operation { binding } => {
+                let actual = resolved
+                    .bindings
+                    .get(binding)
+                    .ok_or("compiled binding absent")?;
+                if actual.host != initial.steps[0].host
+                    || actual.intent.digest()? != initial.steps[0].intent.digest()?
+                {
+                    return Err("compiled action differs from installed seed".into());
+                }
+                let mut step = initial.steps[0].clone();
+                step.id = node.id.clone();
+                step.predecessors.clear();
+                target.steps.push(step);
+            }
+            _ => return Err("delivery expectation supports only operation sequences".into()),
+        }
+    }
+    if target.steps.is_empty() || target.steps.len() > 64 {
+        return Err("delivery operation count outside supported scope".into());
+    }
     let data = bytes(resolved)?;
     target.recipe = reference(resolved.schema.as_str(), &data);
     if target.recipe.sha256 != rx_process_contract::frontier::resolved_digest(resolved)? {
@@ -544,7 +557,7 @@ pub fn export() -> Result<()> {
         &output.join("delivery.json"),
         &json!({
             "schema":"rx.cell-delivery-fixture.v1","installation":seed.installation,"platform_peer":platform_peer,"release_digest":seed.release_digest,"cell":CELL,"negative_cell":NEGATIVE_CELL,
-            "contracts":seed.contracts,"binding_selections":BTreeMap::from([(name(ALIAS),name("step/cycle"))]),"package":{"manifest":package.digest(),"signature":rx_package::content_digest(&signature)},
+            "contracts":seed.contracts,"binding_selections":input.bindings.keys().map(|alias| (alias.clone(), name("step/cycle"))).collect::<BTreeMap<_, _>>(),"package":{"manifest":package.digest(),"signature":rx_package::content_digest(&signature)},
             "initial_configuration_digest":seed.initial_cell_sha256,"target_configuration_digest":target_sha,"resolved_digest":target.recipe.sha256,
             "compiler_validator":compiler,"qualification_validator":validator,"qualification_policy_digest":q_policy.digest()?,
             "qualification_report_generated":false,"compiler_execution_asserted_by_exporter":false,
