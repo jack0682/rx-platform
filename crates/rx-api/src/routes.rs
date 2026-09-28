@@ -113,6 +113,8 @@ fn build_router(
         .route("/api/v1/session", post(login).get(profile))
         .route("/api/v1/session/end", post(logout))
         .route("/api/v1/overview", get(overview))
+        .route("/api/v1/runtime-skills", get(runtime_skills))
+        .route("/api/v1/runtime-skill-result", get(runtime_skill_result))
         .route("/api/v1/host-recovery-context", get(host_recovery::context))
         .route(
             "/api/v1/host-recoveries",
@@ -499,6 +501,41 @@ async fn overview(State(s): State<ApiState>, headers: HeaderMap) -> Result<Respo
         .await?
     {
         Reply::Overview(value) => Ok(Json(value).into_response()),
+        _ => Err(mismatch()),
+    }
+}
+async fn runtime_skills(
+    State(s): State<ApiState>,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    match s
+        .runtime
+        .request(Command::RuntimeSkillCatalog(identity(&s, &headers)?))
+        .await?
+    {
+        Reply::RuntimeSkillCatalog(v) => Ok(Json(v).into_response()),
+        _ => Err(mismatch()),
+    }
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RuntimeSkillRunQuery {
+    run: Id,
+}
+async fn runtime_skill_result(
+    State(s): State<ApiState>,
+    headers: HeaderMap,
+    Query(q): Query<RuntimeSkillRunQuery>,
+) -> Result<Response, ApiError> {
+    match s
+        .runtime
+        .request(Command::RuntimeSkillResult {
+            identity: identity(&s, &headers)?,
+            run: q.run,
+        })
+        .await?
+    {
+        Reply::RuntimeSkillResult(v) => Ok(Json(v).into_response()),
         _ => Err(mismatch()),
     }
 }

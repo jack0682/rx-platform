@@ -94,8 +94,10 @@ class Materials:
         self.compiler_config,self.compiler_work=config,work
         return package,compiled,validator
 
-    def finalize(self, package:Path, compiled:Path, compiler_id:str, port:int, operator_bundle:Path, qualification_validator:str)->Path:
+    def finalize(self, package:Path, compiled:Path, compiler_id:str, port:int, operator_bundle:Path|None, qualification_validator:str)->Path:
         final=self.temporary/'final'
-        self.exporter('export_delivery_final',{'RX_CELL_DELIVERY_OUTPUT':str(final),'RX_CELL_DELIVERY_SEED':str(self.seed), 'RX_CELL_RESOLVED':str(compiled/'resolved.json'),'RX_CELL_PACKAGE':str(package),'RX_CELL_COMPILER_ID':compiler_id,'RX_CELL_DELIVERY_PORT':str(port),'RX_CELL_OPERATOR_BUNDLE':str(operator_bundle),'RX_CELL_QUALIFICATION_VALIDATOR_ID':qualification_validator},'export-final')
+        environment={'RX_CELL_DELIVERY_OUTPUT':str(final),'RX_CELL_DELIVERY_SEED':str(self.seed), 'RX_CELL_RESOLVED':str(compiled/'resolved.json'),'RX_CELL_PACKAGE':str(package),'RX_CELL_COMPILER_ID':compiler_id,'RX_CELL_DELIVERY_PORT':str(port),'RX_CELL_QUALIFICATION_VALIDATOR_ID':qualification_validator}
+        if operator_bundle is not None:environment['RX_CELL_OPERATOR_BUNDLE']=str(operator_bundle)
+        self.exporter('export_delivery_final',environment,'export-final')
         if not (final/'config/startup.json').is_file():raise RuntimeError('final product startup missing')
         return final

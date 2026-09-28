@@ -708,6 +708,11 @@ pub enum Command {
     UserProfile(Identity),
     EndUserSession(Identity),
     Overview(Identity),
+    RuntimeSkillCatalog(Identity),
+    RuntimeSkillResult {
+        identity: Identity,
+        run: Id,
+    },
     InspectCell {
         identity: Identity,
         cell: Name,
@@ -851,6 +856,8 @@ pub enum Reply {
     Session(Session),
     Profile(UserProfile),
     Overview(Box<Overview>),
+    RuntimeSkillCatalog(Box<rx_application::runtime_skill::Catalog>),
+    RuntimeSkillResult(Box<rx_application::runtime_skill::ResultView>),
     Cell(Counter, Box<Cell>),
     Run(Run),
     Attempt(StartAttempt),
@@ -2016,6 +2023,14 @@ impl<R: Repository + Send + 'static, C: Clock + 'static, A: QualificationAuthori
                 self.service_health.decorate(&mut view);
                 Ok(Reply::Overview(Box::new(view)))
             }
+            Command::RuntimeSkillCatalog(identity) => self
+                .engine
+                .runtime_skill_catalog(&identity)
+                .map(|v| Reply::RuntimeSkillCatalog(Box::new(v))),
+            Command::RuntimeSkillResult { identity, run } => self
+                .engine
+                .runtime_skill_result(&identity, &run)
+                .map(|v| Reply::RuntimeSkillResult(Box::new(v))),
             Command::InspectCell { identity, cell } => self
                 .engine
                 .inspect_cell(&identity, &cell)
