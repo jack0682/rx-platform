@@ -2,7 +2,8 @@
 """Run only the new uncommissioned platform image, using isolated disposable volumes/certificates."""
 import argparse,hashlib,json,os,shutil,socket,ssl,subprocess,sys,tempfile,time,urllib.request,uuid
 from pathlib import Path
-parser=argparse.ArgumentParser();parser.add_argument('--image',default='rx-platform:runtime-draft');parser.add_argument('--evidence',required=True,type=Path);parser.add_argument('--package',type=Path);parser.add_argument('--package-policy',type=Path);parser.add_argument('--device-review-image');parser.add_argument('--device-review-source',type=Path);args=parser.parse_args()
+parser=argparse.ArgumentParser();parser.add_argument('--image',default='rx-platform:runtime-draft');parser.add_argument('--evidence',required=True,type=Path);parser.add_argument('--package',type=Path);parser.add_argument('--package-policy',type=Path);parser.add_argument('--device-review-image');parser.add_argument('--device-review-source',type=Path);parser.add_argument('--binding-host-image');args=parser.parse_args()
+assert not args.binding_host_image or args.device_review_image
 assert bool(args.device_review_image)==bool(args.device_review_source) and (not args.device_review_image or args.package)
 assert bool(args.package)==bool(args.package_policy), 'package and policy must be supplied together'
 root=Path(__file__).resolve().parents[1]
@@ -12,6 +13,7 @@ def run(*argv,**kwargs):
     return result.stdout.strip()
 args.image=json.loads(run('docker','image','inspect',args.image))[0]['Id']
 if args.device_review_image:args.device_review_image=json.loads(run('docker','image','inspect',args.device_review_image))[0]['Id']
+if args.binding_host_image:args.binding_host_image=json.loads(run('docker','image','inspect',args.binding_host_image))[0]['Id']
 with socket.socket() as s:
     s.bind(('127.0.0.1',0));port=s.getsockname()[1]
 suffix=uuid.uuid4().hex[:12];config_volume='rx-platform-config-'+suffix;data_volume='rx-platform-data-'+suffix;setup='rx-platform-setup-'+suffix;service='rx-platform-smoke-'+suffix
@@ -67,12 +69,17 @@ with tempfile.TemporaryDirectory(prefix='rx-platform-image-') as temporary:
             startup['package_intake']['review_authority']={'path':'/config/process-authority.json','sha256':hashlib.sha256(raw).hexdigest()}
 
         (fixture/'startup.json').write_text(json.dumps(startup,sort_keys=True,separators=(',',':')))
+    binding_host=None;binding_ready=None
+    if args.binding_host_image:
+        from platform_binding_host import BindingHost
+        binding_host=BindingHost(run,fixture,args.binding_host_image,'rx-binding-'+suffix)
     try:
+        if binding_host:binding_host.create_network()
         for name in [config_volume,data_volume]:run('docker','volume','create',name)
         run('docker','create','--name',setup,'--user','0','--network','none','-v',config_volume+':/config','-v',data_volume+':/data','--entrypoint','/bin/sh',args.image,'-c','chmod 700 /config /data; chmod -R u+rwX,go-rwx /config; mkdir -p /data/runtime; /usr/local/bin/rx-platformd init /config/startup.json && chown -R 10001:10001 /data /config')
         run('docker','cp',str(fixture)+'/.',setup+':/config');run('docker','start','--attach',setup)
         setup_state=json.loads(run('docker','inspect',setup))[0]['State'];assert setup_state['ExitCode']==0,setup_state
-        run('docker','run','-d','--name',service,'--read-only','--cap-drop','ALL','--security-opt','no-new-privileges','--tmpfs','/tmp:rw','-v',config_volume+':/config:ro','-v',data_volume+':/data:rw','-p',f'127.0.0.1:{port}:8443',args.image,'run','/config/startup.json')
+        run('docker','run','-d','--name',service,*(['--network',binding_host.network,'--network-alias','platform'] if binding_host else []),'--read-only','--cap-drop','ALL','--security-opt','no-new-privileges','--tmpfs','/tmp:rw','-v',config_volume+':/config:ro','-v',data_volume+':/data:rw','-p',f'127.0.0.1:{port}:8443',args.image,'run','/config/startup.json')
         context=ssl.create_default_context(cafile=str(fixture/'ca.pem'));context.load_cert_chain(str(fixture/'probe.pem'),str(fixture/'probe.key'))
         deadline=time.monotonic()+20;health=None;last_error=None
         opener=urllib.request.build_opener(urllib.request.ProxyHandler({}),urllib.request.HTTPSHandler(context=context))
@@ -101,6 +108,10 @@ with tempfile.TemporaryDirectory(prefix='rx-platform-image-') as temporary:
                 with opener.open(req,timeout=10) as response:return json.load(response),response.headers
             _,headers=api('/api/v1/session',{'principal':'admin','password':'composition-test-password'})
             cookie=headers['set-cookie'].split(';')[0]
+            if binding_host:
+                initial,_=api('/api/v1/overview',cookie=cookie)
+                binding_ready=binding_host.start(initial['installation']['store_generation'])
+
             context,_=api('/api/v1/package-intake-context?cell=cell%2Fa',cookie=cookie)
             # This smoke uses the canonical files published by the S package tool.
             obj={'manifest':hashlib.sha256((args.package/'manifest.json').read_bytes()).hexdigest(),'signature':hashlib.sha256((args.package/'manifest.sig.json').read_bytes()).hexdigest()}
@@ -219,7 +230,7 @@ with tempfile.TemporaryDirectory(prefix='rx-platform-image-') as temporary:
                 else:raise AssertionError('binding intent issuance accepted without ReleaseManager role')
                 binding_intents,_=api('/api/v1/process-change/host-binding-intents',binding_intent_request,reviewer_cookie)
                 same_intents,_=api('/api/v1/process-change/host-binding-intents',binding_intent_request,reviewer_cookie)
-                assert binding_intents==same_intents and len(binding_intents)==len(change['host_binding_plan']['hosts'])
+                assert [v['intent'] for v in binding_intents]==[v['intent'] for v in same_intents] and len(binding_intents)==len(change['host_binding_plan']['hosts'])
                 conflicting={'request_key':binding_intent_request['request_key'],'command':dict(binding_intent_request['command'],plan_digest='00'*32)}
                 try:api('/api/v1/process-change/host-binding-intents',conflicting,reviewer_cookie)
                 except urllib.error.HTTPError as denied:assert denied.code==409
@@ -228,6 +239,28 @@ with tempfile.TemporaryDirectory(prefix='rx-platform-image-') as temporary:
                 for intent in binding_intents:
                     assert intent['phase']=='AWAITING_BASELINE' and intent['baseline'] is None and not intent['activation_authorized']
                     assert intent['intent']['change']==change['id'] and intent['intent']['before_configuration']==change['before']['sha256'] and intent['intent']['after_configuration']==change['after']['sha256']
+                if binding_host:
+                    until=time.monotonic()+20
+                    while True:
+                        binding_intents,_=api('/api/v1/process-change/host-binding-intents',binding_intent_request,reviewer_cookie)
+                        if all(v['baseline'] is not None for v in binding_intents):break
+                        if time.monotonic()>=until:
+                            diagnostic,_=api('/api/v1/overview',cookie=cookie)
+                            failure={'intents':binding_intents,'overview':diagnostic,'platform_log':run('docker','logs',service),'host_log':run('docker','logs',binding_host.service),'platform_status':json.loads(run('docker','exec',service,'cat','/data/runtime/platform-status.json'))}
+                            args.evidence.with_suffix('.failure.json').write_text(json.dumps(failure,indent=2)+'\n')
+                            raise AssertionError('binding baseline missing; inspect '+str(args.evidence.with_suffix('.failure.json')))
+                        time.sleep(.2)
+                    for value in binding_intents:
+                        assert value['baseline']['snapshot']['installation_identity'] is not None
+                        assert value['baseline']['snapshot']['evidence_journal'] is not None
+                        assert value['phase']=='BASELINE_RECORDED' and not value['activation_authorized']
+                    # The Host publisher registers asynchronously. Wait for it so the stop report below is deterministic.
+                    until=time.monotonic()+20
+                    while True:
+                        registered,_=api('/api/v1/overview',cookie=cookie)
+                        contexts={h['host']:h['context'] for c in registered['cells'] for h in c['diagnostics']['hosts']}
+                        if contexts.get('host/sim')=='CURRENT':break
+                        assert time.monotonic()<until,contexts;time.sleep(.2)
                 try:api('/api/v1/process-change/prepare',{'request_key':str(uuid.uuid4()),'command':{'target':transition(change),'refresh':False}},reviewer_cookie)
                 except urllib.error.HTTPError as blocked:
                     assert blocked.code in (409,422);deployment_denial={'status':blocked.code,'body':json.loads(blocked.read())}
@@ -244,13 +277,16 @@ with tempfile.TemporaryDirectory(prefix='rx-platform-image-') as temporary:
 
                 review_test={'request':job['request'],'report':report,'version':version,'pre_approval_detail':detail,'detail':approved_detail,'repeat_returns_same_report_version':True,'self_approval_denied':True,'decision':decision,'binding_plan':reviewed_plan,'binding_options':selected,'composition':composition,'compose_recovery_preserved':True,'deployment':deployment}
             package_test={'status':'PASS','receipt':receipt,'view':page['packages'][0],'repeat_returns_identical_receipt':True,'no_run_or_qualification':True,'policy_sha256':hashlib.sha256(policy_bytes).hexdigest(),'device_catalog':device_catalog,'device_review':review_test}
-        run('docker','stop','--time','15',service)
-        stopped=json.loads(run('docker','inspect',service))[0];assert stopped['State']['ExitCode']==0,run('docker','logs',service)
+        stop_started=time.monotonic();run('docker','stop','--time','15',service);stop_seconds=time.monotonic()-stop_started
+        stopped=json.loads(run('docker','inspect',service))[0];expected_exit=2 if binding_host else 0;assert stopped['State']['ExitCode']==expected_exit,(stopped['State'],subprocess.run(['docker','logs','--tail','60',service],stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True).stdout[-6000:],stop_seconds)
         run('docker','cp',service+':/data/runtime/platform-status.json',str(Path(temporary)/'stopped.json'))
         after=json.loads((Path(temporary)/'stopped.json').read_text());assert after['phase']=='PROCESS_STOPPED';assert after['stop']['lifecycle']['phase']=='STOP_COMMITTED';assert not after['physical_shutdown_assessed']
+        expected_attention=[{'cell':'cell/a','host':'host/sim','kind':'HOST_FENCE_UNCONFIRMED'}] if binding_host else []
+        assert after['stop']['attention']==expected_attention and after['stop']['attention_count']==str(len(expected_attention)),after['stop']
         image=json.loads(run('docker','image','inspect',args.image))[0]
-        result={'schema':'rx.platform-image-smoke.v1','status':'PASS','image_id':image['Id'],'os':image['Os'],'architecture':image['Architecture'],'user':inspected['Config']['User'],'read_only_root':True,'cap_drop':['ALL'],'https_health':health,'startup':before,'stop':after,'package_intake':package_test,'device_review_image':args.device_review_image,'limitations':['uncommissioned draft authority','no Host/controller launch','no physical shutdown qualification','config/data volumes and test certificates were disposable']}
+        result={'schema':'rx.platform-image-smoke.v1','status':'PASS','image_id':image['Id'],'os':image['Os'],'architecture':image['Architecture'],'user':inspected['Config']['User'],'read_only_root':True,'cap_drop':['ALL'],'https_health':health,'startup':before,'stop':after,'package_intake':package_test,'device_review_image':args.device_review_image,'binding_host_image':args.binding_host_image,'binding_host_ready':binding_ready,'stop_exit_code':stopped['State']['ExitCode'],'limitations':['uncommissioned draft authority','no Host/controller launch','no physical shutdown qualification','config/data volumes and test certificates were disposable']}
         args.evidence.parent.mkdir(parents=True,exist_ok=True);args.evidence.write_text(json.dumps(result,indent=2)+'\n');print(json.dumps({'status':'PASS','image':image['Id']}))
     finally:
         for name in [service,setup]:subprocess.run(['docker','rm','-f',name],capture_output=True)
         for name in [config_volume,data_volume]:subprocess.run(['docker','volume','rm',name],capture_output=True)
+        if binding_host:binding_host.close()

@@ -47,6 +47,8 @@ pub struct ReadContext {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum Rejection {
+    TransportUnavailable,
+    AuthorizationChanged,
     InvalidIntent,
     InvalidObservation,
     StaleRead,

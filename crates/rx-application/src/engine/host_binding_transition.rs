@@ -27,6 +27,92 @@ fn identity(c: &CellConfiguration) -> binding::CellIdentity {
     }
 }
 impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
+    pub fn host_binding_intents(
+        &mut self,
+        identity_: &Identity,
+        after: Option<&Id>,
+    ) -> Result<Vec<binding::Record>> {
+        let meta = &self.installation;
+        let clock = &self.clock;
+        self.repository.transact(|tx| {
+            let actor = authorize(tx, identity_, meta, &clock.now(), None, Role::Host, false)?;
+            let mut result = vec![];
+            for row in tx.scan("hostbindingintent/")? {
+                let record: binding::Record = decode(&row, RECORD)?;
+                if record.intent.host != actor.id
+                    || after.is_some_and(|id| record.intent.request <= *id)
+                    || record
+                        .intent
+                        .before_cells
+                        .keys()
+                        .any(|c| !actor.cells.contains(c))
+                {
+                    continue;
+                }
+                let change =
+                    process_change::change(tx, &record.intent.change, &record.intent.cell)?;
+                if change.state != State::Staged
+                    || change
+                        .host_binding_plan
+                        .as_ref()
+                        .and_then(|p| p.digest().ok())
+                        != Some(record.intent.host_plan_digest)
+                {
+                    continue;
+                }
+                result.push(record);
+            }
+            result.sort_by(|a, b| a.intent.request.cmp(&b.intent.request));
+            result.truncate(16);
+            Ok(result)
+        })
+    }
+    pub fn host_binding_read_issue(
+        &mut self,
+        identity_: &Identity,
+        id: &Id,
+        issue: binding::Rejection,
+    ) -> Result<binding::Record> {
+        if !matches!(
+            issue,
+            binding::Rejection::TransportUnavailable | binding::Rejection::AuthorizationChanged
+        ) {
+            return reject(Reject::InvalidInput);
+        }
+        let meta = &self.installation;
+        let clock = &self.clock;
+        self.repository.transact(|tx| {
+            let actor = authorize(tx, identity_, meta, &clock.now(), None, Role::Host, false)?;
+            let (revision, mut record) = read(tx, id)?;
+            if record.intent.host != actor.id
+                || record
+                    .intent
+                    .before_cells
+                    .keys()
+                    .any(|c| !actor.cells.contains(c))
+            {
+                return reject(Reject::Forbidden);
+            }
+            for cell in record.intent.before_cells.keys() {
+                let (_, host): (_, HostRegistration) = load(tx, "host", (cell, &actor.id), HOST)?;
+                if host.session != identity_.session {
+                    return reject(Reject::ContinuityUnproven);
+                }
+            }
+            if record.issue == Some(issue) && record.phase != binding::Phase::MetadataMatched {
+                return Ok(record);
+            }
+            record.issue = Some(issue);
+            record.phase = if record.baseline.is_some() {
+                binding::Phase::BaselineRecorded
+            } else {
+                binding::Phase::AwaitingBaseline
+            };
+            save(tx, "hostbindingintent", id, Some(revision), RECORD, &record)?;
+            event(tx, "rx.event.host-binding-read-unavailable.v1", &record)?;
+            Ok(record)
+        })
+    }
     pub fn issue_host_binding_intents(
         &mut self,
         identity_: &Identity,

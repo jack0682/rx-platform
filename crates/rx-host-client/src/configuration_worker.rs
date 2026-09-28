@@ -49,6 +49,7 @@ pub struct Coordinator {
     transport: Arc<dyn Transport>,
     identity: Identity,
     after: Option<Id>,
+    binding_after: Option<Id>,
 }
 impl Coordinator {
     pub fn new(
@@ -71,6 +72,7 @@ impl Coordinator {
             transport,
             identity,
             after: None,
+            binding_after: None,
         })
     }
     async fn issue(&self, id: &Id, issue: Issue) -> Result<(), Error> {
@@ -108,6 +110,70 @@ impl Coordinator {
             return Err("clock reply".into());
         };
         Ok(t)
+    }
+    async fn binding_reads(&mut self) -> Result<(), Error> {
+        use rx_application::host_binding_transition::Rejection;
+        let Reply::HostBindingIntents(records) = self
+            .runtime
+            .request(Command::HostBindingIntents {
+                identity: self.identity.clone(),
+                after: self.binding_after.clone(),
+            })
+            .await?
+        else {
+            return Err("Host binding intent list reply".into());
+        };
+        self.binding_after = if records.len() == 16 {
+            records.last().map(|r| r.intent.request.clone())
+        } else {
+            None
+        };
+        if records.is_empty() {
+            return Ok(());
+        }
+        let started = self.now().await?;
+        let observation = self.transport.inspect().await;
+        for record in records {
+            let command = match &observation {
+                Ok(value) => Command::ObserveHostBindingIntent {
+                    identity: self.identity.clone(),
+                    request: record.intent.request.clone(),
+                    observation: Box::new(value.clone()),
+                    read_started: started.clone(),
+                },
+                Err(_) => Command::HostBindingReadIssue {
+                    identity: self.identity.clone(),
+                    request: record.intent.request.clone(),
+                    issue: Rejection::TransportUnavailable,
+                },
+            };
+            match self.runtime.request(command).await {
+                Ok(Reply::HostBindingIntent(_)) => {}
+                Err(rx_runtime::writer::WriterError::Rejected(rx_ports::StoreError::Rejected(
+                    _,
+                ))) => {
+                    match self
+                        .runtime
+                        .request(Command::HostBindingReadIssue {
+                            identity: self.identity.clone(),
+                            request: record.intent.request,
+                            issue: Rejection::AuthorizationChanged,
+                        })
+                        .await
+                    {
+                        Ok(Reply::HostBindingIntent(_))
+                        | Err(rx_runtime::writer::WriterError::Rejected(
+                            rx_ports::StoreError::Rejected(_),
+                        )) => {}
+                        Err(e) => return Err(Box::new(e)),
+                        _ => return Err("Host binding issue reply".into()),
+                    }
+                }
+                Err(e) => return Err(Box::new(e)),
+                _ => return Err("Host binding observation reply".into()),
+            }
+        }
+        Ok(())
     }
     pub async fn step(&mut self) -> Result<(), Error> {
         let Reply::HostConfigurationTasks(tasks) = self
@@ -219,6 +285,7 @@ impl Coordinator {
                 }
             }
         }
+        self.binding_reads().await?;
         Ok(())
     }
     pub async fn run(mut self, mut stop: tokio::sync::watch::Receiver<bool>) -> Result<(), Error> {
@@ -331,5 +398,208 @@ mod tests {
             fail: true,
         });
         assert!(coordinator(port).step().await.is_err());
+    }
+}
+
+#[cfg(test)]
+mod binding_reader_tests {
+    use super::*;
+    use rx_application::host_binding_transition as binding;
+    use rx_domain::host_configuration as data;
+    use rx_runtime::{application::CallFuture, writer::Status};
+    use std::{
+        collections::BTreeMap,
+        sync::{
+            Mutex,
+            atomic::{AtomicUsize, Ordering},
+        },
+    };
+    fn n(s: &str) -> Name {
+        Name::new(s).unwrap()
+    }
+    fn id(v: u8) -> Id {
+        Id::new(format!("00000000-0000-4000-8000-{v:012}")).unwrap()
+    }
+    fn at() -> TimePoint {
+        TimePoint {
+            clock_id: "test/clock".into(),
+            ticks_ns: Counter(100),
+        }
+    }
+    fn observation() -> Observation {
+        Observation {
+            schema: n("rx.host-process-configuration-observation.v1"),
+            snapshot: data::Snapshot {
+                schema: n("rx.host-process-configuration-snapshot.v1"),
+                host: n("host/test"),
+                host_boot: id(1),
+                delivery_journal: id(2),
+                evidence_journal: Some(id(3)),
+                installation_identity: Some(Digest::from_bytes([1; 32])),
+                binding_commit: None,
+                binding_digest: Digest::from_bytes([2; 32]),
+                cells: vec![data::CellObservation {
+                    cell: n("cell/a"),
+                    definition: Digest::from_bytes([3; 32]),
+                    envelope: Digest::from_bytes([4; 32]),
+                    environment: n("SIMULATION"),
+                    epoch: Counter(1),
+                    scopes: BTreeMap::from([(n("scope/a"), Counter(1))]),
+                    blocked: vec![],
+                    applied: None,
+                }],
+            },
+            receipt: None,
+            context_matches_current_host: false,
+            activation_authorized: false,
+        }
+    }
+    fn record(i: u8) -> binding::Record {
+        let cells = BTreeMap::from([(
+            n("cell/a"),
+            binding::CellIdentity {
+                definition: Digest::from_bytes([3; 32]),
+                envelope: Digest::from_bytes([4; 32]),
+                environment: n("SIMULATION"),
+            },
+        )]);
+        binding::Record {
+            intent: binding::Intent {
+                request: id(i),
+                change: id(20),
+                host: n("host/test"),
+                cell: n("cell/a"),
+                host_plan_digest: Digest::from_bytes([5; 32]),
+                before_configuration: Digest::from_bytes([6; 32]),
+                after_configuration: Digest::from_bytes([7; 32]),
+                before_cells: cells.clone(),
+                after_cells: cells,
+                runtime_boot: id(21),
+                created_at: at(),
+            },
+            phase: binding::Phase::AwaitingBaseline,
+            baseline: None,
+            observation: None,
+            read_started: None,
+            observed_session: None,
+            issue: None,
+            created_by: n("release"),
+            activation_authorized: false,
+        }
+    }
+    struct Port {
+        records: Vec<binding::Record>,
+        seen: Mutex<Vec<(&'static str, Id)>>,
+    }
+    impl ApplicationPort for Port {
+        fn status(&self) -> Status {
+            Status::Running
+        }
+        fn request(&self, command: Command) -> CallFuture<'_> {
+            Box::pin(async move {
+                Ok(match command {
+                    Command::HostConfigurationTasks { .. } => Reply::HostConfigurationTasks(vec![]),
+                    Command::HostBindingIntents { identity, .. } => {
+                        assert_eq!(identity.principal, n("host/test"));
+                        Reply::HostBindingIntents(self.records.clone())
+                    }
+                    Command::CurrentTime => Reply::Time(at()),
+                    Command::ObserveHostBindingIntent {
+                        request,
+                        observation,
+                        read_started,
+                        ..
+                    } => {
+                        assert_eq!(read_started, at());
+                        observation.validate().unwrap();
+                        self.seen.lock().unwrap().push(("OBSERVE", request.clone()));
+                        Reply::HostBindingIntent(Box::new(
+                            self.records
+                                .iter()
+                                .find(|r| r.intent.request == request)
+                                .unwrap()
+                                .clone(),
+                        ))
+                    }
+                    Command::HostBindingReadIssue { request, issue, .. } => {
+                        assert_eq!(issue, binding::Rejection::TransportUnavailable);
+                        self.seen
+                            .lock()
+                            .unwrap()
+                            .push(("UNAVAILABLE", request.clone()));
+                        Reply::HostBindingIntent(Box::new(
+                            self.records
+                                .iter()
+                                .find(|r| r.intent.request == request)
+                                .unwrap()
+                                .clone(),
+                        ))
+                    }
+                    _ => panic!("binding reader must never send a configuration/native mutation"),
+                })
+            })
+        }
+    }
+    struct Peer {
+        host: Name,
+        fail: bool,
+        reads: AtomicUsize,
+    }
+    #[tonic::async_trait]
+    impl Transport for Peer {
+        fn host(&self) -> &Name {
+            &self.host
+        }
+        async fn inspect(&self) -> Result<Observation, tonic::Status> {
+            self.reads.fetch_add(1, Ordering::SeqCst);
+            if self.fail {
+                Err(tonic::Status::unavailable("test reply lost"))
+            } else {
+                Ok(observation())
+            }
+        }
+        async fn open(&self, _: &[CellProjection], _: &str) -> Result<(), tonic::Status> {
+            panic!("no open for metadata reads")
+        }
+        async fn lookup(&self, _: &Id) -> Result<Observation, tonic::Status> {
+            panic!("no configuration lookup")
+        }
+        async fn apply(&self, _: &data::Request) -> Result<Observation, tonic::Status> {
+            panic!("no mutation")
+        }
+    }
+    #[tokio::test]
+    async fn one_bounded_read_serves_host_batch_and_transport_loss_is_not_a_match() {
+        for fail in [false, true] {
+            let port = Arc::new(Port {
+                records: vec![record(5), record(6)],
+                seen: Mutex::new(vec![]),
+            });
+            let peer = Arc::new(Peer {
+                host: n("host/test"),
+                fail,
+                reads: AtomicUsize::new(0),
+            });
+            let mut coordinator = Coordinator::with_transport(
+                port.clone(),
+                peer.clone(),
+                Identity {
+                    principal: n("host/test"),
+                    session: id(10),
+                    terminal: None,
+                },
+            )
+            .unwrap();
+            coordinator.step().await.unwrap();
+            assert_eq!(peer.reads.load(Ordering::SeqCst), 1);
+            let seen = port.seen.lock().unwrap();
+            assert_eq!(seen.len(), 2);
+            assert!(
+                seen.iter()
+                    .all(|(kind, _)| *kind == if fail { "UNAVAILABLE" } else { "OBSERVE" })
+            );
+            assert_eq!(seen[0].1, id(5));
+            assert_eq!(seen[1].1, id(6));
+        }
     }
 }

@@ -152,6 +152,15 @@ pub enum Command {
         reference: ArtifactRef,
     },
 
+    HostBindingIntents {
+        identity: Identity,
+        after: Option<Id>,
+    },
+    HostBindingReadIssue {
+        identity: Identity,
+        request: Id,
+        issue: rx_application::host_binding_transition::Rejection,
+    },
     IssueHostBindingIntents {
         identity: Identity,
         key: Id,
@@ -1139,6 +1148,18 @@ impl<R: Repository + Send + 'static, C: Clock + 'static, A: QualificationAuthori
                 .requalification_artifact(&identity, &cell, &id, &reference)
                 .map(Reply::ArtifactBytes),
 
+            Command::HostBindingIntents { identity, after } => self
+                .engine
+                .host_binding_intents(&identity, after.as_ref())
+                .map(Reply::HostBindingIntents),
+            Command::HostBindingReadIssue {
+                identity,
+                request,
+                issue,
+            } => self
+                .engine
+                .host_binding_read_issue(&identity, &request, issue)
+                .map(|v| Reply::HostBindingIntent(Box::new(v))),
             Command::IssueHostBindingIntents {
                 identity,
                 key,
