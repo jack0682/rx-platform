@@ -32,6 +32,11 @@ with tempfile.TemporaryDirectory(prefix='rx-platform-image-') as temporary:
             raw=source.read_bytes();assert len(raw)<=1048576 and len(raw)==int(reference['size_bytes']) and hashlib.sha256(raw).hexdigest()==reference['sha256']
             (fixture/'intake-assets'/reference['sha256']).write_bytes(raw)
             asset['path']='/config/intake-assets/'+reference['sha256']
+        if args.device_review_image:
+            policy['schema']='rx.package-verification-policy.v2'
+            policy['additional_package_abis']=['rx.package-abi.v1']
+            policy['keys'][0]['kinds']=['DEVICE','PROCESS']
+            policy['keys'][0]['permissions'].append({'kind':'OPERATION_SUBMIT','operation':'skill/1'})
         policy_bytes=json.dumps(policy,sort_keys=True,separators=(',',':')).encode()
         shutil.copytree(args.package,fixture/'intake'/'published');(fixture/'intake-policy.json').write_bytes(policy_bytes)
         startup=json.loads((fixture/'startup.json').read_bytes())
@@ -41,7 +46,7 @@ with tempfile.TemporaryDirectory(prefix='rx-platform-image-') as temporary:
         catalog['terminals'][0]['certificate_digest']=hashlib.sha256(der).hexdigest()
         if args.device_review_image:
             catalog['bootstrap']['roles'].append('VERIFIER')
-            catalog['principals'].append({'id':'reviewer','client_namespace':'reviewer','roles':['VERIFIER'],'cells':['cell/a'],'active':True})
+            catalog['principals'].append({'id':'reviewer','client_namespace':'reviewer','roles':['VERIFIER','RELEASE_MANAGER'],'cells':['cell/a'],'active':True})
             credential_path=fixture/Path(startup['credentials']['path']).name
             credentials=json.loads(credential_path.read_bytes())
             credentials['accounts'].append({'principal':'reviewer','password_hash':credentials['accounts'][0]['password_hash']})
@@ -56,6 +61,11 @@ with tempfile.TemporaryDirectory(prefix='rx-platform-image-') as temporary:
             authority={'schema':'rx.device-verification-authority.v1','keys':[{'id':'test/key','public_key':policy['keys'][0]['verifying_key'],'validators':[checker]}]}
             raw=json.dumps(authority,sort_keys=True,separators=(',',':')).encode();(fixture/'device-authority.json').write_bytes(raw)
             startup['package_intake']['device_review_authority']={'path':'/config/device-authority.json','sha256':hashlib.sha256(raw).hexdigest()}
+            process_checker=json.loads(run('docker','run','--rm','--network','none','--entrypoint','/opt/rx/bin/rx-process-package',args.device_review_image,'validator-identity'))['validator_digest']
+            authority={'schema':'rx.process-verification-authority.v1','keys':[{'id':'test/key','public_key':policy['keys'][0]['verifying_key'],'validators':[process_checker]}]}
+            raw=json.dumps(authority,sort_keys=True,separators=(',',':')).encode();(fixture/'process-authority.json').write_bytes(raw)
+            startup['package_intake']['review_authority']={'path':'/config/process-authority.json','sha256':hashlib.sha256(raw).hexdigest()}
+
         (fixture/'startup.json').write_text(json.dumps(startup,sort_keys=True,separators=(',',':')))
     try:
         for name in [config_volume,data_volume]:run('docker','volume','create',name)
@@ -168,13 +178,56 @@ with tempfile.TemporaryDirectory(prefix='rx-platform-image-') as temporary:
                 assert composition==recovered_composition and composition['status']=='DRAFT_READY_FOR_COMPILER'
                 provenance=composition['compile_input']['device_sources']['skill/1']
                 assert provenance['plan']['id']==reviewed_plan['id'] and provenance['binding']=='skill/python'
+                def process_cli(*argv):return run('docker','run','--rm','--user','0','--network','none','-v',config_volume+':/config','--entrypoint','/opt/rx/bin/rx-process-package',args.device_review_image,*argv)
+                def put_json(filename,value):
+                    local=Path(temporary)/filename;local.write_text(json.dumps(value));run('docker','cp',str(local),setup+':/config/'+filename)
+                def sign_public_request(remote,name):
+                    source=Path(temporary)/(name+'.json');output=Path(temporary)/(name+'.sig.json')
+                    run('docker','cp',setup+':'+remote,str(source))
+                    env=dict(signer_env,RX_PYTHON_SIGN_REQUEST=str(source),RX_PYTHON_SIGN_OUTPUT=str(output))
+                    run(str(args.device_review_source.resolve()/'tools/cargo'),'test','-p','rx-device-package','--test','python','sign_python_fixture_message','--locked','--','--ignored','--exact',cwd=args.device_review_source,env=env)
+                    return output
+                manifest=receipt['manifest'];contracts=dict(manifest['contracts'],package_abi='rx.package-abi.v1')
+                recipe={'schema':'rx.process-package-recipe.v1','package':'test/python-process','version':'1.0.0','publisher':'test','contracts':contracts,'targets':manifest['targets'],'dependencies':[],'assets':manifest['assets']}
+                put_json('python-compile-input.json',composition['compile_input']);put_json('python-process-recipe.json',recipe)
+                process_candidate=json.loads(process_cli('assemble','/config/python-compile-input.json','/config/python-process-recipe.json','/config/python-process-candidate'))
+                process_cli('request','/config/python-process-candidate','test/key','/config/python-process-signing.json')
+                signed=sign_public_request('/config/python-process-signing.json','python-process')
+                run('docker','cp',str(signed),setup+':/config/python-process.sig.json')
+                process_cli('seal','/config/python-process-candidate','/config/python-process.sig.json','/config/intake-policy.json','/config/intake/python-process')
+                run('docker','run','--rm','--user','0','--network','none','-v',config_volume+':/config','--entrypoint','/bin/sh',args.image,'-c','chown -R 10001:10001 /config/intake/python-process; chmod -R u+rwX,go-rwx /config/intake/python-process')
+                signature_hash=hashlib.sha256(signed.read_bytes()).hexdigest()
+                process_intake,_=api('/api/v1/package-intakes',{'request_key':str(uuid.uuid4()),'command':{'id':str(uuid.uuid4()),'cell':'cell/a','title':'Reviewed Python process','relative_path':'python-process','object':{'manifest':process_candidate['manifest_digest'],'signature':signature_hash},'configuration_digest':context['configuration_digest'],'policy_generation':context['registration']['generation']}},cookie)
+                process_job,_=api('/api/v1/process-reviews',{'request_key':str(uuid.uuid4()),'command':{'id':str(uuid.uuid4()),'intake':process_intake['id'],'cell':'cell/a','configuration_digest':context['configuration_digest'],'policy_generation':context['registration']['generation'],'binding_selections':{'skill/1':'skill/python'},'device_plans':[provenance['plan']]}},cookie)
+                put_json('python-process-review-request.json',process_job['request'])
+                process_report=json.loads(process_cli('review','/config/intake/python-process','/config/intake-policy.json','/config/python-process-review-request.json','/config/intake/python-process-review'))
+                assert process_report['compiler_checks_passed']
+                process_cli('review-signing-request','/config/intake/python-process-review/verification.json','test/key','/config/python-process-report-signing.json')
+                signed_report=sign_public_request('/config/python-process-report-signing.json','python-process-report')
+                run('docker','cp',str(signed_report),setup+':/config/intake/python-process-review/verification.sig.json')
+                run('docker','run','--rm','--user','0','--network','none','-v',config_volume+':/config','--entrypoint','/bin/sh',args.image,'-c','chown -R 10001:10001 /config/intake/python-process /config/intake/python-process-review; chmod -R u+rwX,go-rwx /config/intake/python-process /config/intake/python-process-review')
+                process_version,_=api('/api/v1/process-review/reports',{'request_key':str(uuid.uuid4()),'command':{'review':process_job['request']['id'],'cell':'cell/a','expected':None,'directory':'python-process-review','report_digest':process_report['report_digest']}},cookie)
+                process_decision,_=api('/api/v1/process-review/decisions',{'request_key':str(uuid.uuid4()),'command':{'review':process_job['request']['id'],'cell':'cell/a','report_revision':process_version['revision'],'review_digest':process_version['review_digest'],'expected':None,'choice':'APPROVE','note':'Separate fixture reviewer checked signed Python process.'}},reviewer_cookie)
+                change,_=api('/api/v1/process-changes',{'request_key':str(uuid.uuid4()),'command':{'id':str(uuid.uuid4()),'cell':'cell/a','mode':'REPLACE','review':{'id':process_job['request']['id'],'revision':process_version['revision'],'review_digest':process_version['review_digest'],'decision_revision':process_decision['revision']},'reason':'Prepare the reviewed Python process deployment.'}},cookie)
+                assert change['host_binding_plan'] is not None
+                def transition(value):return {'change':value['id'],'cell':'cell/a','expected':value['revision'],'plan_digest':value['plan_digest']}
+                change,_=api('/api/v1/process-change/impact-review',{'request_key':str(uuid.uuid4()),'command':{'target':transition(change),'note':'Review isolated simulation binding replacement.'}},reviewer_cookie)
+                change,_=api('/api/v1/process-change/stage',{'request_key':str(uuid.uuid4()),'command':transition(change)},reviewer_cookie)
+                try:api('/api/v1/process-change/prepare',{'request_key':str(uuid.uuid4()),'command':{'target':transition(change),'refresh':False}},reviewer_cookie)
+                except urllib.error.HTTPError as blocked:
+                    assert blocked.code in (409,422);deployment_denial={'status':blocked.code,'body':json.loads(blocked.read())}
+                else:raise AssertionError('Host binding replacement guard unexpectedly passed')
+                change_detail,_=api('/api/v1/process-change?cell=cell%2Fa&id='+change['id'],cookie=cookie)
+                assert any(v['kind']=='HOST_BINDING_CHANGE_REQUIRED' for v in change_detail['blockers'])
+                deployment={'process_intake':process_intake,'process_report':process_report,'process_decision':process_decision,'change':change_detail,'guard':deployment_denial,'status':'HOST_BINDING_CHANGE_REQUIRED'}
+
 
                 final_cell,_=api('/api/v1/cell?id=cell%2Fa',cookie=cookie)
                 assert final_cell['value']['configuration']==cell['value']['configuration']
                 final_overview,_=api('/api/v1/overview',cookie=cookie)
                 assert all(not c['runs'] and c['cell']['value']['qualification'] is None for c in final_overview['cells'])
 
-                review_test={'request':job['request'],'report':report,'version':version,'pre_approval_detail':detail,'detail':approved_detail,'repeat_returns_same_report_version':True,'self_approval_denied':True,'decision':decision,'binding_plan':reviewed_plan,'binding_options':selected,'composition':composition,'compose_recovery_preserved':True}
+                review_test={'request':job['request'],'report':report,'version':version,'pre_approval_detail':detail,'detail':approved_detail,'repeat_returns_same_report_version':True,'self_approval_denied':True,'decision':decision,'binding_plan':reviewed_plan,'binding_options':selected,'composition':composition,'compose_recovery_preserved':True,'deployment':deployment}
             package_test={'status':'PASS','receipt':receipt,'view':page['packages'][0],'repeat_returns_identical_receipt':True,'no_run_or_qualification':True,'policy_sha256':hashlib.sha256(policy_bytes).hexdigest(),'device_catalog':device_catalog,'device_review':review_test}
         run('docker','stop','--time','15',service)
         stopped=json.loads(run('docker','inspect',service))[0];assert stopped['State']['ExitCode']==0,run('docker','logs',service)
