@@ -78,6 +78,43 @@ def invoke_scene(context, active):
     catalog = call('skills')
     selected = next(v for v in catalog['bindings'] if v['binding']['cell']==c['delivery']['cell'])
     name = selected['binding']['name']; cell = selected['binding']['cell']
+    # Compose using an Engineer session; this must not start a Run or arm hardware.
+    engineer_password = private/'engineer-password'
+    engineer_password.write_text(browser['credentials']['engineer']); engineer_password.chmod(0o600)
+    engineer_connection = private/'engineer-connection.json'
+    engineer_connection.write_text(json.dumps(dict(value,principal='engineer',password_file=str(engineer_password))))
+    engineer_connection.chmod(0o600)
+    author = [sys.executable,str(client/'rx'),'runtime','--connection',str(engineer_connection),'--state-dir',str(state)]
+    def author_call(*args):
+        reply=subprocess.run(author+list(args),capture_output=True,text=True,timeout=100)
+        if reply.returncode:raise RuntimeError('installed authoring CLI failed: '+reply.stderr[-3000:])
+        return json.loads(reply.stdout)
+    options=author_call('steps','--cell',cell)
+    step=options['candidates'][0]['step'];composition_id=str(uuid.uuid4())
+    author_crash=private/'crash_author.py'
+    author_crash.write_text("import os,runpy,signal,sys\nfrom pathlib import Path\nsys.path.insert(0,sys.argv[1])\nimport runtime_client\nreal=runtime_client.Terminal.request\ndef cut(self,path,body=None):\n value=real(self,path,body)\n if path=='/api/v1/process-draft-bindings':os.kill(os.getpid(),signal.SIGKILL)\n return value\nruntime_client.Terminal.request=cut\nscript=str(Path(sys.argv[1])/'rx')\nsys.argv=[script]+sys.argv[2:]\nrunpy.run_path(script,run_name='__main__')\n")
+    author_args=['runtime','--connection',str(engineer_connection),'--state-dir',str(state),
+        'compose','composed-transfer','--cell',cell,'--step',step,'--step',step,'--request-id',composition_id]
+    author_cut=subprocess.run([sys.executable,str(author_crash),str(client),*author_args],capture_output=True,text=True,timeout=100)
+    assert author_cut.returncode==-9,(author_cut.returncode,author_cut.stderr[-2000:])
+    author_journal=state/composition_id
+    assert not (author_journal/'compose-bindings.reply.json').exists()
+    original_binding_request=(author_journal/'compose-bindings.request.json').read_bytes()
+    composition=author_call('compose-recover',composition_id)
+    assert (author_journal/'compose-bindings.request.json').read_bytes()==original_binding_request
+    recovered_composition=author_call('compose-recover',composition_id)
+    assert composition==recovered_composition and composition['execution_authorized'] is False
+    source=composition['compile_input']['source']
+    assert [n['body']['kind'] for n in source['flows'][0]['nodes']]==['SEQUENCE','OPERATION','OPERATION']
+    assert len(composition['compile_input']['bindings'])==2
+    authored=private/'authored';authored.mkdir()
+    publish_new(authored/'compile-input.json',composition['compile_input'])
+    d.put(c['s_image']['Id'],c['materials'].compiler_work,authored)
+    assembled=d.command(c['s_image']['Id'],'/opt/rx/bin/rx-process-package',
+        ['assemble','/work/compile-input.json','/config/package-recipe.json','/work/authored-candidate'],
+        [c['materials'].compiler_config+':/config:ro',c['materials'].compiler_work+':/work:rw'],'authored-package-assemble')
+    publish_new(d.evidence/'composition.json',{'status':'PASS','composition':composition,
+        'assembly':json.loads(assembled),'consumer_exit':author_cut.returncode,'original_binding_request':json.loads(original_binding_request),'scope':'Actual P draft/binding registration and exported input accepted by existing package assembler; no activation of this new draft'})
     assert selected['commissioning']=='COMMISSIONED'
     assert selected['binding']['environment']=='SIMULATION'
     assert selected['binding']['input_mode']=='BOUND_CONFIGURATION'
