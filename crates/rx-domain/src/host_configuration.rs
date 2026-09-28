@@ -122,6 +122,8 @@ pub struct BindingCommit {
 #[serde(deny_unknown_fields)]
 pub struct Snapshot {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evidence_journal: Option<Id>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub installation_identity: Option<Digest>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub binding_commit: Option<BindingCommit>,
@@ -217,6 +219,7 @@ impl Observation {
         if let Some(commit) = &s.binding_commit
             && (commit.schema.as_str() != "rx.host-binding-commit-observation.v1"
                 || s.installation_identity != Some(commit.after_installation_identity)
+                || s.evidence_journal.as_ref() != Some(&commit.evidence_journal)
                 || commit.delivery_journal != s.delivery_journal
                 || commit.binding_digest != s.binding_digest
                 || !s.cells.iter().any(|c| c.cell == commit.cell))
@@ -280,6 +283,7 @@ mod binding_commit_tests {
         Observation {
             schema: n("rx.host-process-configuration-observation.v1"),
             snapshot: Snapshot {
+                evidence_journal: None,
                 installation_identity: None,
                 binding_commit: None,
                 schema: n("rx.host-process-configuration-snapshot.v1"),
@@ -313,6 +317,7 @@ mod binding_commit_tests {
         let decoded: Observation = serde_json::from_value(legacy).unwrap();
         assert!(decoded.snapshot.binding_commit.is_none());
         value.snapshot.installation_identity = Some(Digest::from_bytes([8; 32]));
+        value.snapshot.evidence_journal = Some(id(4));
         value.snapshot.binding_commit = Some(BindingCommit {
             schema: n("rx.host-binding-commit-observation.v1"),
             request: id(3),

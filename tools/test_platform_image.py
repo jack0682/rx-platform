@@ -213,13 +213,28 @@ with tempfile.TemporaryDirectory(prefix='rx-platform-image-') as temporary:
                 def transition(value):return {'change':value['id'],'cell':'cell/a','expected':value['revision'],'plan_digest':value['plan_digest']}
                 change,_=api('/api/v1/process-change/impact-review',{'request_key':str(uuid.uuid4()),'command':{'target':transition(change),'note':'Review isolated simulation binding replacement.'}},reviewer_cookie)
                 change,_=api('/api/v1/process-change/stage',{'request_key':str(uuid.uuid4()),'command':transition(change)},reviewer_cookie)
+                binding_intent_request={'request_key':str(uuid.uuid4()),'command':transition(change)}
+                try:api('/api/v1/process-change/host-binding-intents',binding_intent_request,cookie)
+                except urllib.error.HTTPError as denied:assert denied.code==403
+                else:raise AssertionError('binding intent issuance accepted without ReleaseManager role')
+                binding_intents,_=api('/api/v1/process-change/host-binding-intents',binding_intent_request,reviewer_cookie)
+                same_intents,_=api('/api/v1/process-change/host-binding-intents',binding_intent_request,reviewer_cookie)
+                assert binding_intents==same_intents and len(binding_intents)==len(change['host_binding_plan']['hosts'])
+                conflicting={'request_key':binding_intent_request['request_key'],'command':dict(binding_intent_request['command'],plan_digest='00'*32)}
+                try:api('/api/v1/process-change/host-binding-intents',conflicting,reviewer_cookie)
+                except urllib.error.HTTPError as denied:assert denied.code==409
+                else:raise AssertionError('binding request key accepted changed content')
+
+                for intent in binding_intents:
+                    assert intent['phase']=='AWAITING_BASELINE' and intent['baseline'] is None and not intent['activation_authorized']
+                    assert intent['intent']['change']==change['id'] and intent['intent']['before_configuration']==change['before']['sha256'] and intent['intent']['after_configuration']==change['after']['sha256']
                 try:api('/api/v1/process-change/prepare',{'request_key':str(uuid.uuid4()),'command':{'target':transition(change),'refresh':False}},reviewer_cookie)
                 except urllib.error.HTTPError as blocked:
                     assert blocked.code in (409,422);deployment_denial={'status':blocked.code,'body':json.loads(blocked.read())}
                 else:raise AssertionError('Host binding replacement guard unexpectedly passed')
                 change_detail,_=api('/api/v1/process-change?cell=cell%2Fa&id='+change['id'],cookie=cookie)
                 assert any(v['kind']=='HOST_BINDING_CHANGE_REQUIRED' for v in change_detail['blockers'])
-                deployment={'process_intake':process_intake,'process_report':process_report,'process_decision':process_decision,'change':change_detail,'guard':deployment_denial,'status':'HOST_BINDING_CHANGE_REQUIRED'}
+                deployment={'process_intake':process_intake,'process_report':process_report,'process_decision':process_decision,'change':change_detail,'guard':deployment_denial,'status':'HOST_BINDING_CHANGE_REQUIRED','binding_intents':binding_intents,'same_intents_on_retry':True}
 
 
                 final_cell,_=api('/api/v1/cell?id=cell%2Fa',cookie=cookie)

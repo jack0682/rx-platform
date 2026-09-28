@@ -40,6 +40,7 @@ fn provenance(input: &host_link::Prepare) -> BootstrapProvenance {
         configuration: config::Observation {
             schema: name("rx.host-process-configuration-observation.v1"),
             snapshot: config::Snapshot {
+                evidence_journal: None,
                 installation_identity: None,
                 binding_commit: None,
                 schema: name("rx.host-process-configuration-snapshot.v1"),

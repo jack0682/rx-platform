@@ -29,3 +29,12 @@ The source revision/hash changes. Base protobuf fields and RPC names are unchang
 Old JSON without the optional field still decodes; old strict readers cannot consume
 the new field. Exact optional-binding hash negotiation requires matched P/Host/SDK
 versions rather than silent fallback. The frozen base manifests are unchanged.
+
+
+## Source revision 3 — baseline evidence journal
+
+`Snapshot.evidence_journal` carries the current evidence journal ID in addition
+to the existing delivery journal. Binding commit observations require an exact
+match with this field. P must record both IDs before replacement and compare both
+afterward. A missing baseline evidence journal is unsupported confirmation, not
+an inferred match. Exact hash negotiation applies to this revision as above.

@@ -81,6 +81,7 @@ fn configuration_read(snapshot: &rx_domain::host_snapshot::HostSnapshot) -> hc::
     hc::Observation {
         schema: name("rx.host-process-configuration-observation.v1"),
         snapshot: hc::Snapshot {
+            evidence_journal: None,
             installation_identity: None,
             binding_commit: None,
             schema: name("rx.host-process-configuration-snapshot.v1"),

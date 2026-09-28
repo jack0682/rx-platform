@@ -50,3 +50,5 @@ pub mod host_recovery;
 
 pub mod runtime_skill;
 pub mod software_skill;
+
+pub mod host_binding_transition;

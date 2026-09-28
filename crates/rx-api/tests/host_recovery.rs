@@ -977,6 +977,7 @@ fn proposal_view(
         configuration: Observation {
             schema: name("rx.host-process-configuration-observation.v1"),
             snapshot: Snapshot {
+                evidence_journal: None,
                 installation_identity: None,
                 binding_commit: None,
                 schema: name("rx.host-process-configuration-snapshot.v1"),

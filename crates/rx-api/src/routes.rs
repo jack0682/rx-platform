@@ -199,6 +199,10 @@ fn build_router(
         .route("/api/v1/process-review", get(get_process_review))
         .route("/api/v1/process-changes", post(propose_process_change))
         .route("/api/v1/process-change", get(get_process_change))
+        .route(
+            "/api/v1/process-change/host-binding-intents",
+            post(issue_host_binding_intents),
+        )
         .route("/api/v1/process-change/apply", post(apply_process_change))
         .route(
             "/api/v1/process-change/configure-hosts",
@@ -501,6 +505,25 @@ async fn overview(State(s): State<ApiState>, headers: HeaderMap) -> Result<Respo
         .await?
     {
         Reply::Overview(value) => Ok(Json(value).into_response()),
+        _ => Err(mismatch()),
+    }
+}
+async fn issue_host_binding_intents(
+    State(s): State<ApiState>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Response, ApiError> {
+    let value: Mutation<rx_application::process_change::Transition> = decode(&body)?;
+    match s
+        .runtime
+        .request(Command::IssueHostBindingIntents {
+            identity: identity(&s, &headers)?,
+            key: value.request_key,
+            input: value.command,
+        })
+        .await?
+    {
+        Reply::HostBindingIntents(v) => Ok(Json(v).into_response()),
         _ => Err(mismatch()),
     }
 }
