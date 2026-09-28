@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
 """Run only the new uncommissioned platform image, using isolated disposable volumes/certificates."""
-import argparse,hashlib,json,os,shutil,socket,ssl,subprocess,tempfile,time,urllib.request,uuid
+import argparse,hashlib,json,os,shutil,socket,ssl,subprocess,sys,tempfile,time,urllib.request,uuid
 from pathlib import Path
 parser=argparse.ArgumentParser();parser.add_argument('--image',default='rx-platform:runtime-draft');parser.add_argument('--evidence',required=True,type=Path);parser.add_argument('--package',type=Path);parser.add_argument('--package-policy',type=Path);parser.add_argument('--device-review-image');parser.add_argument('--device-review-source',type=Path);args=parser.parse_args()
 assert bool(args.device_review_image)==bool(args.device_review_source) and (not args.device_review_image or args.package)
 assert bool(args.package)==bool(args.package_policy), 'package and policy must be supplied together'
 root=Path(__file__).resolve().parents[1]
 def run(*argv,**kwargs):
-    return subprocess.run(argv,check=True,capture_output=True,text=True,**kwargs).stdout.strip()
+    result=subprocess.run(argv,capture_output=True,text=True,**kwargs)
+    if result.returncode:raise RuntimeError('test command failed: '+str(argv[0])+': '+result.stderr[-4000:]+' '+result.stdout[-1000:])
+    return result.stdout.strip()
+args.image=json.loads(run('docker','image','inspect',args.image))[0]['Id']
+if args.device_review_image:args.device_review_image=json.loads(run('docker','image','inspect',args.device_review_image))[0]['Id']
 with socket.socket() as s:
     s.bind(('127.0.0.1',0));port=s.getsockname()[1]
 suffix=uuid.uuid4().hex[:12];config_volume='rx-platform-config-'+suffix;data_volume='rx-platform-data-'+suffix;setup='rx-platform-setup-'+suffix;service='rx-platform-smoke-'+suffix
@@ -35,6 +39,15 @@ with tempfile.TemporaryDirectory(prefix='rx-platform-image-') as temporary:
         # Isolated fixture only: register the probe certificate as this test terminal.
         der=ssl.PEM_cert_to_DER_cert((fixture/'probe.pem').read_text())
         catalog['terminals'][0]['certificate_digest']=hashlib.sha256(der).hexdigest()
+        if args.device_review_image:
+            catalog['bootstrap']['roles'].append('VERIFIER')
+            catalog['principals'].append({'id':'reviewer','client_namespace':'reviewer','roles':['VERIFIER'],'cells':['cell/a'],'active':True})
+            credential_path=fixture/Path(startup['credentials']['path']).name
+            credentials=json.loads(credential_path.read_bytes())
+            credentials['accounts'].append({'principal':'reviewer','password_hash':credentials['accounts'][0]['password_hash']})
+            raw=json.dumps(credentials,sort_keys=True,separators=(',',':')).encode();credential_path.write_bytes(raw)
+            startup['credentials']['sha256']=hashlib.sha256(raw).hexdigest()
+
         catalog_path.write_text(json.dumps(catalog,sort_keys=True,separators=(',',':')))
         startup['catalog']['sha256']=hashlib.sha256(catalog_path.read_bytes()).hexdigest()
         startup['package_intake']={'import_root':'/config/intake','policy':{'path':'/config/intake-policy.json','sha256':hashlib.sha256(policy_bytes).hexdigest()}}
@@ -116,14 +129,59 @@ with tempfile.TemporaryDirectory(prefix='rx-platform-image-') as temporary:
                 assert version==repeat_version and version['ready_for_software_approval']
                 detail,_=api('/api/v1/device-review?cell=cell%2Fa&id='+job['request']['id'],cookie=cookie)
                 assert detail['decision'] is None and not detail['activation_authorized']
-                review_test={'request':job['request'],'report':report,'version':version,'detail':detail,'repeat_returns_same_report_version':True}
+                decision_command={'review':job['request']['id'],'cell':'cell/a','report_revision':version['revision'],'review_digest':version['review_digest'],'expected':None,'choice':'APPROVE','note':'Separate test account reviewed exact software report; no physical qualification.'}
+                try:api('/api/v1/device-review/decisions',{'request_key':str(uuid.uuid4()),'command':decision_command},cookie)
+                except urllib.error.HTTPError as denied:assert denied.code==403
+                else:raise AssertionError('submitter self-approval accepted')
+                _,reviewer_headers=api('/api/v1/session',{'principal':'reviewer','password':'composition-test-password'})
+                reviewer_cookie=reviewer_headers['set-cookie'].split(';')[0]
+                decision,_=api('/api/v1/device-review/decisions',{'request_key':str(uuid.uuid4()),'command':decision_command},reviewer_cookie)
+                cell,_=api('/api/v1/cell?id=cell%2Fa',cookie=cookie)
+                required=device_catalog['catalog']['condition_ids']
+                assert required==['sim/ready'], 'this Python fixture supports one explicitly declared readiness condition'
+                plan_input={'id':str(uuid.uuid4()),'cell':'cell/a','review':{'id':job['request']['id'],'revision':version['revision'],'review_digest':version['review_digest'],'decision_revision':decision['revision']},
+                    'bindings':{'skill/python':{'action':'skill/run','host':cell['value']['configuration']['hosts'][0],
+                        'conditions':{name:cell['value']['configuration']['start_conditions'][0] for name in required},'completion_postconditions':[], 'handover_max_age_ns':'1000000000'}},
+                    'reason':'Bind the reviewed Python SDK declaration; no deployment or qualification inferred.'}
+                plan,_=api('/api/v1/device-binding-plans',{'request_key':str(uuid.uuid4()),'command':plan_input},cookie)
+                assert not plan['definition']['issues'],plan['definition']['issues']
+                reviewed_plan,_=api('/api/v1/device-binding-plan/impact-review',{'request_key':str(uuid.uuid4()),'command':{'plan':plan['id'],'cell':'cell/a','expected':plan['revision'],'plan_digest':plan['plan_digest'],'note':'Checked isolated simulation Host/resource scope.'}},reviewer_cookie)
+                assert reviewed_plan['state']=='IMPACT_REVIEWED'
+                selected,_=api('/api/v1/process-draft/binding-options',{'cell':'cell/a','device_plans':[{'id':reviewed_plan['id'],'revision':reviewed_plan['revision'],'plan_digest':reviewed_plan['plan_digest']}]},cookie)
+                assert any(c['step']=='skill/python' and c['device_plan'] is not None for c in selected['candidates'])
+                approved_detail,_=api('/api/v1/device-review?cell=cell%2Fa&id='+job['request']['id'],cookie=cookie)
+                assert approved_detail['approval_matches_current_review'] and not approved_detail['activation_authorized']
+                cli_holder='rx-python-cli-'+suffix
+                try:
+                    run('docker','create','--name',cli_holder,'--entrypoint','/bin/true',args.device_review_image)
+                    client=Path(temporary)/'installed-client';run('docker','cp',cli_holder+':/opt/rx/client',str(client))
+                finally:subprocess.run(['docker','rm','-f',cli_holder],capture_output=True)
+                for name in ['rx','runtime_client.py']:
+                    assert (client/name).read_bytes()==(args.device_review_source/'deployment/local-skills'/name).read_bytes()
+                (fixture/'probe.key').chmod(0o600)
+                password=Path(temporary)/'author-password';password.write_text('composition-test-password');password.chmod(0o600)
+                connection=Path(temporary)/'author-connection.json';connection.write_text(json.dumps({'schema':'rx.runtime-skill-connection.v1','origin':origin,'ca':str(fixture/'ca.pem'),'certificate':str(fixture/'probe.pem'),'private_key':str(fixture/'probe.key'),'principal':'admin','password_file':str(password)}));connection.chmod(0o600)
+                plan_file=Path(temporary)/'reviewed-plan.json';plan_file.write_text(json.dumps(reviewed_plan))
+                compose_id=str(uuid.uuid4());cli=[sys.executable,str(client/'rx'),'runtime','--connection',str(connection),'--state-dir',str(Path(temporary)/'author-journal')]
+                composition=json.loads(run(*cli,'compose','python-composition','--cell','cell/a','--step','skill/python','--device-plan',str(plan_file),'--request-id',compose_id))
+                recovered_composition=json.loads(run(*cli,'compose-recover',compose_id))
+                assert composition==recovered_composition and composition['status']=='DRAFT_READY_FOR_COMPILER'
+                provenance=composition['compile_input']['device_sources']['skill/1']
+                assert provenance['plan']['id']==reviewed_plan['id'] and provenance['binding']=='skill/python'
+
+                final_cell,_=api('/api/v1/cell?id=cell%2Fa',cookie=cookie)
+                assert final_cell['value']['configuration']==cell['value']['configuration']
+                final_overview,_=api('/api/v1/overview',cookie=cookie)
+                assert all(not c['runs'] and c['cell']['value']['qualification'] is None for c in final_overview['cells'])
+
+                review_test={'request':job['request'],'report':report,'version':version,'pre_approval_detail':detail,'detail':approved_detail,'repeat_returns_same_report_version':True,'self_approval_denied':True,'decision':decision,'binding_plan':reviewed_plan,'binding_options':selected,'composition':composition,'compose_recovery_preserved':True}
             package_test={'status':'PASS','receipt':receipt,'view':page['packages'][0],'repeat_returns_identical_receipt':True,'no_run_or_qualification':True,'policy_sha256':hashlib.sha256(policy_bytes).hexdigest(),'device_catalog':device_catalog,'device_review':review_test}
         run('docker','stop','--time','15',service)
         stopped=json.loads(run('docker','inspect',service))[0];assert stopped['State']['ExitCode']==0,run('docker','logs',service)
         run('docker','cp',service+':/data/runtime/platform-status.json',str(Path(temporary)/'stopped.json'))
         after=json.loads((Path(temporary)/'stopped.json').read_text());assert after['phase']=='PROCESS_STOPPED';assert after['stop']['lifecycle']['phase']=='STOP_COMMITTED';assert not after['physical_shutdown_assessed']
         image=json.loads(run('docker','image','inspect',args.image))[0]
-        result={'schema':'rx.platform-image-smoke.v1','status':'PASS','image_id':image['Id'],'os':image['Os'],'architecture':image['Architecture'],'user':inspected['Config']['User'],'read_only_root':True,'cap_drop':['ALL'],'https_health':health,'startup':before,'stop':after,'package_intake':package_test,'limitations':['uncommissioned draft authority','no Host/controller launch','no physical shutdown qualification','config/data volumes and test certificates were disposable']}
+        result={'schema':'rx.platform-image-smoke.v1','status':'PASS','image_id':image['Id'],'os':image['Os'],'architecture':image['Architecture'],'user':inspected['Config']['User'],'read_only_root':True,'cap_drop':['ALL'],'https_health':health,'startup':before,'stop':after,'package_intake':package_test,'device_review_image':args.device_review_image,'limitations':['uncommissioned draft authority','no Host/controller launch','no physical shutdown qualification','config/data volumes and test certificates were disposable']}
         args.evidence.parent.mkdir(parents=True,exist_ok=True);args.evidence.write_text(json.dumps(result,indent=2)+'\n');print(json.dumps({'status':'PASS','image':image['Id']}))
     finally:
         for name in [service,setup]:subprocess.run(['docker','rm','-f',name],capture_output=True)
