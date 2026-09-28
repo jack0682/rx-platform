@@ -158,6 +158,25 @@ pub struct Engine<R> {
     repository: R,
 }
 impl<R: Repository> Engine<R> {
+    pub fn open_existing(mut repository: R, now: u64) -> Result<Self> {
+        repository.transact(|tx| {
+            let row = tx.get(&key("local-sim/installation")?)?.ok_or_else(|| {
+                invalid("existing installation metadata missing; initialization refused")
+            })?;
+            if row.document.schema.as_str() != "rx.local-sim.installation.v1"
+                || row
+                    .document
+                    .value
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .is_none_or(|v| Id::new(v).is_err())
+            {
+                return Err(invalid("invalid installation identity"));
+            }
+            Ok(())
+        })?;
+        Self::open(repository, now)
+    }
     pub fn open(mut repository: R, now: u64) -> Result<Self> {
         let pristine = repository.snapshot()?.1.is_empty();
         repository.transact(|tx| {
