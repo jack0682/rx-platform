@@ -101,9 +101,30 @@ pub struct CellObservation {
     pub blocked: Vec<Id>,
     pub applied: Option<AppliedContext>,
 }
+/// Revision-2 metadata observation of the binding generation used by the running Host.
+/// It does not assert process application, native completion, qualification or permission.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BindingCommit {
+    pub schema: Name,
+    pub request: Id,
+    pub plan_digest: Digest,
+    pub cell: Name,
+    pub before_configuration: Digest,
+    pub after_configuration: Digest,
+    pub before_installation_identity: Digest,
+    pub after_installation_identity: Digest,
+    pub delivery_journal: Id,
+    pub evidence_journal: Id,
+    pub binding_digest: Digest,
+}
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Snapshot {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub installation_identity: Option<Digest>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub binding_commit: Option<BindingCommit>,
     pub schema: Name,
     pub host: Name,
     pub host_boot: Id,
@@ -193,6 +214,15 @@ impl Observation {
         {
             return Err("Host configuration observation shape".into());
         }
+        if let Some(commit) = &s.binding_commit
+            && (commit.schema.as_str() != "rx.host-binding-commit-observation.v1"
+                || s.installation_identity != Some(commit.after_installation_identity)
+                || commit.delivery_journal != s.delivery_journal
+                || commit.binding_digest != s.binding_digest
+                || !s.cells.iter().any(|c| c.cell == commit.cell))
+        {
+            return Err("Host binding commit observation correlation differs".into());
+        }
         for c in &s.cells {
             if c.epoch.0 == 0
                 || c.scopes.is_empty()
@@ -234,5 +264,90 @@ impl Observation {
             return Err("Host context currency claim differs".into());
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod binding_commit_tests {
+    use super::*;
+    fn n(v: &str) -> Name {
+        Name::new(v).unwrap()
+    }
+    fn id(v: u8) -> Id {
+        Id::new(format!("00000000-0000-4000-8000-{v:012}")).unwrap()
+    }
+    fn observation() -> Observation {
+        Observation {
+            schema: n("rx.host-process-configuration-observation.v1"),
+            snapshot: Snapshot {
+                installation_identity: None,
+                binding_commit: None,
+                schema: n("rx.host-process-configuration-snapshot.v1"),
+                host: n("host/a"),
+                host_boot: id(1),
+                delivery_journal: id(2),
+                binding_digest: Digest::from_bytes([3; 32]),
+                cells: vec![CellObservation {
+                    cell: n("cell/a"),
+                    definition: Digest::from_bytes([1; 32]),
+                    envelope: Digest::from_bytes([2; 32]),
+                    environment: n("SIMULATION"),
+                    epoch: Counter(1),
+                    scopes: BTreeMap::from([(n("scope/a"), Counter(1))]),
+                    blocked: vec![],
+                    applied: None,
+                }],
+            },
+            receipt: None,
+            context_matches_current_host: false,
+            activation_authorized: false,
+        }
+    }
+    #[test]
+    fn absence_is_decodable_but_commit_requires_matching_current_metadata() {
+        let mut value = observation();
+        value.validate().unwrap();
+        let legacy = serde_json::to_value(&value).unwrap();
+        assert!(legacy["snapshot"].get("binding_commit").is_none());
+        assert!(legacy["snapshot"].get("installation_identity").is_none());
+        let decoded: Observation = serde_json::from_value(legacy).unwrap();
+        assert!(decoded.snapshot.binding_commit.is_none());
+        value.snapshot.installation_identity = Some(Digest::from_bytes([8; 32]));
+        value.snapshot.binding_commit = Some(BindingCommit {
+            schema: n("rx.host-binding-commit-observation.v1"),
+            request: id(3),
+            plan_digest: Digest::from_bytes([4; 32]),
+            cell: n("cell/a"),
+            before_configuration: Digest::from_bytes([5; 32]),
+            after_configuration: Digest::from_bytes([6; 32]),
+            before_installation_identity: Digest::from_bytes([7; 32]),
+            after_installation_identity: Digest::from_bytes([8; 32]),
+            delivery_journal: id(2),
+            evidence_journal: id(4),
+            binding_digest: Digest::from_bytes([3; 32]),
+        });
+        value.validate().unwrap();
+        let valid = value.clone();
+        value.snapshot.installation_identity = None;
+        assert!(value.validate().is_err());
+        value = valid.clone();
+        value
+            .snapshot
+            .binding_commit
+            .as_mut()
+            .unwrap()
+            .delivery_journal = id(9);
+        assert!(value.validate().is_err());
+        value = valid.clone();
+        value
+            .snapshot
+            .binding_commit
+            .as_mut()
+            .unwrap()
+            .binding_digest = Digest::from_bytes([9; 32]);
+        assert!(value.validate().is_err());
+        value = valid;
+        value.snapshot.binding_commit.as_mut().unwrap().cell = n("cell/other");
+        assert!(value.validate().is_err());
     }
 }
