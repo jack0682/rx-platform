@@ -720,6 +720,9 @@ fn export_container_fixture() {
     fs::create_dir(&output).unwrap();
     let f = fixture();
     let mut c = f.config.clone();
+    if let Ok(installation) = std::env::var("RX_PLATFORM_IMAGE_INSTALLATION") {
+        c.installation_id = Id::new(installation).expect("explicit isolated package installation");
+    }
     let relocate = |file: &mut PinnedFile| {
         let name = file.path.file_name().unwrap();
         fs::copy(&file.path, output.join(name)).unwrap();
