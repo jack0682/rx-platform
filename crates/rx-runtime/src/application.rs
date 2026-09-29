@@ -694,6 +694,16 @@ pub enum Command {
         key: Id,
         command: Box<SubmitWork>,
     },
+    ApproveSettlement {
+        identity: Identity,
+        key: Id,
+        command: rx_application::settlement::Approve,
+    },
+    SettleResources {
+        identity: Identity,
+        authorization: Id,
+        command: ReleaseResources,
+    },
     ReleaseResources {
         identity: Identity,
         key: Id,
@@ -774,6 +784,7 @@ pub enum Command {
     },
 }
 pub enum Reply {
+    Settlement(Box<rx_application::settlement::Authorization>),
     HostRecoveryContext(Box<rx_application::host_recovery::Context>),
     HostRecoveryBinding(Box<rx_application::host_recovery::Binding>),
     OptionalHostRecoveryBinding(Option<Box<rx_application::host_recovery::Binding>>),
@@ -2027,6 +2038,22 @@ impl<R: Repository + Send + 'static, C: Clock + 'static, A: QualificationAuthori
                 .engine
                 .submit(&identity, key.as_str(), *command)
                 .map(|w| Reply::Work(Box::new(w))),
+            Command::ApproveSettlement {
+                identity,
+                key,
+                command,
+            } => self
+                .engine
+                .approve_settlement(&identity, key.as_str(), command)
+                .map(|value| Reply::Settlement(Box::new(value))),
+            Command::SettleResources {
+                identity,
+                authorization,
+                command,
+            } => self
+                .engine
+                .settle_resources(&identity, &authorization, command)
+                .map(|work| Reply::Work(Box::new(work))),
             Command::ReleaseResources {
                 identity,
                 key,

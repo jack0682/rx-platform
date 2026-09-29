@@ -1,6 +1,7 @@
 mod device_binding;
 mod device_review;
 mod host_recovery;
+mod settlement;
 use crate::{
     auth::{Auth, COOKIE, Credentials, SESSION_SECONDS},
     error::ApiError,
@@ -197,6 +198,7 @@ fn build_router(
             get(list_process_reviews).post(create_process_review),
         )
         .route("/api/v1/process-review", get(get_process_review))
+        .route("/api/v1/recovery-settlements", post(settlement::approve))
         .route("/api/v1/process-changes", post(propose_process_change))
         .route("/api/v1/process-change", get(get_process_change))
         .route(
