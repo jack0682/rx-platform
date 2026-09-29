@@ -155,6 +155,31 @@ pub(super) fn decision(v: &dr::Version, expected: Option<Counter>) -> dr::Decide
     }
 }
 #[test]
+fn review_digest_names_what_was_reviewed_and_by_whom_but_not_when() {
+    let (mut f, p, a, j, _reviewer) = setup();
+    let v = submit(&mut f, &p, &a, &j, None, true);
+    assert_eq!(v.review_digest, v.digest().unwrap());
+    // The same review recorded at another time has the same identity, so a binding plan
+    // prepared offline from it can name it before P records it.
+    let mut later = v.clone();
+    later.recorded_at.ticks_ns = Counter(v.recorded_at.ticks_ns.0 + 1_000_000_000);
+    assert_eq!(later.digest().unwrap(), v.review_digest);
+    // Anything that says what was reviewed, or who recorded it, still changes it.
+    let mut other = v.clone();
+    other.recorded_by = name("someone-else");
+    assert_ne!(other.digest().unwrap(), v.review_digest);
+    let mut other = v.clone();
+    other.revision = Counter(v.revision.0 + 1);
+    assert_ne!(other.digest().unwrap(), v.review_digest);
+    let mut other = v.clone();
+    other.ready_for_software_approval = !v.ready_for_software_approval;
+    assert_ne!(other.digest().unwrap(), v.review_digest);
+    // The stored digest field itself is not part of the identity.
+    let mut other = v.clone();
+    other.review_digest = Digest::from_bytes([9; 32]);
+    assert_eq!(other.digest().unwrap(), v.review_digest);
+}
+#[test]
 fn independent_device_approval_requires_exact_latest_report_and_leaves_cell_unchanged() {
     let (mut f, p, a, j, reviewer) = setup();
     let before = f.app.inspect_cell(&f.admin, &j.request.cell).unwrap();
