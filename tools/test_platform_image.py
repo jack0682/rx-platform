@@ -2,8 +2,9 @@
 """Run only the new uncommissioned platform image, using isolated disposable volumes/certificates."""
 import argparse,hashlib,json,os,shutil,socket,ssl,subprocess,sys,tempfile,time,urllib.request,uuid
 from pathlib import Path
-parser=argparse.ArgumentParser();parser.add_argument('--image',default='rx-platform:runtime-draft');parser.add_argument('--evidence',required=True,type=Path);parser.add_argument('--package',type=Path);parser.add_argument('--package-policy',type=Path);parser.add_argument('--device-review-image');parser.add_argument('--device-review-source',type=Path);parser.add_argument('--binding-host-image');args=parser.parse_args()
+parser=argparse.ArgumentParser();parser.add_argument('--image',default='rx-platform:runtime-draft');parser.add_argument('--evidence',required=True,type=Path);parser.add_argument('--package',type=Path);parser.add_argument('--package-policy',type=Path);parser.add_argument('--device-review-image');parser.add_argument('--device-review-source',type=Path);parser.add_argument('--binding-host-image');parser.add_argument('--host-unreachable-at-stop',action='store_true');args=parser.parse_args()
 assert not args.binding_host_image or args.device_review_image
+assert not args.host_unreachable_at_stop or args.binding_host_image
 assert bool(args.device_review_image)==bool(args.device_review_source) and (not args.device_review_image or args.package)
 assert bool(args.package)==bool(args.package_policy), 'package and policy must be supplied together'
 root=Path(__file__).resolve().parents[1]
@@ -297,19 +298,23 @@ with tempfile.TemporaryDirectory(prefix='rx-platform-image-') as temporary:
 
                 review_test={'request':job['request'],'report':report,'version':version,'pre_approval_detail':detail,'detail':approved_detail,'repeat_returns_same_report_version':True,'self_approval_denied':True,'decision':decision,'binding_plan':reviewed_plan,'binding_options':selected,'composition':composition,'compose_recovery_preserved':True,'deployment':deployment}
             package_test={'status':'PASS','receipt':receipt,'view':page['packages'][0],'repeat_returns_identical_receipt':True,'no_run_or_qualification':True,'policy_sha256':hashlib.sha256(policy_bytes).hexdigest(),'device_catalog':device_catalog,'device_review':review_test}
+        if args.host_unreachable_at_stop:
+            # The registered Host disappears before P stops; its stop fence cannot be acknowledged.
+            run('docker','stop','--time','10',binding_host.service)
         stop_started=time.monotonic();run('docker','stop','--time','15',service);stop_seconds=time.monotonic()-stop_started
         stopped=json.loads(run('docker','inspect',service))[0]
         run('docker','cp',service+':/data/runtime/platform-status.json',str(Path(temporary)/'stopped.json'))
         after=json.loads((Path(temporary)/'stopped.json').read_text())
-        # Stop revokes every cell and fences registered Hosts; P does not wait for their acknowledgement.
-        # A live Host may therefore remain HOST_FENCE_UNCONFIRMED, which must be reported with exit 2.
-        fence_attention=[{'cell':'cell/a','host':'host/sim','kind':'HOST_FENCE_UNCONFIRMED'}]
-        expected_attention=after['stop']['attention'] if binding_host and after['stop']['attention']==fence_attention else []
+        # Stop fences registered Hosts and waits a bounded time for their acknowledgement,
+        # so a connected Host must leave no HOST_FENCE_UNCONFIRMED attention and exit 0.
+        # A Host that is unreachable at stop must still be reported, with exit 2, after the bounded wait.
+        expected_attention=[{'cell':'cell/a','host':'host/sim','kind':'HOST_FENCE_UNCONFIRMED'}] if args.host_unreachable_at_stop else []
+        if args.host_unreachable_at_stop:assert stop_seconds>=4.5,stop_seconds
         assert stopped['State']['ExitCode']==(2 if expected_attention else 0),(stopped['State'],after['stop'],subprocess.run(['docker','logs','--tail','60',service],stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True).stdout[-6000:],stop_seconds)
         assert after['phase']=='PROCESS_STOPPED';assert after['stop']['lifecycle']['phase']=='STOP_COMMITTED';assert not after['physical_shutdown_assessed']
         assert after['stop']['attention']==expected_attention and after['stop']['attention_count']==str(len(expected_attention)),after['stop']
         image=json.loads(run('docker','image','inspect',args.image))[0]
-        result={'schema':'rx.platform-image-smoke.v1','status':'PASS','image_id':image['Id'],'os':image['Os'],'architecture':image['Architecture'],'user':inspected['Config']['User'],'read_only_root':True,'cap_drop':['ALL'],'https_health':health,'startup':before,'stop':after,'package_intake':package_test,'device_review_image':args.device_review_image,'binding_host_image':args.binding_host_image,'binding_host_ready':binding_ready,'stop_exit_code':stopped['State']['ExitCode'],'limitations':['uncommissioned draft authority','no Host/controller launch','no physical shutdown qualification','config/data volumes and test certificates were disposable']}
+        result={'schema':'rx.platform-image-smoke.v1','status':'PASS','image_id':image['Id'],'os':image['Os'],'architecture':image['Architecture'],'user':inspected['Config']['User'],'read_only_root':True,'cap_drop':['ALL'],'https_health':health,'startup':before,'stop':after,'package_intake':package_test,'device_review_image':args.device_review_image,'binding_host_image':args.binding_host_image,'binding_host_ready':binding_ready,'stop_exit_code':stopped['State']['ExitCode'],'stop_seconds':stop_seconds,'host_unreachable_at_stop':args.host_unreachable_at_stop,'limitations':['uncommissioned draft authority','no Host/controller launch','no physical shutdown qualification','config/data volumes and test certificates were disposable']}
         args.evidence.parent.mkdir(parents=True,exist_ok=True);args.evidence.write_text(json.dumps(result,indent=2)+'\n');print(json.dumps({'status':'PASS','image':image['Id']}))
     finally:
         for name in [service,setup]:subprocess.run(['docker','rm','-f',name],capture_output=True)

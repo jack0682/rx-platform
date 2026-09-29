@@ -455,7 +455,25 @@ pub async fn serve<C: Clock + 'static>(
             _=health.tick()=>{if handle.status()!=Status::Running {fault=true;break;}}
         }
     }
-    let barrier = handle.call(Command::RequestRuntimeStop).await;
+    // One 10 s budget covers the fence acknowledgement wait and the service drain, so the
+    // whole software stop stays within the 15 s container stop grace used by the images.
+    let stop_budget = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+    let mut barrier = handle.call(Command::RequestRuntimeStop).await;
+    // The stop revokes every cell and fences registered Hosts. Keep the Host delivery
+    // services running for a bounded time so connected Hosts can acknowledge that fence;
+    // an unreachable Host is still reported as HOST_FENCE_UNCONFIRMED after the wait.
+    let deadline = tokio::time::Instant::now() + STOP_FENCE_ACKNOWLEDGEMENT_WAIT;
+    while !fault && tokio::time::Instant::now() < deadline {
+        match &barrier {
+            Ok(Reply::RuntimeStop(r))
+                if r.attention
+                    .iter()
+                    .any(|a| matches!(a, lifecycle::Attention::HostFenceUnconfirmed { .. })) => {}
+            _ => break,
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        barrier = handle.call(Command::RequestRuntimeStop).await;
+    }
     let _ = status(
         &config,
         Some(&installation.runtime_boot),
@@ -466,7 +484,7 @@ pub async fn serve<C: Clock + 'static>(
         },
     );
     let _ = stop.send(true);
-    if tokio::time::timeout(std::time::Duration::from_secs(10), async {
+    if tokio::time::timeout_at(stop_budget, async {
         while services.join_next().await.is_some() {}
     })
     .await
@@ -516,6 +534,9 @@ pub async fn serve<C: Clock + 'static>(
     }
     Ok(*report)
 }
+
+/// Upper bound for registered Hosts to acknowledge the fence sent by a runtime stop.
+pub const STOP_FENCE_ACKNOWLEDGEMENT_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
 
 #[cfg(target_os = "linux")]
 pub struct LinuxBoottime {
