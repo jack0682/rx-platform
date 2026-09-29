@@ -47,10 +47,8 @@ pub(super) fn validate_candidate(
         return reject(Reject::Busy);
     }
     // A scalar cell operating context cannot describe competing active purposes.
-    for row in tx.scan("run/")? {
-        let active: Run = decode(&row, RUN)?;
-        if active.cell == run.cell
-            && active.id != run.id
+    for (_, active) in crate::run_index::live_runs(tx, &run.cell)? {
+        if active.id != run.id
             && active.state == RunState::Executing
             && active.purpose != Some(command.purpose)
         {

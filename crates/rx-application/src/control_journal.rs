@@ -322,6 +322,10 @@ impl Transaction for Tracking<'_> {
         if entity_kind(document.schema.as_str()).is_some() {
             self.changed.insert(k.clone(), record.clone());
         }
+        if document.schema.as_str() == "rx.internal.run.v1" {
+            let run: Run = decode(&record, "rx.internal.run.v1")?;
+            crate::run_index::record(self.tx, &run)?;
+        }
         if document.schema.as_str() == "rx.internal.native-evidence.v1"
             && k.as_str().starts_with("evidence/")
         {
