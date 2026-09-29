@@ -7305,6 +7305,77 @@ fn package_intake_commits_receipt_event_and_request_atomically_without_cell_chan
     }
 }
 #[test]
+fn package_intake_generation_survives_restart_only_while_trust_is_unchanged() {
+    let f = fixture(1, true);
+    let p = intake_support::fixture();
+    let trust = (
+        p.store.owner().clone(),
+        p.policy.fingerprint().unwrap(),
+        rx_package::content_digest(&p.policy_bytes),
+    );
+    let mut app = f.app;
+    let first = app
+        .configure_package_intake(Some(trust.clone()))
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        app.configure_package_intake(Some(trust.clone()))
+            .unwrap()
+            .unwrap()
+            .generation,
+        first.generation
+    );
+    let installation = app.installation.clone();
+    let reopen = |app: App| -> App {
+        Engine::open(
+            app.into_repository(),
+            f.clock.clone(),
+            SimulationAuthority,
+            installation.id.clone(),
+            principal("admin", &[Role::AccountAdmin]),
+        )
+        .unwrap()
+    };
+    // The same store, policy and file after a restart keep the generation.
+    let mut app = reopen(app);
+    assert_ne!(app.installation.runtime_boot, installation.runtime_boot);
+    let kept = app
+        .configure_package_intake(Some(trust.clone()))
+        .unwrap()
+        .unwrap();
+    assert_eq!(kept, first);
+    // Any change in between issues a new generation, even when trust returns to A.
+    let mut changed = trust.clone();
+    changed.2 = rx_package::content_digest(b"another policy file");
+    let b = app
+        .configure_package_intake(Some(changed))
+        .unwrap()
+        .unwrap();
+    assert_ne!(b.generation, first.generation);
+    let mut app = reopen(app);
+    let back = app
+        .configure_package_intake(Some(trust.clone()))
+        .unwrap()
+        .unwrap();
+    assert_ne!(back.generation, first.generation);
+    assert_ne!(back.generation, b.generation);
+    // Disablement also ends continuity.
+    app.configure_package_intake(None).unwrap();
+    let after_disable = app
+        .configure_package_intake(Some(trust.clone()))
+        .unwrap()
+        .unwrap();
+    assert_ne!(after_disable.generation, back.generation);
+    // Another store never inherits the generation.
+    let mut other_store = trust;
+    other_store.0 = id();
+    let other = app
+        .configure_package_intake(Some(other_store))
+        .unwrap()
+        .unwrap();
+    assert_ne!(other.generation, after_disable.generation);
+}
+#[test]
 fn package_intake_rechecks_authority_policy_and_time_after_file_work() {
     for mode in 0..4 {
         let mut f = fixture(1, true);
@@ -7321,11 +7392,12 @@ fn package_intake_rechecks_authority_policy_and_time_after_file_work() {
                 f.app.configure_package_intake(None).unwrap();
             }
             1 => {
+                // A changed policy file replaces the generation; reconfirming unchanged trust does not.
                 f.app
                     .configure_package_intake(Some((
                         p.store.owner().clone(),
                         p.policy.fingerprint().unwrap(),
-                        rx_package::content_digest(&p.policy_bytes),
+                        rx_package::content_digest(b"replacement policy file"),
                     )))
                     .unwrap();
             }
