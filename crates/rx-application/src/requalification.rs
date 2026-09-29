@@ -397,7 +397,7 @@ impl Verified {
                         Environment::Simulation => "SIMULATION",
                         Environment::Physical => "PHYSICAL",
                     })
-                    .unwrap(),
+                    .expect("literal environment name"),
                 )
             {
                 return Err("qualification profile or environment differs".into());

@@ -609,12 +609,10 @@ pub(super) fn suspend(
     record_batch(tx, &changed, Some(b.revision))?;
     for target in &b.cells {
         let (rev, mut cell): (_, Cell) = load(tx, "cell", &target.cell, CELL)?;
-        let own = cell
+        if let Some(q) = cell
             .qualification
-            .as_ref()
-            .is_some_and(|q| q.id == target.qualification.id);
-        if own {
-            let q = cell.qualification.take().unwrap();
+            .take_if(|q| q.id == target.qualification.id)
+        {
             let k = key("qualificationhistory", &q.id);
             if tx.get(&k)?.is_none() {
                 tx.put(&k, None, &doc("rx.internal.qualification-history.v1", &q)?)?;

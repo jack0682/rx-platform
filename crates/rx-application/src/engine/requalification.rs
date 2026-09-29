@@ -405,7 +405,16 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                     fences,
                 },
                 requested_by: actor.id,
-                terminal: identity.terminal.as_ref().unwrap().0.clone(),
+                terminal: identity
+                    .terminal
+                    .as_ref()
+                    .ok_or_else(|| {
+                        StoreError::Integrity(
+                            "terminal missing after terminal authorization".into(),
+                        )
+                    })?
+                    .0
+                    .clone(),
                 requested_at: now,
             };
             j.request.digest().map_err(StoreError::Invalid)?;
@@ -466,7 +475,7 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                 return Ok(v);
             }
             current(tx, meta, &t.job)?;
-            if now.age_ns(&t.issued).is_none_or(|n| n >= 30_000_000_000)
+            if now.age_ns(&t.issued).is_none_or(|n| n >= TICKET_TTL_NS)
                 || p.verified.policy != t.policy
                 || latest(tx, &t.input.review)?.as_ref().map(|v| v.revision) != t.input.expected
             {
@@ -597,7 +606,7 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             }
             current(tx, meta, &t.job)?;
             let v = latest(tx, &t.input.review)?.ok_or(StoreError::Rejected(Reject::NotFound))?;
-            if now.age_ns(&t.issued).is_none_or(|a| a >= 30_000_000_000)
+            if now.age_ns(&t.issued).is_none_or(|a| a >= TICKET_TTL_NS)
                 || v.digest != t.version.digest
                 || v.revision != t.input.report_revision
                 || !v.ready_for_review

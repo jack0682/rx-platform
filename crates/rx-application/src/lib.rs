@@ -1,4 +1,7 @@
 //! Authoritative application transactions, independent of wire codecs and SQLite.
+// A panic in the single writer faults the whole Runtime; data-dependent failures
+// must return errors instead. `expect` stays allowed for documented invariants.
+#![cfg_attr(not(test), deny(clippy::unwrap_used))]
 pub mod checkpoint_artifact;
 pub mod control_journal;
 pub mod engine;

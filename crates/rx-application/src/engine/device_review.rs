@@ -70,7 +70,7 @@ pub(super) fn latest(tx: &mut dyn Transaction, id: &Id) -> Result<Option<Version
     Ok(Some(v))
 }
 fn check_ticket(meta: &Installation, now: &TimePoint, boot: &Id, issued: &TimePoint) -> Result<()> {
-    if &meta.runtime_boot != boot || now.age_ns(issued).is_none_or(|v| v >= 30_000_000_000) {
+    if &meta.runtime_boot != boot || now.age_ns(issued).is_none_or(|v| v >= TICKET_TTL_NS) {
         return reject(Reject::Expired);
     }
     Ok(())

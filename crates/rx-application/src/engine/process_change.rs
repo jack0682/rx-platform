@@ -342,9 +342,7 @@ pub(super) fn check_prepared(
 ) -> Result<()> {
     let t = &p.ticket;
     if t.boot != meta.runtime_boot
-        || now
-            .age_ns(&t.issued)
-            .is_none_or(|age| age >= 30_000_000_000)
+        || now.age_ns(&t.issued).is_none_or(|age| age >= TICKET_TTL_NS)
         || package_intake::current(tx, meta)?.as_ref() != Some(&t.registration)
         || p.verified.stored.owner() != &t.registration.store_owner
         || p.verified.stored.policy_fingerprint() != t.registration.policy_fingerprint

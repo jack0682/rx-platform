@@ -192,7 +192,7 @@ pub(super) fn latest(tx: &mut dyn Transaction, id: &Id) -> Result<Option<(Counte
         .transpose()
 }
 fn check_ticket(meta: &Installation, now: &TimePoint, boot: &Id, issued: &TimePoint) -> Result<()> {
-    if &meta.runtime_boot != boot || now.age_ns(issued).is_none_or(|age| age >= 30_000_000_000) {
+    if &meta.runtime_boot != boot || now.age_ns(issued).is_none_or(|age| age >= TICKET_TTL_NS) {
         return reject(Reject::Expired);
     }
     Ok(())

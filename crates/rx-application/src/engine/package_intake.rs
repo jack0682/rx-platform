@@ -156,7 +156,7 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                     ticks_ns: Counter(
                         now.ticks_ns
                             .0
-                            .checked_add(30_000_000_000)
+                            .checked_add(TICKET_TTL_NS)
                             .ok_or(StoreError::Rejected(Reject::InvalidInput))?,
                     ),
                 },
