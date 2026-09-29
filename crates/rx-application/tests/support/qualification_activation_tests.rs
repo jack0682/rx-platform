@@ -936,5 +936,7 @@ fn qualification_permits_only_the_reviewed_operating_purposes() {
     ));
 }
 
+#[path = "device_invalidation.rs"]
+mod device_invalidation_tests;
 #[path = "runtime_requalification_tests.rs"]
 mod runtime_requalification_tests;

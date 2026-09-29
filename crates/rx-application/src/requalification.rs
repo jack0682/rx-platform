@@ -175,6 +175,8 @@ pub struct Request {
     pub impact_digest: Option<Digest>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub runtime_restrictions: Vec<crate::runtime_invalidation::RuntimeInvalidationOrigin>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub device_restrictions: Vec<crate::device_invalidation::DeviceInvalidationOrigin>,
     pub schema: Name,
     pub id: Id,
     pub change: Id,
@@ -188,20 +190,37 @@ pub struct Request {
 }
 impl Request {
     pub fn digest(&self) -> Result<Digest, String> {
+        // v3 is required whenever device restrictions are present, and otherwise carries the v2
+        // rules. v1/v2 keep both restriction lists empty, so their canonical bytes and digests
+        // stay byte-identical to before this schema existed.
         if !matches!(
             (
                 self.schema.as_str(),
                 self.impact_digest.is_some(),
-                self.runtime_restrictions.is_empty()
+                self.runtime_restrictions.is_empty(),
+                self.device_restrictions.is_empty()
             ),
-            ("rx.requalification-request.v1", false, true)
-                | ("rx.requalification-request.v2", true, _)
+            ("rx.requalification-request.v1", false, true, true)
+                | ("rx.requalification-request.v2", true, _, true)
+                | ("rx.requalification-request.v3", true, _, _)
         ) || self.runtime_restrictions.len() > 128
             || self
                 .runtime_restrictions
                 .windows(2)
                 .any(|w| w[0].block.id >= w[1].block.id)
             || self.runtime_restrictions.iter().any(|o| {
+                o.validate().is_err()
+                    || !self
+                        .cells
+                        .iter()
+                        .any(|c| c.profile.cell == o.cell && c.blocks.contains(&o.block.id))
+            })
+            || self.device_restrictions.len() > 128
+            || self
+                .device_restrictions
+                .windows(2)
+                .any(|w| w[0].block.id >= w[1].block.id)
+            || self.device_restrictions.iter().any(|o| {
                 o.validate().is_err()
                     || !self
                         .cells
@@ -244,6 +263,8 @@ pub struct Job {
 pub struct Begin {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub runtime_restrictions: BTreeMap<Id, Digest>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub device_restrictions: BTreeMap<Id, Digest>,
     pub id: Id,
     pub change: Id,
     pub cell: Name,

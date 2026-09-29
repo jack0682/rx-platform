@@ -722,6 +722,19 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
         })
     }
 }
+/// The bound link that wrote `host`'s current registration for `cell`, if one was committed.
+pub(super) fn current_bound(
+    tx: &mut dyn Transaction,
+    host: &Name,
+    cell: &Name,
+) -> Result<Option<Plan>> {
+    let Some(row) = tx.get(&key("host-link-current", (host, cell)))? else {
+        return Ok(None);
+    };
+    let id: Id = decode(&row, "rx.internal.host-link-id.v1")?;
+    let (_, plan): (_, Plan) = load(tx, "host-link-plan", &id, PLAN)?;
+    Ok(plan.bound.then_some(plan))
+}
 fn validate_owner(
     tx: &mut dyn Transaction,
     meta: &Installation,

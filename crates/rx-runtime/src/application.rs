@@ -668,6 +668,10 @@ pub enum Command {
         identity: Identity,
         cell: Name,
     },
+    DeviceRestrictions {
+        identity: Identity,
+        cell: Name,
+    },
     GetOperatorStartContext {
         identity: Identity,
         input: rx_application::operator_start::ContextRequest,
@@ -888,6 +892,7 @@ pub enum Reply {
     ReconciliationWork(Vec<Work>),
     VersionedRun(Counter, Run),
     RuntimeRestrictions(Box<rx_application::runtime_invalidation::RuntimeRestrictions>),
+    DeviceRestrictions(Box<rx_application::device_invalidation::DeviceRestrictions>),
     OperatorStartContext(Box<rx_application::operator_start::StartContext>),
     OperatorStartAttempt(Box<rx_application::operator_start::AttemptContext>),
     Part(PartAttempt),
@@ -2003,6 +2008,10 @@ impl<R: Repository + Send + 'static, C: Clock + 'static, A: QualificationAuthori
                 .engine
                 .runtime_restrictions(&identity, &cell)
                 .map(|v| Reply::RuntimeRestrictions(Box::new(v))),
+            Command::DeviceRestrictions { identity, cell } => self
+                .engine
+                .device_restrictions(&identity, &cell)
+                .map(|v| Reply::DeviceRestrictions(Box::new(v))),
             Command::GetOperatorStartContext { identity, input } => self
                 .engine
                 .operator_start_context(&identity, input)
