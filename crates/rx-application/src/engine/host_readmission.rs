@@ -1,4 +1,4 @@
-//! Durable ReleaseManager approval for a restarted Host generation. See crate::host_readmission.
+//! Durable ReleaseManager approval for a replaced Host generation. See crate::host_readmission.
 use super::*;
 use crate::{host_link::Plan, host_readmission as ra};
 const RECORD: &str = "rx.internal.host-readmission.v1";
@@ -85,11 +85,14 @@ pub(super) fn expected_configuration(
     }
     Ok(after)
 }
-/// True when `previous` is the registration an approval replaces and `snapshot` is a
-/// different boot of the same Host storage (both journals kept).
+/// True when `previous` is the registration an approval replaces and the linking Host keeps
+/// both journals of that storage: either a different boot (the Host restarted), or the same
+/// boot whose registered session belongs to an earlier P runtime (only P restarted). A live
+/// session of the current runtime is never replaceable this way.
 pub(super) fn covers(
     r: &ra::Record,
     previous: &HostRegistration,
+    previous_session_retired: bool,
     host_boot: &Id,
     delivery_journal: &Id,
     evidence_journal: &Id,
@@ -99,9 +102,44 @@ pub(super) fn covers(
         && previous.session == r.previous_session
         && previous.delivery_journal == r.delivery_journal
         && r.cells.get(&previous.cell) == Some(&None)
-        && host_boot != &r.previous_boot
+        && (host_boot != &r.previous_boot || previous_session_retired)
         && delivery_journal == &r.delivery_journal
         && evidence_journal == &r.evidence_journal
+}
+/// A registration's session is retired once it no longer belongs to the current runtime.
+pub(super) fn session_retired(
+    tx: &mut dyn Transaction,
+    meta: &Installation,
+    session: &Id,
+) -> Result<bool> {
+    Ok(match tx.get(&key("session", session))? {
+        None => true,
+        Some(row) => {
+            let s: Session = decode(&row, SESSION)?;
+            s.runtime_boot != meta.runtime_boot || !s.active
+        }
+    })
+}
+/// No executing Run and no unresolved or disputed work on these cells. Checked when the
+/// approval is recorded and again when a link consumes it: an approval may be recorded
+/// before a planned replacement, and work started in between must still block it.
+pub(super) fn generation_idle(tx: &mut dyn Transaction, cells: &BTreeSet<Name>) -> Result<()> {
+    for row in tx.scan("run/")? {
+        let run: Run = decode(&row, RUN)?;
+        if cells.contains(&run.cell) && run.state == RunState::Executing {
+            return reject(Reject::Busy);
+        }
+    }
+    for row in tx.scan("work/")? {
+        let w: Work = decode(&row, WORK)?;
+        if cells.contains(&w.cell)
+            && (matches!(w.operation.outcome(), Outcome::None | Outcome::Unresolved)
+                || w.operation.integrity() == rx_domain::operation::Integrity::Disputed)
+        {
+            return reject(Reject::Busy);
+        }
+    }
+    Ok(())
 }
 pub(super) fn consume(
     tx: &mut dyn Transaction,
@@ -195,21 +233,7 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             }
             // Work the replaced generation may still hold must be resolved first; a restart
             // never proves that an accepted command did not act.
-            for row in tx.scan("run/")? {
-                let run: Run = decode(&row, RUN)?;
-                if cells.contains(&run.cell) && run.state == RunState::Executing {
-                    return reject(Reject::Busy);
-                }
-            }
-            for row in tx.scan("work/")? {
-                let w: Work = decode(&row, WORK)?;
-                if cells.contains(&w.cell)
-                    && (matches!(w.operation.outcome(), Outcome::None | Outcome::Unresolved)
-                        || w.operation.integrity() == rx_domain::operation::Integrity::Disputed)
-                {
-                    return reject(Reject::Busy);
-                }
-            }
+            generation_idle(tx, &cells)?;
             let binding = match &input.binding_intent {
                 None => None,
                 Some(intent_id) => {

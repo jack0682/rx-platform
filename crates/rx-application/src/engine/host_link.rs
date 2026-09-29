@@ -153,21 +153,35 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             }
             // A different boot may replace a recorded registration only under an explicit
             // ReleaseManager re-admission naming that generation and both kept journals.
-            let replaced = |h: &HostRegistration| {
-                approval.as_ref().is_some_and(|r| {
+            let mut readmission = None;
+            if let Some(row) = tx.get(&key("host", (&snapshot.cell, &request.host)))? {
+                let previous: HostRegistration = decode(&row, HOST)?;
+                let retired =
+                    super::host_readmission::session_retired(tx, meta, &previous.session)?;
+                let replaced = approval.as_ref().is_some_and(|r| {
                     super::host_readmission::covers(
                         r,
-                        h,
+                        &previous,
+                        retired,
                         &snapshot.host_boot,
                         &snapshot.delivery_journal,
                         &snapshot.evidence_journal,
                     )
-                })
-            };
-            let mut readmission = None;
-            if let Some(row) = tx.get(&key("host", (&snapshot.cell, &request.host)))? {
-                let previous: HostRegistration = decode(&row, HOST)?;
-                if previous.boot_id != snapshot.host_boot && replaced(&previous) {
+                });
+                if (previous.boot_id != snapshot.host_boot || previous.session != producer.session)
+                    && replaced
+                {
+                    // A retained Host (same boot) may still hold the earlier runtime's grant.
+                    if previous.boot_id == snapshot.host_boot
+                        && previous.grant.valid_until.clock_id == now.clock_id
+                        && previous.grant.valid_until.ticks_ns > now.ticks_ns
+                    {
+                        return reject(Reject::Busy);
+                    }
+                    if let Some(r) = &approval {
+                        let cells = r.cells.keys().cloned().collect();
+                        super::host_readmission::generation_idle(tx, &cells)?;
+                    }
                     readmission = approval.as_ref().map(|r| r.id.clone());
                 } else {
                     if previous.boot_id != snapshot.host_boot
@@ -201,14 +215,29 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                 .collect();
             for row in tx.scan("host/")? {
                 let other: HostRegistration = decode(&row, HOST)?;
-                if other.id == request.host
-                    && other.boot_id != snapshot.host_boot
-                    && replaced(&other)
-                {
-                    // The replaced generation holds no live authority any more.
+                if other.id != request.host {
                     continue;
                 }
-                if other.id == request.host
+                let retired = super::host_readmission::session_retired(tx, meta, &other.session)?;
+                let covered = (other.boot_id != snapshot.host_boot
+                    || other.session != producer.session)
+                    && approval.as_ref().is_some_and(|r| {
+                        super::host_readmission::covers(
+                            r,
+                            &other,
+                            retired,
+                            &snapshot.host_boot,
+                            &snapshot.delivery_journal,
+                            &snapshot.evidence_journal,
+                        )
+                    });
+                if covered && other.boot_id != snapshot.host_boot {
+                    // A restarted generation holds no live authority any more.
+                    continue;
+                }
+                // A retained Host covered by the approval keeps its boot: skip only the
+                // continuity refusal; a grant it may still hold is checked below.
+                if !covered
                     && (other.boot_id != snapshot.host_boot
                         || other.delivery_journal != snapshot.delivery_journal
                         || other.session != producer.session
@@ -431,17 +460,17 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             let mut consumed = None;
             if let Some(row) = &old {
                 let old: HostRegistration = decode(row, HOST)?;
-                if let Some(approved) = plan
-                    .readmission
-                    .as_ref()
-                    .filter(|_| old.boot_id != registration.boot_id)
-                {
+                if let Some(approved) = plan.readmission.as_ref().filter(|_| {
+                    old.boot_id != registration.boot_id || old.session != registration.session
+                }) {
                     let (approval_revision, r) = super::host_readmission::current(tx, &plan.host)?
                         .ok_or(StoreError::Rejected(Reject::ContinuityUnproven))?;
+                    let retired = super::host_readmission::session_retired(tx, meta, &old.session)?;
                     if &r.id != approved
                         || !super::host_readmission::covers(
                             &r,
                             &old,
+                            retired,
                             &registration.boot_id,
                             &registration.delivery_journal,
                             &plan.evidence_journal,

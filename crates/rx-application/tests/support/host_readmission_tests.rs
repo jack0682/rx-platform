@@ -66,6 +66,132 @@ fn continuity_unproven<T: std::fmt::Debug>(v: Result<T, StoreError>) {
     );
 }
 
+/// Only P restarts: a new runtime reopens the same ledger; sessions of the old runtime lapse.
+fn restart_platform(f: Fixture) -> Fixture {
+    let installation = f.app.installation.id.clone();
+    let Fixture {
+        _directory,
+        app,
+        clock,
+        failure,
+        mut admin,
+        operator,
+        executor,
+        hosts,
+        configuration,
+        registrations,
+    } = f;
+    let mut app = Engine::open(
+        app.into_repository(),
+        clock.clone(),
+        SimulationAuthority,
+        installation,
+        principal("admin", &[Role::AccountAdmin]),
+    )
+    .unwrap();
+    admin.session = app
+        .authenticated_session(&admin.principal, id(), expiry(u64::MAX))
+        .unwrap()
+        .id;
+    Fixture {
+        _directory,
+        app,
+        clock,
+        failure,
+        admin,
+        operator,
+        executor,
+        hosts,
+        configuration,
+        registrations,
+    }
+}
+#[test]
+fn retained_host_after_a_p_restart_needs_explicit_rebind_once_its_grant_lapses() {
+    let (f, input, first) = linked();
+    let journal = input.snapshot.evidence_journal.clone();
+    let mut f = restart_platform(f);
+    // The Host kept its boot and journals and authenticates with the new runtime.
+    let producer = f
+        .app
+        .open_evidence_producer(
+            &name("host/0"),
+            input.snapshot.host_boot.clone(),
+            journal.clone(),
+            Digest::from_bytes([81; 32]),
+        )
+        .unwrap();
+    assert_ne!(producer.id, first.session);
+    f.hosts[0].session = producer.id.clone();
+    f.app
+        .negotiate_evidence_cell(&f.hosts[0], f.configuration.definition.sha256)
+        .unwrap();
+    let (_, cell) = f.app.inspect_cell(&f.admin, &f.configuration.id).unwrap();
+    let mut next = input.clone();
+    next.platform_session = id();
+    next.snapshot.epoch = cell.epoch;
+    next.snapshot.scopes = cell.scope_epochs.clone();
+    next.snapshot.block_ids = cell
+        .blocks
+        .iter()
+        .filter(|b| b.latched)
+        .map(|b| b.id.clone())
+        .collect();
+    // The operating registration stays bound to the old runtime's session.
+    continuity_unproven(f.app.prepare_host_link(next.clone()));
+
+    let release = release_identity(&mut f);
+    let approval = f
+        .app
+        .approve_host_readmission(&release, &id(), approve(&first, &journal))
+        .unwrap();
+    // The retained Host may still hold the previous runtime's grant until it lapses.
+    assert!(matches!(
+        f.app.prepare_host_link(next.clone()),
+        Err(StoreError::Rejected(Rejection::Busy))
+    ));
+    f.clock
+        .0
+        .store(first.grant.valid_until.ticks_ns.0 + 1, Ordering::SeqCst);
+    f.admin.session = f
+        .app
+        .authenticated_session(&f.admin.principal, id(), expiry(u64::MAX))
+        .unwrap()
+        .id;
+    next.snapshot.captured_at = f.clock.now();
+    next.read_started = f.clock.now();
+    let plan = f.app.prepare_host_link(next.clone()).unwrap();
+    assert_eq!(plan.readmission.as_ref(), Some(&approval.id));
+    let mut commit = relink(&f, &plan, 2);
+    commit.grant.valid_until.ticks_ns =
+        Counter(plan.prepared_at.ticks_ns.0 + plan.ttl_ms.0 * 1_000_000);
+    let second = f.app.commit_host_link(commit).unwrap();
+    assert_eq!(second.boot_id, first.boot_id);
+    assert_eq!(second.delivery_journal, first.delivery_journal);
+    assert_eq!(second.session, producer.id);
+    // Rebinding is not a resume: the restart restrictions stay latched.
+    let (_, cell) = f.app.inspect_cell(&f.admin, &f.configuration.id).unwrap();
+    assert!(cell.blocks.iter().any(|b| b.latched));
+    // The approval is spent: it is no longer current, so a new one gets its own record.
+    let session = f
+        .app
+        .authenticated_terminal_user_session(
+            &release.principal,
+            id(),
+            Counter(99_000),
+            Digest::from_bytes([77; 32]),
+        )
+        .unwrap();
+    let release = Identity {
+        session: session.id,
+        ..release
+    };
+    let again = f
+        .app
+        .approve_host_readmission(&release, &id(), approve(&second, &journal))
+        .unwrap();
+    assert_ne!(again.id, approval.id);
+}
 #[test]
 fn restarted_host_needs_explicit_readmission_and_its_cell_stays_blocked() {
     let (mut f, input, first) = linked();
@@ -197,6 +323,36 @@ fn a_binding_readmission_needs_an_existing_intent_for_the_named_generation() {
     assert!(f.app.prepare_host_link(next).is_err());
 }
 
+#[test]
+fn an_approval_recorded_before_the_restart_rechecks_work_when_it_is_consumed() {
+    let (mut f, input, first) = linked();
+    let journal = input.snapshot.evidence_journal.clone();
+    let release = release_identity(&mut f);
+    // A planned replacement may be approved while the generation is still live.
+    f.app
+        .approve_host_readmission(&release, &id(), approve(&first, &journal))
+        .unwrap();
+    f.registrations.push(first.clone());
+    let (host, configuration) = (f.hosts[0].clone(), f.configuration.clone());
+    report_ready(&mut f.app, &host, &configuration, &first);
+    let run = start(&mut f, 1);
+    let a = activation(&mut f, &run);
+    let work = submit(&mut f, &a, id().as_str()).unwrap();
+    // The send was entered: its effect is unknown from here on.
+    assert!(
+        f.app
+            .plan_delivery(&f.hosts[0], work.operation.id())
+            .unwrap()
+            .first_emission
+    );
+    // Work entered after the approval is still unresolved when the Host restarts.
+    let next = restart(&mut f, &input, &journal);
+    let result = f.app.prepare_host_link(next);
+    assert!(
+        matches!(result, Err(StoreError::Rejected(Rejection::Busy))),
+        "{result:?}"
+    );
+}
 #[test]
 fn readmission_waits_until_the_replaced_generation_holds_no_executing_work() {
     let (mut f, input, first) = linked();

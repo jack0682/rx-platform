@@ -1,4 +1,4 @@
-# Restarted Host re-admission (unreleased)
+# Host re-admission and rebind (unreleased)
 
 `POST /api/v1/hosts/readmission` accepts the usual mutation wrapper with
 `{host, previous_boot, delivery_journal, evidence_journal}`. A registered-terminal
@@ -11,15 +11,26 @@ of those cells is unresolved or disputed. Only one approval per Host is current;
 second one is refused as busy until every cell has been re-linked.
 
 The approval does not change a registration by itself. The next authenticated Host
-link may replace a registration of the named boot when the new boot keeps both
-journals. Each cell consumes the approval once; the replaced registration is kept as
+link may replace a registration of the named generation when it keeps both journals and
+either has a new boot (the Host restarted) or has the same boot with a registered session
+that belongs to an earlier P runtime (only P restarted, the Host was retained). A live
+session of the current runtime is never replaced this way. A retained Host may still hold the
+earlier runtime's grant, so its link is refused as busy until that grant has lapsed (grants
+are at most 30 s and are not renewed while P is down).
+
+An approval may be recorded before a planned replacement, as the binding change does. The
+Run and work conditions above are therefore checked again when a link consumes the approval:
+work whose send was entered after the approval blocks the replacement as busy. Work that was
+never sent is settled as not executed by the restart invalidation and does not block. Each cell consumes the approval once; the replaced registration is kept as
 history. A reinstalled Host (new delivery or evidence journal), an unnamed generation
 and a further restart after consumption stay `CONTINUITY_UNPROVEN`. Reusing a sequence
 of the kept delivery journal with different fence content is an integrity conflict.
 
 Re-admission restores no grant, Arm, qualification, permit or Run. The blocks raised
 by the restart stay latched, so the cell remains unavailable for work until a
-separate resume/requalification. Physical state of the restarted Host is not assessed.
+separate resume/requalification. A DeviceRestart block currently has no release path; this
+is recorded as an open core item in rx_docs `docs/implementation/host_readmission_delta.md`.
+Physical state of the restarted Host is not assessed.
 
 ## Binding transition
 
