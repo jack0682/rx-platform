@@ -30,6 +30,50 @@ fn scope() -> RequestScope {
 }
 
 #[test]
+fn prefix_scan_returns_exactly_the_keys_under_the_prefix_in_key_order() {
+    let (_temp, mut store) = open();
+    let keys = [
+        "cell/b",
+        "cell/a",
+        "cell",
+        "cell0/x",
+        "cellx/y",
+        "Cell/c",
+        "cel/d",
+        "cell/a/nested",
+        "run_1/a",
+        "run-1/a",
+    ];
+    store
+        .transact(|tx| {
+            for key in keys {
+                tx.put(&name(key), None, &doc(1))?;
+            }
+            Ok(())
+        })
+        .unwrap();
+    let scanned = |store: &mut SqliteRepository, prefix: &str| -> Vec<String> {
+        store
+            .transact(|tx| tx.scan(prefix))
+            .unwrap()
+            .into_iter()
+            .map(|r| r.key.as_str().to_owned())
+            .collect()
+    };
+    assert_eq!(
+        scanned(&mut store, "cell/"),
+        ["cell/a", "cell/a/nested", "cell/b"]
+    );
+    // Case is part of the key: another case is another key, as with any exact lookup.
+    assert_eq!(scanned(&mut store, "Cell/"), ["Cell/c"]);
+    // `_` is an ordinary key character, not a wildcard.
+    assert_eq!(scanned(&mut store, "run_"), ["run_1/a"]);
+    assert!(scanned(&mut store, "absent/").is_empty());
+    assert!(store.transact(|tx| tx.scan("")).is_err());
+    assert!(store.transact(|tx| tx.scan("cell%")).is_err());
+}
+
+#[test]
 fn one_transaction_commits_state_key_event_and_outbox() {
     let (_temp, mut store) = open();
     let key = name("run/example");
