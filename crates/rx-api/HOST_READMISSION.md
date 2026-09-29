@@ -24,8 +24,8 @@ separate resume/requalification. Physical state of the restarted Host is not ass
 ## Binding transition
 
 An approval may also name `binding_intent`, a P-issued Host binding intent whose baseline
-describes exactly the generation being replaced (same boot, delivery journal and evidence
-journal), whose change is still staged and prepared, and whose cohort is the Host's full
+(before the commit is confirmed) or confirmed commit observation (a later restart) describes
+exactly the generation being replaced (same boot, delivery journal and evidence journal), whose change is still staged and prepared, and whose cohort is the Host's full
 registered cell set. The re-admitted boot may then present the staged change's after
 configuration for that intent's cell instead of the current one: evidence-cell negotiation,
 link preparation, link commit and grant renewal all compare against it while the change
@@ -37,12 +37,13 @@ session is the Host's active producer session and its boot is the producer's pee
 a later boot of the Host demotes an earlier commit match until it is re-admitted and
 confirmed again.
 
-This does not apply the change, dispatch Host configuration or authorize work. The live
+Re-admission itself does not apply the change, dispatch Host configuration or authorize work. The live
 image acceptance with `--binding-commit` approves the re-admission, stops the Host normally,
 prepares and commits the Host binding with the P-issued request, restarts the Host on the
 proposed startup, and requires METADATA_MATCHED, a refreshed preparation fenced on the new
-boot, refused configure-hosts/apply, and demotion when the Host restarts again without a new
-approval.
+boot, demotion with refused refresh and configure-hosts when the Host restarts again without a
+new approval, re-admission of the committed generation, configure-hosts acknowledged by the
+Host, and apply to APPLIED_UNQUALIFIED.
 
 When the Host's producer session is replaced by a new boot, the P-side link now drops its
 workers and returns to linking (which needs a re-admission) instead of failing the runtime.

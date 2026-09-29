@@ -235,13 +235,22 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                     {
                         return reject(Reject::StaleRevision);
                     }
-                    // The baseline must describe exactly the generation being replaced.
-                    if baseline.snapshot.host_boot != input.previous_boot
-                        || baseline.snapshot.delivery_journal != input.delivery_journal
-                        || baseline.snapshot.evidence_journal.as_ref()
-                            != Some(&input.evidence_journal)
-                        || b.phase != crate::host_binding_transition::Phase::BaselineRecorded
-                    {
+                    // The replaced generation is either the baselined one (before the commit)
+                    // or the one whose commit P already confirmed (a later restart).
+                    let replaced = match b.phase {
+                        crate::host_binding_transition::Phase::BaselineRecorded => {
+                            Some(&baseline.snapshot)
+                        }
+                        crate::host_binding_transition::Phase::MetadataMatched => {
+                            b.observation.as_ref().map(|o| &o.snapshot)
+                        }
+                        crate::host_binding_transition::Phase::AwaitingBaseline => None,
+                    };
+                    if !replaced.is_some_and(|s| {
+                        s.host_boot == input.previous_boot
+                            && s.delivery_journal == input.delivery_journal
+                            && s.evidence_journal.as_ref() == Some(&input.evidence_journal)
+                    }) {
                         return reject(Reject::ContinuityUnproven);
                     }
                     Some(ra::BindingTransition {

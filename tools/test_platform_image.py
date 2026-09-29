@@ -327,16 +327,12 @@ with tempfile.TemporaryDirectory(prefix='rx-platform-image-') as temporary:
                     matched=wait(lambda:[v for v in intents() if v['phase']=='METADATA_MATCHED'],'binding commit was not confirmed')[0]
                     assert matched['observation']['snapshot']['host_boot']!=base['host_boot'] and not matched['activation_authorized'],matched
                     change_detail,kinds,listed=wait(lambda:(lambda d:d if 'HOST_BINDING_COMMIT_UNCONFIRMED' not in d[1] else None)(blockers()),'standing did not reach COMMIT_CURRENT')
-                    assert 'HOST_BINDING_CHANGE_REQUIRED' in kinds and 'HOST_BINDING_BASELINE_REQUIRED' not in kinds,listed
+                    # Every plan Host runs the confirmed replacement, so the summary blocker is gone.
+                    assert 'HOST_BINDING_CHANGE_REQUIRED' not in kinds and 'HOST_BINDING_BASELINE_REQUIRED' not in kinds,listed
                     # S5: the fences of the replaced boot do not count; refresh fences the committed boot.
                     refreshed,_=api('/api/v1/process-change/prepare',{'request_key':str(uuid.uuid4()),'command':{'target':transition(change_detail['change']),'refresh':True}},reviewer_cookie)
                     assert refreshed['preparation']['attempt']!=change_detail['change']['preparation']['attempt'],refreshed
                     change_detail,kinds,listed=wait(lambda:(lambda d:d if 'HOST_FENCE_UNCONFIRMED' not in d[1] and 'PREPARATION_STALE' not in d[1] else None)(blockers()),'refreshed fence not acknowledged by the committed boot')
-                    still_refused={}
-                    for route in ['/api/v1/process-change/configure-hosts','/api/v1/process-change/apply']:
-                        try:api(route,{'request_key':str(uuid.uuid4()),'command':transition(change_detail['change'])},reviewer_cookie)
-                        except urllib.error.HTTPError as blocked:assert blocked.code in (409,422);still_refused[route]={'status':blocked.code,'body':json.loads(blocked.read())}
-                        else:raise AssertionError(route+' accepted a binding change')
                     confirmed_detail=change_detail
                     # Counterexample: restarting the committed Host without a new re-admission demotes it.
                     binding_host.stop();restarted_ready=binding_host.serve('/config/proposed-startup.json')
@@ -344,16 +340,38 @@ with tempfile.TemporaryDirectory(prefix='rx-platform-image-') as temporary:
                     try:api('/api/v1/process-change/prepare',{'request_key':str(uuid.uuid4()),'command':{'target':transition(demoted[0]['change']),'refresh':True}},reviewer_cookie)
                     except urllib.error.HTTPError as blocked:assert blocked.code in (409,422);demoted_refresh={'status':blocked.code,'body':json.loads(blocked.read())}
                     else:raise AssertionError('refresh accepted a demoted Host')
+                    try:api('/api/v1/process-change/configure-hosts',{'request_key':str(uuid.uuid4()),'command':transition(demoted[0]['change'])},reviewer_cookie)
+                    except urllib.error.HTTPError as blocked:assert blocked.code in (409,422);demoted_configure={'status':blocked.code,'body':json.loads(blocked.read())}
+                    else:raise AssertionError('configure-hosts accepted a demoted Host')
+                    # Re-admit the committed generation that was replaced by the restart.
+                    committed=matched['observation']['snapshot']
+                    second={'host':'host/sim','previous_boot':committed['host_boot'],'delivery_journal':committed['delivery_journal'],'evidence_journal':committed['evidence_journal'],'binding_intent':request_id}
+                    second_approval,_=api('/api/v1/hosts/readmission',{'request_key':str(uuid.uuid4()),'command':second},reviewer_cookie)
+                    rematched=wait(lambda:[v for v in intents() if v['phase']=='METADATA_MATCHED' and v['observation']['snapshot']['host_boot'] not in (base['host_boot'],committed['host_boot'])],'restarted commit was not re-confirmed')[0]
+                    change_detail,kinds,listed=wait(lambda:(lambda d:d if 'HOST_BINDING_COMMIT_UNCONFIRMED' not in d[1] else None)(blockers()),'re-admitted Host did not return to COMMIT_CURRENT')
+                    refreshed_again,_=api('/api/v1/process-change/prepare',{'request_key':str(uuid.uuid4()),'command':{'target':transition(change_detail['change']),'refresh':True}},reviewer_cookie)
+                    change_detail,kinds,listed=wait(lambda:(lambda d:d if 'HOST_FENCE_UNCONFIRMED' not in d[1] and 'PREPARATION_STALE' not in d[1] else None)(blockers()),'fence of the re-admitted boot not acknowledged')
+                    assert 'HOST_BINDING_CHANGE_REQUIRED' not in kinds,listed
+                    # S6: configure the committed Host; S7: apply without qualification.
+                    configured,_=api('/api/v1/process-change/configure-hosts',{'request_key':str(uuid.uuid4()),'command':transition(change_detail['change'])},reviewer_cookie)
+                    change_detail=wait(lambda:(lambda d:d if d['host_configuration']['all_hosts_acknowledged'] and not d['host_configuration']['outcome_unknown'] and not d['host_configuration']['mixed_configuration'] else None)(blockers()[0]),'Host configuration was not acknowledged',timeout=60)
+                    applied,_=api('/api/v1/process-change/apply',{'request_key':str(uuid.uuid4()),'command':transition(change_detail['change'])},reviewer_cookie)
+                    assert applied['state']=='APPLIED_UNQUALIFIED',applied
+                    applied_detail,_=api('/api/v1/process-change?cell=cell%2Fa&id='+change['id'],cookie=cookie)
+                    applied_cell,_=api('/api/v1/cell?id=cell%2Fa',cookie=cookie)
+                    assert applied_cell['value']['configuration']==applied_detail['after'],'P cell configuration differs from the applied target'
+                    assert not applied_detail['activation_authorized'] and applied_cell['value']['qualification'] is None,(applied_detail['activation_authorized'],applied_cell['value']['qualification'])
                     assert all(not v['activation_authorized'] for v in intents())
-                    change_detail=demoted[0]
-                    binding_commit={'approval':approval,'stopped_host':stopped_host,'proposed_backend':proposed['backend'],'host_prepared':host_prepared,'host_committed':host_committed,
-                                    'committed_ready':committed_ready,'matched':matched,'confirmed_blockers':confirmed_detail['blockers'],'refreshed_preparation':refreshed['preparation'],'still_refused':still_refused,
+                    change_detail=applied_detail
+                    binding_commit={'second_approval':second_approval,'rematched':rematched,'refreshed_again':refreshed_again['preparation'],'demoted_configure':demoted_configure,'configured':configured,'applied':applied,'applied_cell':applied_cell,'approval':approval,'stopped_host':stopped_host,'proposed_backend':proposed['backend'],'host_prepared':host_prepared,'host_committed':host_committed,
+                                    'committed_ready':committed_ready,'matched':matched,'confirmed_blockers':confirmed_detail['blockers'],'refreshed_preparation':refreshed['preparation'],
                                     'restarted_ready':restarted_ready,'demoted_blockers':demoted[2],'demoted_refresh':demoted_refresh}
                 deployment={'binding_commit':binding_commit,'process_intake':process_intake,'process_report':process_report,'process_decision':process_decision,'change':change_detail,'guard':deployment_denial,'status':'HOST_BINDING_CHANGE_REQUIRED','binding_intents':binding_intents,'same_intents_on_retry':True}
 
 
                 final_cell,_=api('/api/v1/cell?id=cell%2Fa',cookie=cookie)
-                assert final_cell['value']['configuration']==cell['value']['configuration']
+                assert final_cell['value']['configuration']==(binding_commit['applied_cell']['value']['configuration'] if binding_commit else cell['value']['configuration'])
+                if binding_commit:assert final_cell['value']['configuration']!=cell['value']['configuration']
                 final_overview,_=api('/api/v1/overview',cookie=cookie)
                 assert all(not c['runs'] and c['cell']['value']['qualification'] is None for c in final_overview['cells'])
 
@@ -369,7 +387,7 @@ with tempfile.TemporaryDirectory(prefix='rx-platform-image-') as temporary:
         # Stop fences registered Hosts and waits a bounded time for their acknowledgement,
         # so a connected Host must leave no HOST_FENCE_UNCONFIRMED attention and exit 0.
         # A Host that is unreachable at stop must still be reported, with exit 2, after the bounded wait.
-        expected_attention=[{'cell':'cell/a','host':'host/sim','kind':'HOST_FENCE_UNCONFIRMED'}] if args.host_unreachable_at_stop or args.binding_commit else []
+        expected_attention=[{'cell':'cell/a','host':'host/sim','kind':'HOST_FENCE_UNCONFIRMED'}] if args.host_unreachable_at_stop else []
         if expected_attention:assert stop_seconds>=4.5,stop_seconds
         assert stopped['State']['ExitCode']==(2 if expected_attention else 0),(stopped['State'],after['stop'],subprocess.run(['docker','logs','--tail','60',service],stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True).stdout[-6000:],stop_seconds)
         assert after['phase']=='PROCESS_STOPPED';assert after['stop']['lifecycle']['phase']=='STOP_COMMITTED';assert not after['physical_shutdown_assessed']

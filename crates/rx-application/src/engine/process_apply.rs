@@ -19,7 +19,7 @@ fn proofs(
     reads: &BTreeMap<Id, (TimePoint, Digest)>,
 ) -> Result<Vec<HostProof>> {
     process_change::current(tx, meta, c)?;
-    configuration_dispatch::barrier(tx, c)?;
+    configuration_dispatch::barrier(tx, meta, c)?;
     let prep = c
         .preparation
         .as_ref()

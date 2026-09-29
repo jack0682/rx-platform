@@ -833,10 +833,16 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                 return process_apply::detail(tx, meta, c, before, after);
             }
             if c.host_binding_plan.is_some() {
-                // Application of a binding change is not wired yet; the specific standing
-                // below says which Host evidence is still missing.
-                add(Blocker::HostBindingChangeRequired);
-                for (host, standing) in super::host_binding_transition::standings(tx, meta, &c)? {
+                // A binding change proceeds like any other change once every plan Host runs
+                // the committed replacement; until then each Host names its missing evidence.
+                let standings = super::host_binding_transition::standings(tx, meta, &c)?;
+                if standings
+                    .values()
+                    .any(|s| *s != super::host_binding_transition::Standing::CommitCurrent)
+                {
+                    add(Blocker::HostBindingChangeRequired);
+                }
+                for (host, standing) in standings {
                     match standing {
                         super::host_binding_transition::Standing::BaselineRequired => {
                             add(Blocker::HostBindingBaselineRequired { host })

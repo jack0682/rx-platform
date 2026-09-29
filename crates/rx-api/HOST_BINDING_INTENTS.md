@@ -19,10 +19,15 @@ request/plan/configuration and either changed journal. A completed request canno
 be used to manufacture its own before-baseline. Metadata matching is not an
 application/qualification result, and a stored last match is not current authority.
 
-The current HTTP surface does not accept uploaded observations as confirmation.
-The registered Host transport worker still needs to collect and deliver bounded
-reads. Existing preparation/application barriers are intentionally unchanged until
-baseline acquisition, fences, current confirmation and final revalidation are wired.
-Adoption after P restart remains to be implemented without replacing the original
-Host request. This endpoint is an integration primitive, not the finished deployment
-workflow.
+The HTTP surface does not accept uploaded observations as confirmation. The registered
+Host configuration worker collects bounded reads and submits them; a failed read records
+its reason without discarding an earlier confirmed commit.
+
+Preparation of a binding change fences only the baselined or confirmed-committed Host
+generation. Host configuration dispatch and application are allowed only while every plan
+Host is COMMIT_CURRENT: its confirmed commit was read from the Host generation registered
+now, under the Host's active producer session, and no later read contradicted it. A Host
+restart after confirmation demotes it until an explicit re-admission
+(`/api/v1/hosts/readmission`) and a new confirmation. Application still leaves the change
+APPLIED_UNQUALIFIED; qualification is separate. Adoption of intents after a P restart is
+not implemented: a P restart makes them RUNTIME_CHANGED.

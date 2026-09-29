@@ -78,7 +78,12 @@ fn standing(
         .and(r.observation.as_ref())
         .map(|o| &o.snapshot);
     if let Some(s) = committed {
-        return if &s.host_boot == boot
+        // A later read that contradicts the match (anything but a lost transport) withdraws it.
+        let contradicted = r
+            .issue
+            .is_some_and(|i| i != binding::Rejection::TransportUnavailable);
+        return if !contradicted
+            && &s.host_boot == boot
             && &s.delivery_journal == journal
             && r.observed_session.as_ref() == Some(session)
         {
@@ -218,15 +223,12 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                     return reject(Reject::ContinuityUnproven);
                 }
             }
-            if record.issue == Some(issue) && record.phase != binding::Phase::MetadataMatched {
+            if record.issue == Some(issue) {
                 return Ok(record);
             }
+            // A failed read proves nothing about the Host: keep the recorded phase and
+            // observation (standing decides currency) and only record why the read failed.
             record.issue = Some(issue);
-            record.phase = if record.baseline.is_some() {
-                binding::Phase::BaselineRecorded
-            } else {
-                binding::Phase::AwaitingBaseline
-            };
             save(tx, "hostbindingintent", id, Some(revision), RECORD, &record)?;
             event(tx, "rx.event.host-binding-read-unavailable.v1", &record)?;
             Ok(record)
@@ -453,12 +455,16 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                     record.issue = None;
                 }
                 Err(issue) => {
+                    // A read that does not confirm keeps an earlier confirmed commit on record;
+                    // standing compares that observation with the current registration.
                     record.issue = Some(issue);
-                    record.phase = if record.baseline.is_some() {
-                        binding::Phase::BaselineRecorded
-                    } else {
-                        binding::Phase::AwaitingBaseline
-                    };
+                    if record.phase != binding::Phase::MetadataMatched {
+                        record.phase = if record.baseline.is_some() {
+                            binding::Phase::BaselineRecorded
+                        } else {
+                            binding::Phase::AwaitingBaseline
+                        };
+                    }
                 }
             }
             // The worker re-reads every step. A read that changes nothing but its start
@@ -609,6 +615,16 @@ mod standing_tests {
         // A match never falls back to the pre-commit baseline generation.
         assert_eq!(Standing::CommitUnconfirmed, of(Some(&r), Some((31, 1, 2))));
         assert_eq!(Standing::CommitUnconfirmed, of(Some(&r), None));
+        // A lost transport keeps the match; a contradicting read withdraws it.
+        let mut lost = matched();
+        lost.issue = Some(binding::Rejection::TransportUnavailable);
+        assert_eq!(Standing::CommitCurrent, of(Some(&lost), Some((34, 4, 2))));
+        let mut contradicted = matched();
+        contradicted.issue = Some(binding::Rejection::MissingCommit);
+        assert_eq!(
+            Standing::CommitUnconfirmed,
+            of(Some(&contradicted), Some((34, 4, 2)))
+        );
     }
     #[test]
     fn only_the_read_start_time_is_ignored_when_deciding_a_reread_is_new_evidence() {
