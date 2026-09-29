@@ -203,8 +203,11 @@ fn fixture() -> Fixture {
         terminal_key: terminal_key.serialize_pem(),
     }
 }
-async fn wait_ready(f: &Fixture) -> Value {
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(8);
+/// Wait until the platform reports READY or has stopped. How long startup takes is not what these
+/// tests check and varies with host load, so a platform that stopped fails at once and only a
+/// hang guard bounds a platform that does neither.
+async fn wait_ready(f: &Fixture, mut stopped: impl FnMut() -> bool) -> Value {
+    let hang_guard = tokio::time::Instant::now() + Duration::from_secs(120);
     loop {
         if let Ok(bytes) = fs::read(f.config.runtime_directory.join("platform-status.json")) {
             let value: Value = serde_json::from_slice(&bytes).unwrap();
@@ -212,7 +215,14 @@ async fn wait_ready(f: &Fixture) -> Value {
                 return value;
             }
         }
-        assert!(tokio::time::Instant::now() < deadline, "startup timeout");
+        assert!(
+            !stopped(),
+            "platform stopped before SOFTWARE_READY_UNCOMMISSIONED"
+        );
+        assert!(
+            tokio::time::Instant::now() < hang_guard,
+            "platform neither ready nor stopped within the hang guard"
+        );
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
 }
@@ -349,7 +359,7 @@ async fn configured_operator_ui_serves_over_terminal_https_without_creating_runs
         })
         .await
     });
-    wait_ready(&f).await;
+    wait_ready(&f, || task.is_finished()).await;
     let response = f
         .client
         .get(format!("{}/", f.config.https.origin))
@@ -423,7 +433,7 @@ async fn composed_startup_restart_and_stop_preserve_store_and_never_start_a_run(
             })
             .await
         });
-        let status = wait_ready(&f).await;
+        let status = wait_ready(&f, || task.is_finished()).await;
         let duplicate = serve(&f.path, TestClock, std::future::pending()).await;
         assert!(duplicate.is_err());
         let preserved: Value = serde_json::from_slice(
@@ -664,7 +674,7 @@ async fn linux_executable_uses_shared_clock_and_sigterm_commits_process_stop() {
             .spawn()
             .unwrap(),
     );
-    let ready = wait_ready(&f).await;
+    let ready = wait_ready(&f, || !matches!(child.0.try_wait(), Ok(None))).await;
     assert!(child.0.try_wait().unwrap().is_none());
     let login = f
         .client
@@ -814,7 +824,7 @@ async fn configured_package_intake_uses_real_terminal_https_and_retains_history_
             })
             .await
         });
-        wait_ready(&f).await;
+        wait_ready(&f, || task.is_finished()).await;
         let response = f
             .client
             .post(format!("{}/api/v1/session", f.config.https.origin))
@@ -975,7 +985,7 @@ async fn configured_process_review_records_separate_account_approval_over_termin
         })
         .await
     });
-    wait_ready(&f).await;
+    wait_ready(&f, || task.is_finished()).await;
     let mut cookies = Vec::new();
     for principal in ["admin", "reviewer"] {
         let response = f
