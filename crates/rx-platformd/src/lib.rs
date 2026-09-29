@@ -1,6 +1,8 @@
 //! Platform process composition. Qualification and physical Host shutdown remain separate gates.
 pub mod config;
+pub mod maintenance;
 use config::{Catalog, Loaded};
+pub use maintenance::{backup, restore};
 use rx_application::*;
 use rx_domain::{canonical, types::*};
 use rx_runtime::{

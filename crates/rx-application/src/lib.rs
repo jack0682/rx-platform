@@ -51,6 +51,7 @@ pub mod operator_start;
 
 pub mod host_readmission;
 pub mod host_recovery;
+pub mod store_restore;
 
 pub mod settlement;
 

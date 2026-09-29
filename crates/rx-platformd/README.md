@@ -101,6 +101,33 @@ Host connection configuration and current limitations follow [Host bootstrap](..
 
 The Host connection service performs atomic source collection. Independent maintained-condition monitoring checks observation expiry separately from the network. Follow the decision, shutdown, and performance scope in [observation ingestion and expiry monitoring](../rx-application/OBSERVATION_INGESTION.md).
 
+## Offline backup and restore
+
+Both commands run only while no runtime owns the installation: opening the store takes the
+writer lock, so a running `rx-platformd run` makes them fail rather than race it.
+
+```sh
+rx-platformd backup  /etc/rx/platform/startup.json /backups/platform-2026-09-29.db
+rx-platformd restore /etc/rx/platform/startup.json /backups/platform-2026-09-29.db
+```
+
+`backup` copies the store with the SQLite online-backup API into a new file, verifies the
+copy (integrity check, same installation and generation) and prints its SHA-256 and journal
+head. `restore` verifies a private copy of the backup inside the data directory (integrity,
+same installation id), replaces `platform.db` and its WAL/SHM sidecars with it, and then
+rotates the **store generation** in one transaction that also records
+`rx.internal.store-restore.v1` (previous and new generation, backup SHA-256) and emits
+`rx.event.store-restored.v1`. The printed report carries the new generation.
+
+A restore is a rollback of the ledger, not of the world. Every Host and Executor pins the
+generation it was linked under, so after a restore each peer's session open is refused as a
+contract mismatch until an operator re-pins it to the new generation and the Host is
+re-admitted explicitly ([re-admission](../rx-api/HOST_READMISSION.md)); nothing regains a
+grant, Arm, qualification or Run by restoring. Runtime-restart provenance recorded under the
+previous generation is no longer readable as current provenance. The next `run` applies its
+usual restart invalidation to the restored cells. Semantics:
+[STORE_RESTORE.md](../rx-application/STORE_RESTORE.md).
+
 ## Offline package storage tool
 
 The same P image includes `rx-package-store`. It verifies/stores signed packages from pinned local policy and an import root, and revalidates them under current policy. This explicit administration tool is separate from default daemon startup and does not modify cell ledgers, approvals, or activation. Configuration, volumes, and failure/rerun semantics are in the [package storage specification](../rx-package/STORE.md).
