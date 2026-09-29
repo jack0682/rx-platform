@@ -308,9 +308,12 @@ pub fn read_for_cell(
         .get(&persistence::name("installation/current"))?
         .ok_or_else(|| StoreError::Integrity("runtime installation absent".into()))?;
     let live: Installation = persistence::decode(&record, INSTALLATION)?;
+    // An origin recorded before a restore, in the generation the restored cut was written
+    // under, is still this ledger's history; any other generation is not.
     if !same(&live, installation)?
         || origin.installation != installation.id
-        || origin.store_generation != installation.store_generation
+        || !crate::engine::store_restore::lineage(tx, &installation.store_generation)?
+            .contains(&origin.store_generation)
         || origin.cell != *cell_id
     {
         return Err(StoreError::Integrity(

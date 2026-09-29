@@ -15,7 +15,7 @@ fn reopen(f: Fixture) -> (App, ManualClock, Installation, CellConfiguration) {
 }
 
 #[test]
-fn restore_rotates_the_generation_and_retires_prior_restart_provenance() {
+fn restore_rotates_the_generation_and_keeps_prior_restart_provenance_selectable() {
     let f = fixture(1, false);
     let (app, clock, previous, configuration) = reopen(f);
     // The restart left a RuntimeRestart restriction with provenance under this generation.
@@ -63,9 +63,10 @@ fn restore_rotates_the_generation_and_retires_prior_restart_provenance() {
         Some(first.clone())
     );
 
-    // The next runtime start carries the new generation; provenance from before the restore
-    // is no longer current provenance, and the cell is invalidated again.
-    let app = Engine::open(
+    // The next runtime start carries the new generation and invalidates the cell again. The
+    // restriction recorded before the restore keeps its provenance: it was written under the
+    // generation the restored cut descends from, so a review can still select and release it.
+    let mut app = Engine::open(
         repository,
         clock.clone(),
         SimulationAuthority,
@@ -75,10 +76,30 @@ fn restore_rotates_the_generation_and_retires_prior_restart_provenance() {
     .unwrap();
     let current = app.installation.clone();
     assert_eq!(current.store_generation, first.generation);
+    let admin = Identity {
+        principal: name("admin"),
+        session: app
+            .authenticated_session(&name("admin"), id(), expiry(u64::MAX))
+            .unwrap()
+            .id,
+        terminal: None,
+    };
+    let view = app.runtime_restrictions(&admin, &configuration.id).unwrap();
+    assert_eq!(view.restrictions.len(), 2);
+    let generations: BTreeSet<_> = view
+        .restrictions
+        .iter()
+        .map(|r| r.origin.as_ref().unwrap().store_generation.clone())
+        .collect();
+    assert_eq!(
+        generations,
+        BTreeSet::from([previous.store_generation.clone(), first.generation.clone()])
+    );
     let mut repository = app.into_repository();
     repository
         .transact(|tx| {
-            assert!(origin::read_for_cell(tx, &current, &configuration.id, &block).is_err());
+            let prior = origin::read_for_cell(tx, &current, &configuration.id, &block)?.unwrap();
+            assert_eq!(prior.store_generation, previous.store_generation);
             let (_, cell): (_, Cell) =
                 p::load(tx, "cell", configuration.id.clone(), "rx.internal.cell.v1")?;
             assert!(cell.blocks.iter().any(|b| b.id != block && b.latched));

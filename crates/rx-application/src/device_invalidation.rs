@@ -210,9 +210,11 @@ pub fn read_for_cell(
         return Ok(None);
     };
     let live = current_installation(tx)?;
+    // Same lineage rule as runtime origins: a restored cut keeps the history it was written in.
     if !same(&live, installation)?
         || origin.installation != installation.id
-        || origin.store_generation != installation.store_generation
+        || !crate::engine::store_restore::lineage(tx, &installation.store_generation)?
+            .contains(&origin.store_generation)
         || origin.cell != *cell_id
     {
         return Err(StoreError::Integrity(

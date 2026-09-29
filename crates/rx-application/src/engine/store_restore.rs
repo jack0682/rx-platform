@@ -52,6 +52,20 @@ pub fn restore_store<R: Repository>(
     })
 }
 
+/// Store generations this ledger's records may carry: `current` and every generation a restore
+/// recorded in this ledger replaced. A restored cut keeps the restore records made before its
+/// backup, so these are exactly the generations its content was written under.
+pub(crate) fn lineage(tx: &mut dyn Transaction, current: &Id) -> Result<BTreeSet<Id>> {
+    let mut generations = BTreeSet::from([current.clone()]);
+    for row in tx.scan("storerestore/")? {
+        if row.document.schema.as_str() == RECORD {
+            let restore: StoreRestore = decode(&row, RECORD)?;
+            generations.insert(restore.previous_generation);
+        }
+    }
+    Ok(generations)
+}
+
 /// The most recent restore of this store, if any.
 pub fn last_store_restore<R: Repository>(repository: &mut R) -> Result<Option<StoreRestore>> {
     repository.transact(|tx| {
