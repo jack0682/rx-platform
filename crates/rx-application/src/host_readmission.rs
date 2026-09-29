@@ -1,5 +1,6 @@
-//! Explicit re-admission of a restarted Host generation. Approval only permits the next
-//! host link to replace the recorded registration; it restores no grant, Arm, qualification,
+//! Explicit re-admission of a replaced Host generation: a restarted Host (new boot) or a
+//! retained Host whose registered session is retired (same boot; P restarted). Approval only
+//! permits the next host link to replace the recorded registration; it restores no grant, Arm, qualification,
 //! permit or Run, and the cell blocks raised by the restart stay latched.
 use rx_domain::types::*;
 use serde::{Deserialize, Serialize};

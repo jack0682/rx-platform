@@ -307,7 +307,7 @@ with tempfile.TemporaryDirectory(prefix='rx-platform-image-') as temporary:
                                 raise
                             if value:return value
                             if time.monotonic()>=until:
-                                failure={'label':label,'intents':intents(),'blockers':blockers()[2],'platform_log':run('docker','logs',service)[-8000:],
+                                failure={'label':label,'intents':intents(),'blockers':blockers()[2],'platform_log':subprocess.run(['docker','logs',service],stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True).stdout[-8000:],
                                          'host_log':subprocess.run(['docker','logs',binding_host.service],stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True).stdout[-8000:]}
                                 args.evidence.with_suffix('.failure.json').write_text(json.dumps(failure,indent=2)+'\n')
                                 raise AssertionError(label+'; inspect '+str(args.evidence.with_suffix('.failure.json')))
@@ -346,7 +346,13 @@ with tempfile.TemporaryDirectory(prefix='rx-platform-image-') as temporary:
                                  'device_binding_plan':probe('/api/v1/device-binding-plan?cell=cell%2Fa&id='+reviewed_plan['id'])}))
                         assert [a['intent']['request'] for a in adopted]==[before_restart['intent']['request']] and adopted[0]['adopted_from'],adopted
                         assert adopted[0]['baseline']==before_restart['baseline'],'adoption must keep the original baseline'
-                        until=time.monotonic()+30
+                        # The retained Host's operating registration is bound to the old runtime's session:
+                        # an explicit re-admission of the same generation rebinds it once the old grant lapses.
+                        retained=before_restart['baseline']['snapshot']
+                        rebind={'host':'host/sim','previous_boot':retained['host_boot'],'delivery_journal':retained['delivery_journal'],'evidence_journal':retained['evidence_journal']}
+                        rebind_approval,_=api('/api/v1/hosts/readmission',{'request_key':str(uuid.uuid4()),'command':rebind},reviewer_cookie)
+                        assert rebind_approval.get('binding') is None and all(v is None for v in rebind_approval['cells'].values()),rebind_approval
+                        until=time.monotonic()+75
                         while True:
                             registered,_=api('/api/v1/overview',cookie=cookie)
                             contexts={h['host']:h['context'] for c in registered['cells'] for h in c['diagnostics']['hosts']}
@@ -355,7 +361,7 @@ with tempfile.TemporaryDirectory(prefix='rx-platform-image-') as temporary:
                         current=wait(lambda:(lambda d:d if 'HOST_BINDING_BASELINE_REQUIRED' not in d[1] and 'HOST_BINDING_COMMIT_UNCONFIRMED' in d[1] else None)(blockers()),'adopted baseline did not become current')
                         refreshed_after_restart,_=api('/api/v1/process-change/prepare',{'request_key':str(uuid.uuid4()),'command':{'target':transition(current[0]['change']),'refresh':True}},reviewer_cookie)
                         change_detail,kinds,listed=wait(lambda:(lambda d:d if 'HOST_FENCE_UNCONFIRMED' not in d[1] and 'PREPARATION_STALE' not in d[1] else None)(blockers()),'fence after P restart not acknowledged')
-                        platform_restart={'stale_blockers':stale[2],'unadopted_refresh':unadopted_refresh,'adopted':adopted,'refreshed':refreshed_after_restart['preparation']}
+                        platform_restart={'stale_blockers':stale[2],'unadopted_refresh':unadopted_refresh,'adopted':adopted,'rebind_approval':rebind_approval,'refreshed':refreshed_after_restart['preparation']}
                     intent=intents()[0];base=intent['baseline']['snapshot'];request_id=intent['intent']['request']
                     replaced_boot=base['host_boot'];unplanned=None
                     if args.host_restart_before_commit:
