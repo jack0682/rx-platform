@@ -39,17 +39,24 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             }
             let mut restrictions = Vec::new();
             let mut ids = BTreeSet::new();
-            for block in cell
-                .blocks
-                .iter()
-                .filter(|b| b.latched && b.reason == BlockReason::RuntimeRestart)
-            {
+            // Every RuntimeRestart block, and the AuthorityRevoked blocks a runtime stop raised.
+            // Another AuthorityRevoked block (identity or peer revocation) has no runtime origin.
+            for block in cell.blocks.iter().filter(|b| {
+                b.latched
+                    && matches!(
+                        b.reason,
+                        BlockReason::RuntimeRestart | BlockReason::AuthorityRevoked
+                    )
+            }) {
                 if !ids.insert(&block.id) {
                     return Err(StoreError::Integrity(
                         "duplicate runtime restriction ID".into(),
                     ));
                 }
                 let origin = runtime_invalidation::read_for_cell(tx, meta, cell_id, &block.id)?;
+                if block.reason == BlockReason::AuthorityRevoked && origin.is_none() {
+                    continue;
+                }
                 let origin_digest = origin
                     .as_ref()
                     .map(|value| value.digest())
