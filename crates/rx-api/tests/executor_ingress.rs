@@ -1849,6 +1849,7 @@ fn graph_configuration(mut configuration: CellConfiguration) -> CellConfiguratio
         bindings: BTreeMap::from([(
             name("place"),
             ActionBinding {
+                program_inputs: None,
                 host: configuration.steps[0].host.clone(),
                 intent: configuration.steps[0].intent.clone(),
             },

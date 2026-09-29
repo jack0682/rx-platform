@@ -27,7 +27,7 @@ fn producer(
     }
     Ok((revision, p))
 }
-fn transport(
+pub(super) fn transport(
     tx: &mut dyn Transaction,
     meta: &Installation,
     host: &Name,
@@ -41,7 +41,7 @@ fn transport(
         .map_err(StoreError::Integrity)?;
     Ok(v.pin)
 }
-fn live_authority(tx: &mut dyn Transaction, cell: &Name) -> Result<bool> {
+pub(super) fn live_authority(tx: &mut dyn Transaction, cell: &Name) -> Result<bool> {
     for row in tx.scan("run/")? {
         let run: Run = decode(&row, RUN)?;
         if run.cell == *cell && matches!(run.state, RunState::Executing | RunState::Prepared) {
@@ -270,7 +270,7 @@ pub(super) fn build(
         blockers,
     })
 }
-fn operations(
+pub(super) fn operations(
     tx: &mut dyn Transaction,
     host: &Name,
     cells: &[Name],

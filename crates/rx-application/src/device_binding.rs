@@ -232,6 +232,7 @@ pub(crate) fn build_candidates(
             CompletionRule::Unobservable
         };
         let step = StepBinding {
+            program_inputs: None,
             id: id.clone(),
             host: s.host.clone(),
             intent,

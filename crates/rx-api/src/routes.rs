@@ -1,6 +1,8 @@
 mod device_binding;
 mod device_review;
 mod host_recovery;
+mod host_rejoin;
+mod settlement;
 use crate::{
     auth::{Auth, COOKIE, Credentials, SESSION_SECONDS},
     error::ApiError,
@@ -114,6 +116,20 @@ fn build_router(
         .route("/api/v1/session/end", post(logout))
         .route("/api/v1/overview", get(overview))
         .route("/api/v1/host-recovery-context", get(host_recovery::context))
+        .route("/api/v1/host-rejoin-context", get(host_rejoin::context))
+        .route("/api/v1/host-rejoin-proposals", post(host_rejoin::propose))
+        .route("/api/v1/host-rejoin-proposal", get(host_rejoin::proposal))
+        .route("/api/v1/host-rejoin-binding", get(host_rejoin::binding))
+        .route("/api/v1/host-rejoin/query", post(host_rejoin::query))
+        .route("/api/v1/host-rejoin/settle", post(host_rejoin::settle))
+        .route("/api/v1/host-rejoin/rebind", post(host_rejoin::rebind))
+        .route(
+            "/api/v1/host-rejoin/rebind-progress",
+            post(host_rejoin::rebind_progress),
+        )
+        .route("/api/v1/host-rejoin-rebind", get(host_rejoin::rebind_get))
+        .route("/api/v1/host-rejoin/approve", post(host_rejoin::approve))
+        .route("/api/v1/host-rejoin/progress", post(host_rejoin::progress))
         .route(
             "/api/v1/host-recoveries",
             get(host_recovery::list).post(host_recovery::propose),
@@ -195,6 +211,7 @@ fn build_router(
             get(list_process_reviews).post(create_process_review),
         )
         .route("/api/v1/process-review", get(get_process_review))
+        .route("/api/v1/recovery-settlements", post(settlement::approve))
         .route("/api/v1/process-changes", post(propose_process_change))
         .route("/api/v1/process-change", get(get_process_change))
         .route("/api/v1/process-change/apply", post(apply_process_change))
@@ -235,6 +252,10 @@ fn build_router(
         )
         .route("/api/v1/cell", get(cell))
         .route("/api/v1/runtime-restrictions", get(runtime_restrictions))
+        .route(
+            "/api/v1/host-rebind-restrictions",
+            get(host_rejoin::restrictions),
+        )
         .route("/api/cell/v1/cells/{cell_id}/inspect", get(cell_context))
         .route("/api/v1/cells", post(install_cell))
         .route("/api/v1/runs", post(create_run))

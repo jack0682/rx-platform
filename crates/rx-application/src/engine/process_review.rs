@@ -405,7 +405,7 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             let resolved = v
                 .resolved
                 .as_ref()
-                .map(|s| persist_artifact(tx, "reviewresolved", "rx.resolved-process.v1", s))
+                .map(|s| persist_artifact(tx, "reviewresolved", s.schema.as_str(), s))
                 .transpose()?;
             if resolved != v.report.resolved {
                 return Err(StoreError::Integrity(

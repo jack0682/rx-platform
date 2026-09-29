@@ -12,6 +12,7 @@ pub(super) fn read(
     let mut valid_for = 3_000_000_000u64;
     let mut hosts = vec![];
     let mut registrations = BTreeMap::new();
+    let mut observation_sources = BTreeMap::new();
     for host in &config.hosts {
         let registration = tx
             .get(&key("host", (&config.id, host)))?
@@ -52,6 +53,9 @@ pub(super) fn read(
                 valid_for = valid_for.min(h.grant.valid_until.ticks_ns.0 - now.ticks_ns.0);
                 HostContext::Current
             }
+        } else if let Some(sources) = observation_link::source_sessions(tx, cell, host, now)? {
+            observation_sources.insert(host.clone(), sources);
+            HostContext::ObservationOnly
         } else {
             HostContext::Unregistered
         };
@@ -69,8 +73,11 @@ pub(super) fn read(
     let mut facts = BTreeMap::new();
     let mut generations = BTreeMap::new();
     for spec in &config.fact_specs {
-        if let Some(h) = registrations.get(&spec.host)
-            && let Some(g) = h.source_sessions.get(&spec.id)
+        if let Some(sources) = registrations
+            .get(&spec.host)
+            .map(|h| &h.source_sessions)
+            .or_else(|| observation_sources.get(&spec.host))
+            && let Some(g) = sources.get(&spec.id)
         {
             generations.insert(spec.id.clone(), g.clone());
         }
@@ -93,7 +100,8 @@ pub(super) fn read(
         let mut issues = vec![];
         let f = samples.get(&spec.id);
         let generation = generations.get(&spec.id);
-        if !registrations.contains_key(&spec.host) {
+        if !registrations.contains_key(&spec.host) && !observation_sources.contains_key(&spec.host)
+        {
             issues.push(SourceIssue::HostUnregistered);
         }
         if generation.is_none() {

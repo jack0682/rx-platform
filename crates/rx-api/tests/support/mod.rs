@@ -42,6 +42,7 @@ pub fn configuration(cell: &str) -> CellConfiguration {
             maximum_uncertainty_ns: Counter(0),
         }],
         steps: vec![StepBinding {
+            program_inputs: None,
             id: name("step/place"),
             host: name("host/sim"),
             predecessors: vec![],

@@ -8,7 +8,7 @@ fn same<T: Serialize>(left: &T, right: &T) -> Result<bool> {
         == canonical::bytes(right).map_err(domain_error)?)
 }
 
-pub(super) fn validate_provenance(
+pub(in crate::engine) fn validate_provenance(
     provenance: &BootstrapProvenance,
     snapshot: &rx_domain::host_snapshot::HostSnapshot,
     read_started: &TimePoint,
@@ -104,7 +104,7 @@ pub(super) fn reject_downgrade(plan: &Plan, incoming: Option<&BootstrapProvenanc
     Ok(())
 }
 
-pub(super) fn create(
+pub(in crate::engine) fn create(
     tx: &mut dyn Transaction,
     meta: &Installation,
     producer: &EvidenceProducer,

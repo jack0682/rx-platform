@@ -207,6 +207,7 @@ async fn run_fixture(automatic: bool, wire: bool) {
         start_conditions: vec![ready.clone()],
         maintained_conditions: vec![],
         steps: vec![StepBinding {
+            program_inputs: None,
             id: name("step/run"),
             host: name("host/sim"),
             intent: intent.clone(),

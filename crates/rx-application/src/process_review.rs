@@ -435,7 +435,15 @@ fn check_process(
             .find(|s| &s.id == selected)
             .ok_or("selected cell step missing")?;
         let input_action = input.bindings.get(id).ok_or("input binding missing")?;
-        if action.host != step.host
+        if !rx_process_contract::program_inputs::same(
+            &step.intent,
+            action.program_inputs.as_ref(),
+            step.program_inputs.as_ref(),
+        )? || !rx_process_contract::program_inputs::same(
+            &action.intent,
+            action.program_inputs.as_ref(),
+            input_action.program_inputs.as_ref(),
+        )? || action.host != step.host
             || action.host != input_action.host
             || action.intent.digest().map_err(|e| e.to_string())?
                 != step.intent.digest().map_err(|e| e.to_string())?
@@ -443,6 +451,14 @@ fn check_process(
                 != input_action.intent.digest().map_err(|e| e.to_string())?
         {
             return Err("resolved binding differs from signed input or selected cell step".into());
+        }
+        if let Some(policy) = &action.program_inputs
+            && policy
+                .parameter_sets
+                .iter()
+                .any(|r| !package.manifest().assets.contains(r))
+        {
+            return Err("approved input missing from declared package assets".into());
         }
         if !package
             .manifest()
@@ -512,6 +528,7 @@ pub fn checker_digest() -> Digest {
             include_str!("device_binding.rs"),
             include_str!("../../rx-process-contract/src/source_link.rs"),
             include_str!("../../rx-process-contract/src/validation.rs"),
+            include_str!("../../rx-process-contract/src/program_inputs.rs"),
             include_str!("../../rx-process-contract/src/source_validation.rs"),
             include_str!("../../rx-domain/src/intent.rs"),
             include_str!("../../rx-domain/src/canonical.rs")

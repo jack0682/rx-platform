@@ -69,8 +69,21 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             }
             if previous.is_some() || old_sessions {
                 let mut touched = BTreeSet::new();
-                for row in tx.scan("cell/")? {
-                    let cell: Cell = decode(&row, CELL)?;
+                let cells = tx
+                    .scan("cell/")?
+                    .iter()
+                    .map(|row| decode::<Cell>(row, CELL))
+                    .collect::<Result<Vec<_>>>()?;
+                let before = cells
+                    .iter()
+                    .map(|cell| {
+                        (
+                            cell.configuration.id.clone(),
+                            cell.blocks.iter().map(|b| b.id.clone()).collect(),
+                        )
+                    })
+                    .collect();
+                for cell in cells {
                     if &cell.configuration.executor == principal
                         && !touched.contains(&cell.configuration.id)
                     {
@@ -81,6 +94,9 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                         )?);
                     }
                 }
+                qualification_activation::suspend_for_executor_replacement(
+                    tx, meta, &touched, &before,
+                )?;
             }
             let session = Session {
                 terminal: None,

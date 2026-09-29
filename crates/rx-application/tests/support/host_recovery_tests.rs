@@ -1368,3 +1368,1683 @@ fn recovery_history_is_discoverable_in_bounded_host_pages_without_partial_cell_a
             .is_empty()
     );
 }
+
+fn rejoin_fixture(cells: usize) -> (Fixture, host_link::Prepare, Identity) {
+    rejoin_fixture_native(cells, false)
+}
+fn rejoin_fixture_native(
+    cells: usize,
+    native_result: bool,
+) -> (Fixture, host_link::Prepare, Identity) {
+    let (mut f, mut input) = link_fixture_native(native_result);
+    input.provenance = Some(proof(&input));
+    let plan = f.app.prepare_host_link(input.clone()).unwrap();
+    let registration = f.app.commit_host_link(link_commit(&f, &plan)).unwrap();
+    f.registrations.push(registration);
+    if cells == 2 {
+        let mut second = f.configuration.clone();
+        second.id = name("cell/b");
+        second.definition = artifact(12, "rx.cell-definition.v1");
+        second.steps[0].intent.resource_set = vec![name("robot/second")];
+        f.app.install_cell(&f.admin, second.clone()).unwrap();
+        f.app
+            .negotiate_evidence_cell(&f.hosts[0], second.definition.sha256)
+            .unwrap();
+        let mut next = input.clone();
+        next.snapshot.cell = second.id;
+        next.snapshot.definition = second.definition.sha256;
+        next.snapshot.resource_fences = [(name("robot/second"), Counter(0))].into();
+        next.snapshot.observations[0].evidence_id = id();
+        next.provenance = Some(proof(&next));
+        let plan = f.app.prepare_host_link(next).unwrap();
+        let mut commit = link_commit(&f, &plan);
+        commit.fence_receipt.sequence = Counter(2);
+        let registration = f.app.commit_host_link(commit).unwrap();
+        f.registrations.push(registration);
+    }
+    f.app
+        .register_host_recovery_transport(input.host.clone(), pin())
+        .unwrap();
+    let release = release_identity(&mut f);
+    (f, input, release)
+}
+fn replace_host(
+    f: &mut Fixture,
+    input: &host_link::Prepare,
+    boot: Id,
+    journal: Id,
+    binding: Digest,
+) -> Identity {
+    let session = f
+        .app
+        .open_evidence_producer(&input.host, boot, journal, binding)
+        .unwrap();
+    let who = Identity {
+        principal: input.host.clone(),
+        session: session.id,
+        terminal: None,
+    };
+    f.app
+        .negotiate_evidence_cell(&who, f.configuration.definition.sha256)
+        .unwrap();
+    who
+}
+#[test]
+fn host_rejoin_origin_is_exact_immutable_and_read_context_creates_no_authority() {
+    let (mut f, input, release) = rejoin_fixture(1);
+    f.app
+        .hold(&f.operator, id().as_str(), &input.snapshot.cell)
+        .unwrap();
+    let before = f.app.inspect_cell(&f.admin, &input.snapshot.cell).unwrap();
+    let boot = id();
+    let who = replace_host(
+        &mut f,
+        &input,
+        boot.clone(),
+        input.snapshot.evidence_journal.clone(),
+        Digest::from_bytes([81; 32]),
+    );
+    let context = f
+        .app
+        .host_rejoin_context(&release, &input.host, &input.snapshot.cell)
+        .unwrap();
+    assert!(
+        context.local_prerequisites_current,
+        "{:?}",
+        context.blockers
+    );
+    assert!(!context.operation_authorized && context.fresh_host_read_required);
+    let origin = context.replacement.as_ref().unwrap();
+    assert_eq!(origin.before.boot, input.snapshot.host_boot);
+    assert_eq!(origin.after.boot, boot);
+    assert_eq!(origin.after.session, who.session);
+    let cut = &origin.cells[&input.snapshot.cell];
+    assert_eq!(cut.before.revision, before.0);
+    assert_eq!(
+        cut.prior_block_ids,
+        before.1.blocks.iter().map(|b| b.id.clone()).collect()
+    );
+    assert!(!cut.prior_block_ids.contains(&cut.block.id));
+    assert_eq!(cut.block.reason, BlockReason::DeviceRestart);
+    assert_eq!(
+        f.app
+            .open_evidence_producer(
+                &input.host,
+                boot,
+                input.snapshot.evidence_journal.clone(),
+                Digest::from_bytes([81; 32])
+            )
+            .unwrap()
+            .id,
+        who.session
+    );
+    let again = f
+        .app
+        .host_rejoin_context(&release, &input.host, &input.snapshot.cell)
+        .unwrap();
+    assert_eq!(context.digest().unwrap(), again.digest().unwrap());
+    assert_eq!(
+        again.cells[&input.snapshot.cell]
+            .registration
+            .as_ref()
+            .unwrap()
+            .boot_id,
+        input.snapshot.host_boot
+    );
+    let mut repository = f.app.into_repository();
+    let before_head = repository.journal_head().unwrap();
+    let stored = repository
+        .transact(|tx| rx_application::host_invalidation::load(tx, &who.session))
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        stored.digest().unwrap(),
+        context.replacement_digest.unwrap()
+    );
+    assert_eq!(repository.journal_head().unwrap(), before_head);
+}
+#[test]
+fn host_rejoin_refuses_missing_origin_changed_source_and_advanced_context() {
+    for change in 0..4 {
+        let (mut f, input, release) = rejoin_fixture(1);
+        if change != 0 {
+            let journal = if change == 1 {
+                id()
+            } else {
+                input.snapshot.evidence_journal.clone()
+            };
+            let binding = if change == 2 {
+                Digest::from_bytes([91; 32])
+            } else {
+                Digest::from_bytes([81; 32])
+            };
+            replace_host(&mut f, &input, id(), journal, binding);
+        }
+        if change == 3 {
+            f.app
+                .hold(&f.operator, id().as_str(), &input.snapshot.cell)
+                .unwrap();
+        }
+        let c = f
+            .app
+            .host_rejoin_context(&release, &input.host, &input.snapshot.cell)
+            .unwrap();
+        assert!(!c.local_prerequisites_current && !c.operation_authorized);
+        assert!(
+            c.blockers.iter().any(|b| matches!(
+                (change, b),
+                (0, rx_application::host_rejoin::Blocker::OriginMissing)
+                    | (
+                        1 | 2,
+                        rx_application::host_rejoin::Blocker::SourceIdentityChanged
+                    )
+                    | (
+                        3,
+                        rx_application::host_rejoin::Blocker::ContextAdvanced { .. }
+                    )
+            )),
+            "{change}: {:?}",
+            c.blockers
+        );
+        assert!(
+            f.app
+                .host_rejoin_context(&f.operator, &input.host, &input.snapshot.cell)
+                .is_err()
+        );
+        let mut no_terminal = release.clone();
+        no_terminal.terminal = None;
+        assert!(
+            f.app
+                .host_rejoin_context(&no_terminal, &input.host, &input.snapshot.cell)
+                .is_err()
+        );
+    }
+}
+
+#[test]
+fn host_rejoin_source_and_session_commit_atomically_and_reply_loss_recovers_origin() {
+    for failure in [1, 2] {
+        let (mut f, input, release) = rejoin_fixture(1);
+        let old = f.app.current_evidence_producer(&input.host).unwrap();
+        let before = f.app.inspect_cell(&f.admin, &input.snapshot.cell).unwrap();
+        let boot = id();
+        f.failure.store(failure, Ordering::SeqCst);
+        assert!(
+            f.app
+                .open_evidence_producer(
+                    &input.host,
+                    boot.clone(),
+                    old.journal.clone(),
+                    old.authentication_binding
+                )
+                .is_err()
+        );
+        f.failure.store(0, Ordering::SeqCst);
+        let observed = f.app.current_evidence_producer(&input.host).unwrap();
+        if failure == 1 {
+            assert_eq!(observed.session, old.session);
+            assert_eq!(
+                canonical::bytes(&f.app.inspect_cell(&f.admin, &input.snapshot.cell).unwrap())
+                    .unwrap(),
+                canonical::bytes(&before).unwrap()
+            );
+        } else {
+            assert_ne!(observed.session, old.session);
+        }
+        let current = replace_host(
+            &mut f,
+            &input,
+            boot,
+            old.journal.clone(),
+            old.authentication_binding,
+        );
+        if failure == 2 {
+            assert_eq!(current.session, observed.session);
+        }
+        let c = f
+            .app
+            .host_rejoin_context(&release, &input.host, &input.snapshot.cell)
+            .unwrap();
+        assert!(c.local_prerequisites_current, "{:?}", c.blockers);
+        let digest = c.replacement_digest.unwrap();
+        let mut repo = f.app.into_repository();
+        let list = repo
+            .transact(|tx| tx.scan("host-invalidation-origin/"))
+            .unwrap();
+        assert_eq!(list.len(), 1);
+        let o = repo
+            .transact(|tx| rx_application::host_invalidation::load(tx, &current.session))
+            .unwrap()
+            .unwrap();
+        assert_eq!(o.digest().unwrap(), digest);
+    }
+}
+#[test]
+fn host_rejoin_context_checks_the_whole_shared_host_cohort_before_returning_evidence() {
+    let (mut f, input, release) = rejoin_fixture(2);
+    let who = replace_host(
+        &mut f,
+        &input,
+        id(),
+        input.snapshot.evidence_journal.clone(),
+        Digest::from_bytes([81; 32]),
+    );
+    f.app
+        .negotiate_evidence_cell(&who, artifact(12, "rx.cell-definition.v1").sha256)
+        .unwrap();
+    let c = f
+        .app
+        .host_rejoin_context(&release, &input.host, &input.snapshot.cell)
+        .unwrap();
+    assert!(c.local_prerequisites_current, "{:?}", c.blockers);
+    assert_eq!(c.cells.len(), 2);
+    assert_eq!(c.replacement.as_ref().unwrap().cells.len(), 2);
+    let mut account = principal("rejoin-only-a", &[Role::ReleaseManager]);
+    account.cells = BTreeSet::from([name("cell/a")]);
+    f.app.put_principal(&f.admin, account, None).unwrap();
+    let session = f
+        .app
+        .authenticated_terminal_user_session(
+            &name("rejoin-only-a"),
+            id(),
+            Counter(99_000),
+            Digest::from_bytes([77; 32]),
+        )
+        .unwrap();
+    let restricted = Identity {
+        principal: name("rejoin-only-a"),
+        session: session.id,
+        terminal: release.terminal.clone(),
+    };
+    assert!(matches!(
+        f.app
+            .host_rejoin_context(&restricted, &input.host, &input.snapshot.cell),
+        Err(StoreError::Rejected(Rejection::Forbidden))
+    ));
+}
+
+fn rejoin_read_fixture() -> (
+    Fixture,
+    Identity,
+    rx_application::host_rejoin::Prepare,
+    recovery::ReadEvidence,
+) {
+    rejoin_read_fixture_with_work(false)
+}
+fn rejoin_read_fixture_with_work(
+    with_work: bool,
+) -> (
+    Fixture,
+    Identity,
+    rx_application::host_rejoin::Prepare,
+    recovery::ReadEvidence,
+) {
+    let (f, who, request, read, _) = rejoin_read_fixture_state(if with_work { 1 } else { 0 });
+    (f, who, request, read)
+}
+fn rejoin_read_fixture_state(
+    mode: u8,
+) -> (
+    Fixture,
+    Identity,
+    rx_application::host_rejoin::Prepare,
+    recovery::ReadEvidence,
+    Option<NativeEvidence>,
+) {
+    let mut native = None;
+    let (mut f, input, mut release) = rejoin_fixture_native(1, mode == 2);
+    release.session = f
+        .app
+        .authenticated_terminal_user_session(
+            &release.principal,
+            id(),
+            Counter(1_000_000_000_000),
+            Digest::from_bytes([77; 32]),
+        )
+        .unwrap()
+        .id;
+    if mode > 0 {
+        report_ready(
+            &mut f.app,
+            &f.hosts[0],
+            &f.configuration,
+            &f.registrations[0],
+        );
+        let run = start(&mut f, 1);
+        let activation = activation(&mut f, &run);
+        let work = submit(&mut f, &activation, id().as_str()).unwrap();
+        f.app
+            .plan_delivery(&f.hosts[0], work.operation.id())
+            .unwrap();
+        f.app
+            .record_host_receipt(
+                &f.hosts[0],
+                work.operation.id(),
+                HostReceipt {
+                    operation: work.operation.id().clone(),
+                    digest: work.intent.digest().unwrap(),
+                    invocation: Some(id()),
+                    journal: work.host_journal,
+                    sequence: Counter(10),
+                    state: ReceiptState::Prepared,
+                },
+            )
+            .unwrap();
+        let message = f
+            .app
+            .pending_deliveries(128)
+            .unwrap()
+            .into_iter()
+            .find(|d| matches!(d.payload, Delivery::Authorize { .. }))
+            .unwrap()
+            .id;
+        f.app.plan_delivery(&f.hosts[0], &message).unwrap();
+        if mode == 2 {
+            let work = f
+                .app
+                .inspect_work(&f.operator, work.operation.id())
+                .unwrap();
+            f.app
+                .record_host_receipt(
+                    &f.hosts[0],
+                    &message,
+                    HostReceipt {
+                        operation: work.operation.id().clone(),
+                        digest: work.intent.digest().unwrap(),
+                        invocation: work.invocation.clone(),
+                        journal: work.host_journal.clone(),
+                        sequence: Counter(11),
+                        state: ReceiptState::ResultCaptured,
+                    },
+                )
+                .unwrap();
+            let evidence = NativeEvidence {
+                id: id(),
+                operation: work.operation.id().clone(),
+                invocation: work.invocation.unwrap(),
+                profile_digest: work.intent.profile_digest,
+                device_session: id(),
+                status_schema: name("rx.sim.completed.v1"),
+                status: Integer(0),
+                captured_at: f.clock.now(),
+                native_details: None,
+            };
+            f.app
+                .ingest_evidence(
+                    &f.hosts[0],
+                    EvidenceBatch {
+                        journal: input.snapshot.evidence_journal.clone(),
+                        first: Counter(1),
+                        records: vec![evidence.clone()],
+                    },
+                )
+                .unwrap();
+            assert_eq!(
+                f.app
+                    .inspect_work(&f.operator, work.operation.id())
+                    .unwrap()
+                    .operation
+                    .outcome(),
+                rx_domain::operation::Outcome::Succeeded
+            );
+            native = Some(evidence);
+        }
+    }
+    let who = replace_host(
+        &mut f,
+        &input,
+        id(),
+        input.snapshot.evidence_journal.clone(),
+        Digest::from_bytes([81; 32]),
+    );
+    let context = f
+        .app
+        .host_rejoin_context(&release, &input.host, &input.snapshot.cell)
+        .unwrap();
+    let mut snapshot = input.snapshot.clone();
+    snapshot.host_boot = context.producer.peer_boot.clone();
+    snapshot.captured_at = f.clock.now();
+    snapshot.resource_fences = f.registrations[0]
+        .grant
+        .resources
+        .iter()
+        .map(|r| (r.clone(), f.registrations[0].grant.fence))
+        .collect();
+    for source in &mut snapshot.observations {
+        source.acquired_at = f.clock.now();
+        source.evidence_id = id();
+        source.value = TypedValue::Boolean(false);
+    }
+    let configuration = configuration_read(&snapshot);
+    let evidence = recovery::ReadEvidence {
+        platform_session: id(),
+        transport: pin(),
+        configuration,
+        configuration_started: f.clock.now(),
+        configuration_finished: f.clock.now(),
+        cells: BTreeMap::from([(
+            snapshot.cell.clone(),
+            recovery::SnapshotRead {
+                snapshot,
+                started: f.clock.now(),
+                finished: f.clock.now(),
+            },
+        )]),
+    };
+    assert_eq!(who.session, context.producer.session);
+    let request = rx_application::host_rejoin::Prepare {
+        host: context.host.clone(),
+        origin: context.origin.clone(),
+        expected_context: context.digest().unwrap(),
+        expected_cells: context.expected_cells(),
+    };
+    (f, release, request, evidence, native)
+}
+#[test]
+fn host_rejoin_proposal_persists_fresh_read_without_adoption_and_recovers_commit_reply_loss() {
+    for failure in [0, 1, 2] {
+        let (mut f, release, request, evidence) = rejoin_read_fixture();
+        let before = f.app.inspect_cell(&f.admin, &request.origin).unwrap();
+        let key = id();
+        f.failure.store(failure, Ordering::SeqCst);
+        let result =
+            f.app
+                .propose_host_rejoin(&release, &key, request.clone(), verified(evidence.clone()));
+        f.failure.store(0, Ordering::SeqCst);
+        if failure != 0 {
+            assert!(result.is_err());
+        }
+        let saved = f
+            .app
+            .lookup_host_rejoin_proposal(&release, &key, request.clone())
+            .unwrap();
+        assert_eq!(saved.is_some(), failure != 1);
+        let value = if let Some(v) = saved {
+            v
+        } else {
+            f.app
+                .propose_host_rejoin(&release, &key, request.clone(), verified(evidence.clone()))
+                .unwrap()
+        };
+        assert!(value.context_current && value.read_current && !value.operation_authorized);
+        assert_eq!(
+            value.proposal.read.cells[&request.origin]
+                .snapshot
+                .observations[0]
+                .value,
+            TypedValue::Boolean(false)
+        );
+        assert_eq!(
+            canonical::bytes(&f.app.inspect_cell(&f.admin, &request.origin).unwrap()).unwrap(),
+            canonical::bytes(&before).unwrap()
+        );
+        let again = f
+            .app
+            .host_rejoin_proposal(&release, &value.proposal.id)
+            .unwrap();
+        assert_eq!(again.proposal_digest, value.proposal_digest);
+        f.clock
+            .0
+            .store(recovery::READ_AGE_NS + 1001, Ordering::SeqCst);
+        let aged = f
+            .app
+            .lookup_host_rejoin_proposal(&release, &key, request)
+            .unwrap()
+            .unwrap();
+        assert!(aged.context_current && !aged.read_current && !aged.operation_authorized);
+        assert_eq!(aged.proposal.id, value.proposal.id);
+        let mut repo = f.app.into_repository();
+        assert_eq!(
+            repo.transact(|tx| tx.scan("host-rejoin-proposal/"))
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+}
+#[test]
+fn host_rejoin_proposal_rejects_untrusted_changed_stale_or_foreign_reads_and_cas() {
+    for bad in 0..10 {
+        let (mut f, release, request, mut e) = rejoin_read_fixture();
+        match bad {
+            0 => {
+                e.cells.get_mut(&request.origin).unwrap().snapshot.host_boot = id();
+            }
+            1 => {
+                e.configuration.snapshot.delivery_journal = id();
+            }
+            2 => {
+                e.cells
+                    .get_mut(&request.origin)
+                    .unwrap()
+                    .snapshot
+                    .observations[0]
+                    .generation = id();
+            }
+            3 => {
+                e.transport.server_leaf_digest = Digest::from_bytes([99; 32]);
+            }
+            4 => {
+                f.clock
+                    .0
+                    .store(recovery::READ_AGE_NS + 1001, Ordering::SeqCst);
+            }
+            5 => {
+                e.cells
+                    .get_mut(&request.origin)
+                    .unwrap()
+                    .snapshot
+                    .pending_operations
+                    .push(id());
+            }
+            6 => {
+                e.configuration.snapshot.binding_digest = Digest::from_bytes([99; 32]);
+            }
+            7 => {
+                e.cells
+                    .get_mut(&request.origin)
+                    .unwrap()
+                    .snapshot
+                    .observations[0]
+                    .quality_good = false;
+            }
+            8 => {
+                f.app
+                    .hold(&f.operator, id().as_str(), &request.origin)
+                    .unwrap();
+            }
+            _ => {
+                let p = principal(release.principal.as_str(), &[Role::Observer]);
+                f.app.put_principal(&f.admin, p, Some(Counter(1))).unwrap();
+            }
+        }
+        assert!(
+            f.app
+                .propose_host_rejoin(&release, &id(), request, verified(e))
+                .is_err(),
+            "case {bad}"
+        );
+        let mut repo = f.app.into_repository();
+        assert!(
+            repo.transact(|tx| tx.scan("host-rejoin-proposal/"))
+                .unwrap()
+                .is_empty()
+        );
+    }
+}
+
+fn rejoin_approval_input(
+    p: &rx_application::host_rejoin::ProposalView,
+) -> rx_application::host_rejoin::Approve {
+    rx_application::host_rejoin::Approve {
+        id: p.proposal.id.clone(),
+        expected_revision: p.proposal.revision,
+        proposal_digest: p.proposal_digest,
+        expected_cells: p.proposal.context.expected_cells(),
+    }
+}
+fn fresh_rejoin_read(
+    e: &recovery::ReadEvidence,
+    now: TimePoint,
+    context: &rx_application::host_rejoin::Context,
+    fenced: bool,
+) -> recovery::ReadEvidence {
+    let mut e = e.clone();
+    e.configuration_started = now.clone();
+    e.configuration_finished = now.clone();
+    for (cell, read) in &mut e.cells {
+        read.started = now.clone();
+        read.finished = now.clone();
+        read.snapshot.captured_at = now.clone();
+        for source in &mut read.snapshot.observations {
+            source.acquired_at = now.clone();
+            source.evidence_id = id();
+        }
+        if fenced {
+            let cut = &context.cells[cell].cell;
+            read.snapshot.epoch = cut.epoch;
+            read.snapshot.scopes = cut.scope_epochs.clone();
+            read.snapshot.block_ids = cut
+                .blocks
+                .iter()
+                .filter(|b| b.latched)
+                .map(|b| b.id.clone())
+                .collect();
+            let config = e
+                .configuration
+                .snapshot
+                .cells
+                .iter_mut()
+                .find(|c| &c.cell == cell)
+                .unwrap();
+            config.epoch = cut.epoch;
+            config.scopes = cut.scope_epochs.clone();
+            config.blocked = read.snapshot.block_ids.clone();
+        }
+    }
+    e
+}
+#[test]
+fn host_rejoin_approval_uses_new_read_and_exact_fence_after_old_read_expires() {
+    let (mut f, release, input, e) = rejoin_read_fixture();
+    let p = f
+        .app
+        .propose_host_rejoin(&release, &id(), input, verified(e.clone()))
+        .unwrap();
+    let before = p.proposal.context.cells[&name("cell/a")]
+        .registration
+        .clone()
+        .unwrap();
+    f.clock.0.store(200_001_000, Ordering::SeqCst);
+    assert!(
+        !f.app
+            .host_rejoin_proposal(&release, &p.proposal.id)
+            .unwrap()
+            .read_current
+    );
+    let key = id();
+    let command = rejoin_approval_input(&p);
+    let approved = f
+        .app
+        .approve_host_rejoin(&release, &key, command.clone())
+        .unwrap();
+    assert_eq!(approved.binding.phase, recovery::Phase::Fencing);
+    assert!(!approved.operation_authorized);
+    let same = f.app.approve_host_rejoin(&release, &key, command).unwrap();
+    assert_eq!(same.binding.id, approved.binding.id);
+    let e = fresh_rejoin_read(&e, f.clock.now(), &p.proposal.context, false);
+    let cell = name("cell/a");
+    let task = f
+        .app
+        .plan_host_rejoin_fence(&p.proposal.id, &cell, verified(e.clone()))
+        .unwrap();
+    let again = f
+        .app
+        .plan_host_rejoin_fence(&p.proposal.id, &cell, verified(e.clone()))
+        .unwrap();
+    assert_eq!(task.request, again.request);
+    let mut ack = FenceAcknowledgment {
+        cell: cell.clone(),
+        invalidation: task.request.clone(),
+        epoch: task.epoch,
+        scopes: task.scopes.clone(),
+        host_boot: p.proposal.context.producer.peer_boot.clone(),
+        journal: e.configuration.snapshot.delivery_journal.clone(),
+        sequence: Counter(500),
+    };
+    let right_boot = ack.host_boot.clone();
+    ack.host_boot = id();
+    assert!(
+        f.app
+            .record_host_rejoin_fence(&p.proposal.id, &cell, ack.clone())
+            .is_err()
+    );
+    ack.host_boot = right_boot;
+    f.app
+        .record_host_rejoin_fence(&p.proposal.id, &cell, ack)
+        .unwrap();
+    let fresh = fresh_rejoin_read(&e, f.clock.now(), &p.proposal.context, true);
+    f.app
+        .refresh_host_rejoin(&p.proposal.id, verified(fresh))
+        .unwrap();
+    let view = f.app.host_rejoin_binding(&release, &p.proposal.id).unwrap();
+    assert_eq!(view.binding.phase, recovery::Phase::RecoveryOnly);
+    assert!(view.context_current && view.read_current);
+    assert!(!view.operation_authorized);
+    assert_eq!(
+        canonical::bytes(&before).unwrap(),
+        canonical::bytes(
+            &view.proposal.context.cells[&cell]
+                .registration
+                .clone()
+                .unwrap()
+        )
+        .unwrap()
+    );
+    let current = f
+        .app
+        .host_rejoin_context(&release, &p.proposal.context.host, &cell)
+        .unwrap();
+    assert_eq!(
+        canonical::bytes(&before).unwrap(),
+        canonical::bytes(&current.cells[&cell].registration.clone().unwrap()).unwrap()
+    );
+    assert_eq!(
+        p.proposal_digest,
+        f.app
+            .host_rejoin_proposal(&release, &p.proposal.id)
+            .unwrap()
+            .proposal_digest
+    );
+}
+#[test]
+fn host_rejoin_stale_read_or_revoked_approval_cannot_enter_fence() {
+    for stale in [true, false] {
+        let (mut f, release, input, e) = rejoin_read_fixture();
+        let p = f
+            .app
+            .propose_host_rejoin(&release, &id(), input, verified(e.clone()))
+            .unwrap();
+        f.app
+            .approve_host_rejoin(&release, &id(), rejoin_approval_input(&p))
+            .unwrap();
+        if stale {
+            f.clock.0.store(200_001_000, Ordering::SeqCst);
+        } else {
+            f.app
+                .put_principal(
+                    &f.admin,
+                    principal(release.principal.as_str(), &[Role::Observer]),
+                    Some(Counter(1)),
+                )
+                .unwrap();
+        }
+        assert!(
+            f.app
+                .plan_host_rejoin_fence(&p.proposal.id, &name("cell/a"), verified(e))
+                .is_err()
+        );
+        let rows = f
+            .app
+            .into_repository()
+            .transact(|tx| tx.scan("host-rejoin-binding/"))
+            .unwrap();
+        let b: rx_application::host_rejoin::Binding =
+            p::decode(&rows[0], rx_application::host_rejoin::BINDING_SCHEMA).unwrap();
+        assert_eq!(b.phase, recovery::Phase::Attention);
+        assert!(
+            b.fences
+                .values()
+                .all(|f| f.phase == recovery::FencePhase::Pending)
+        );
+    }
+}
+
+#[test]
+fn host_rejoin_approval_commit_loss_recovers_and_context_changes_require_new_proposal() {
+    for failure in [0, 1, 2] {
+        let (mut f, release, input, e) = rejoin_read_fixture();
+        let p = f
+            .app
+            .propose_host_rejoin(&release, &id(), input, verified(e))
+            .unwrap();
+        let command = rejoin_approval_input(&p);
+        let key = id();
+        f.failure.store(failure, Ordering::SeqCst);
+        let first = f.app.approve_host_rejoin(&release, &key, command.clone());
+        assert_eq!(first.is_ok(), failure == 0);
+        let recovered = f.app.approve_host_rejoin(&release, &key, command).unwrap();
+        assert_eq!(recovered.binding.id, p.proposal.id);
+        let mut repo = f.app.into_repository();
+        assert_eq!(
+            repo.transact(|tx| tx.scan("host-rejoin-binding/"))
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+    for bad in [0, 1, 2] {
+        let (mut f, release, input, e) = rejoin_read_fixture();
+        let p = f
+            .app
+            .propose_host_rejoin(&release, &id(), input, verified(e))
+            .unwrap();
+        let mut command = rejoin_approval_input(&p);
+        match bad {
+            0 => command.proposal_digest = Digest::from_bytes([99; 32]),
+            1 => {
+                f.clock.0.store(30_000_001_000, Ordering::SeqCst);
+            }
+            _ => {
+                f.app
+                    .hold(&f.operator, id().as_str(), &name("cell/a"))
+                    .unwrap();
+            }
+        }
+        assert!(f.app.approve_host_rejoin(&release, &id(), command).is_err());
+        assert!(
+            f.app
+                .into_repository()
+                .transact(|tx| tx.scan("host-rejoin-binding/"))
+                .unwrap()
+                .is_empty()
+        );
+    }
+}
+#[test]
+fn host_rejoin_query_is_scoped_and_missing_or_correlated_results_never_promote_work() {
+    let (mut f, release, input, e) = rejoin_read_fixture_with_work(true);
+    let p = f
+        .app
+        .propose_host_rejoin(&release, &id(), input, verified(e.clone()))
+        .unwrap();
+    let allowed = p
+        .proposal
+        .recovery_scope
+        .as_ref()
+        .unwrap()
+        .values()
+        .next()
+        .unwrap()
+        .clone();
+    f.app
+        .approve_host_rejoin(&release, &id(), rejoin_approval_input(&p))
+        .unwrap();
+    assert!(
+        f.app
+            .host_rejoin_query_plan(&p.proposal.id, &allowed.operation)
+            .is_err()
+    );
+    let task = f
+        .app
+        .plan_host_rejoin_fence(&p.proposal.id, &allowed.cell, verified(e.clone()))
+        .unwrap();
+    f.app
+        .record_host_rejoin_fence(
+            &p.proposal.id,
+            &allowed.cell,
+            FenceAcknowledgment {
+                cell: allowed.cell.clone(),
+                invalidation: task.request,
+                epoch: task.epoch,
+                scopes: task.scopes,
+                host_boot: p.proposal.context.producer.peer_boot.clone(),
+                journal: allowed.host_journal.clone(),
+                sequence: Counter(500),
+            },
+        )
+        .unwrap();
+    f.app
+        .refresh_host_rejoin(
+            &p.proposal.id,
+            verified(fresh_rejoin_read(
+                &e,
+                f.clock.now(),
+                &p.proposal.context,
+                true,
+            )),
+        )
+        .unwrap();
+    let plan = f
+        .app
+        .host_rejoin_query_plan(&p.proposal.id, &allowed.operation)
+        .unwrap();
+    assert!(plan.lookup_allowed);
+    assert!(f.app.host_rejoin_query_plan(&p.proposal.id, &id()).is_err());
+    let missing = rx_application::host_rejoin::VerifiedQuery::new(
+        p.proposal.id.clone(),
+        allowed.operation.clone(),
+        None,
+        None,
+        recovery::QueryLookup::Unavailable,
+    )
+    .unwrap();
+    let missing = f.app.record_host_rejoin_query(missing).unwrap();
+    assert!(!missing.result.evidence_complete && !missing.result.operation_authorized);
+    let mut receipt = plan.original_receipt.unwrap();
+    receipt.digest = Digest::from_bytes([99; 32]);
+    let wrong = rx_application::host_rejoin::VerifiedQuery::new(
+        p.proposal.id.clone(),
+        allowed.operation.clone(),
+        Some(receipt.clone()),
+        None,
+        recovery::QueryLookup::NotNeeded,
+    )
+    .unwrap();
+    assert!(f.app.record_host_rejoin_query(wrong).is_err());
+    receipt.digest = allowed.intent_digest;
+    let valid = rx_application::host_rejoin::VerifiedQuery::new(
+        p.proposal.id.clone(),
+        allowed.operation.clone(),
+        Some(receipt),
+        None,
+        recovery::QueryLookup::NotNeeded,
+    )
+    .unwrap();
+    f.app
+        .hold(&f.operator, id().as_str(), &allowed.cell)
+        .unwrap();
+    let late = f.app.record_host_rejoin_query(valid).unwrap();
+    assert!(!late.context_current_at_record);
+    assert!(
+        f.app
+            .host_rejoin_query_plan(&p.proposal.id, &allowed.operation)
+            .is_err()
+    );
+    let mut repo = f.app.into_repository();
+    let work: Work = repo
+        .transact(|tx| Ok(p::load(tx, "work", &allowed.operation, "rx.internal.work.v1")?.1))
+        .unwrap();
+    assert_eq!(
+        work.operation.outcome(),
+        rx_domain::operation::Outcome::None
+    );
+    assert_ne!(
+        work.operation.disposition(),
+        rx_domain::operation::Disposition::Released
+    );
+}
+
+#[test]
+fn host_rejoin_legacy_proposal_encoding_stays_historical_and_owner_cannot_be_stolen() {
+    let (mut f, release, input, e) = rejoin_read_fixture();
+    let first = f
+        .app
+        .propose_host_rejoin(&release, &id(), input.clone(), verified(e.clone()))
+        .unwrap();
+    let mut legacy = serde_json::to_value(&first.proposal).unwrap();
+    legacy.as_object_mut().unwrap().remove("recovery_scope");
+    let decoded: rx_application::host_rejoin::Proposal =
+        serde_json::from_value(legacy.clone()).unwrap();
+    assert!(decoded.recovery_scope.is_none());
+    assert_eq!(
+        canonical::bytes(&decoded).unwrap(),
+        canonical::bytes(&legacy).unwrap()
+    );
+    assert_eq!(
+        decoded.digest().unwrap(),
+        canonical::digest("RX-HOST-REJOIN-PROPOSAL-v1", &legacy).unwrap()
+    );
+    let second = f
+        .app
+        .propose_host_rejoin(&release, &id(), input, verified(e))
+        .unwrap();
+    f.app
+        .approve_host_rejoin(&release, &id(), rejoin_approval_input(&first))
+        .unwrap();
+    assert!(matches!(
+        f.app
+            .approve_host_rejoin(&release, &id(), rejoin_approval_input(&second)),
+        Err(StoreError::Rejected(Rejection::Busy))
+    ));
+}
+#[test]
+fn host_rejoin_late_fence_ack_is_retained_without_current_communication_or_authority() {
+    let (mut f, release, input, e) = rejoin_read_fixture();
+    let p = f
+        .app
+        .propose_host_rejoin(&release, &id(), input, verified(e.clone()))
+        .unwrap();
+    f.app
+        .approve_host_rejoin(&release, &id(), rejoin_approval_input(&p))
+        .unwrap();
+    let cell = name("cell/a");
+    let task = f
+        .app
+        .plan_host_rejoin_fence(&p.proposal.id, &cell, verified(e.clone()))
+        .unwrap();
+    f.app.hold(&f.operator, id().as_str(), &cell).unwrap();
+    let ack = FenceAcknowledgment {
+        cell: cell.clone(),
+        invalidation: task.request,
+        epoch: task.epoch,
+        scopes: task.scopes,
+        host_boot: p.proposal.context.producer.peer_boot.clone(),
+        journal: e.configuration.snapshot.delivery_journal,
+        sequence: Counter(500),
+    };
+    let b = f
+        .app
+        .record_host_rejoin_fence(&p.proposal.id, &cell, ack.clone())
+        .unwrap();
+    assert_eq!(b.phase, recovery::Phase::Attention);
+    assert!(b.fences[&cell].acknowledgment.is_some());
+    assert_eq!(
+        b.revision,
+        f.app
+            .record_host_rejoin_fence(&p.proposal.id, &cell, ack)
+            .unwrap()
+            .revision
+    );
+    let v = f.app.host_rejoin_binding(&release, &p.proposal.id).unwrap();
+    assert!(!v.context_current && !v.read_current && !v.operation_authorized);
+}
+
+fn rejoin_settlement_fixture() -> (
+    Fixture,
+    Identity,
+    rx_application::host_rejoin::ApproveSettlement,
+    rx_application::host_rejoin::VerifiedHandover,
+) {
+    rejoin_settlement_fixture_bad(0)
+}
+fn rejoin_settlement_fixture_bad(
+    bad: u8,
+) -> (
+    Fixture,
+    Identity,
+    rx_application::host_rejoin::ApproveSettlement,
+    rx_application::host_rejoin::VerifiedHandover,
+) {
+    let (mut f, release, input, e, native) = rejoin_read_fixture_state(2);
+    let native = native.unwrap();
+    let mut returned_native = native.clone();
+    if bad == 7 {
+        returned_native.status = Integer(9);
+    }
+    let p = f
+        .app
+        .propose_host_rejoin(&release, &id(), input, verified(e.clone()))
+        .unwrap();
+    f.app
+        .approve_host_rejoin(&release, &id(), rejoin_approval_input(&p))
+        .unwrap();
+    let cell = name("cell/a");
+    let task = f
+        .app
+        .plan_host_rejoin_fence(&p.proposal.id, &cell, verified(e.clone()))
+        .unwrap();
+    f.app
+        .record_host_rejoin_fence(
+            &p.proposal.id,
+            &cell,
+            FenceAcknowledgment {
+                cell: cell.clone(),
+                invalidation: task.request,
+                epoch: task.epoch,
+                scopes: task.scopes,
+                host_boot: p.proposal.context.producer.peer_boot.clone(),
+                journal: e.configuration.snapshot.delivery_journal.clone(),
+                sequence: Counter(500),
+            },
+        )
+        .unwrap();
+    let read = fresh_rejoin_read(&e, f.clock.now(), &p.proposal.context, true);
+    f.app
+        .refresh_host_rejoin(&p.proposal.id, verified(read.clone()))
+        .unwrap();
+    let plan = f
+        .app
+        .host_rejoin_query_plan(&p.proposal.id, &native.operation)
+        .unwrap();
+    let query = rx_application::host_rejoin::VerifiedQuery::new(
+        p.proposal.id.clone(),
+        native.operation.clone(),
+        plan.original_receipt,
+        Some(EvidenceBatch {
+            journal: p.proposal.context.producer.journal.clone(),
+            first: Counter(1),
+            records: vec![returned_native],
+        }),
+        recovery::QueryLookup::PrefixObserved,
+    )
+    .unwrap();
+    let query = f.app.record_host_rejoin_query(query).unwrap();
+    let work = f.app.inspect_work(&f.operator, &native.operation).unwrap();
+    let mut proof = handover_proof(&mut f, &work, &native);
+    for v in &mut proof.observations {
+        v.host_boot = p.proposal.context.producer.peer_boot.clone();
+    }
+    match bad {
+        1 => proof.observations[0].host_boot = id(),
+        2 => proof.observations[0].device_session = id(),
+        3 => proof.observations[2].value = false,
+        4 => proof.observations[0].observed_at.ticks_ns = Counter(0),
+        5 => proof.observations[1].invocation = id(),
+        6 => proof.observations[2].quality_good = false,
+        _ => {}
+    }
+    let command = rx_application::host_rejoin::ApproveSettlement {
+        reference: rx_application::host_rejoin::SettlementReference {
+            binding: p.proposal.id,
+            query: query.id,
+        },
+        settlement: rx_application::settlement::Approve {
+            operation: native.operation,
+            expected_operation: work.operation.revision(),
+            expected_cell: proof.expected_cell,
+            justification: "Known original effect; fresh current handover only".into(),
+        },
+    };
+    (
+        f,
+        release,
+        command,
+        rx_application::host_rejoin::VerifiedHandover::new(verified(read), proof.observations)
+            .unwrap(),
+    )
+}
+#[test]
+fn rejoin_settlement_closes_original_work_without_rebinding_or_restoring_old_authority() {
+    for failure in [0, 1, 2] {
+        let (mut f, release, command, proof) = rejoin_settlement_fixture();
+        let cell_before = f.app.inspect_cell(&f.operator, &name("cell/a")).unwrap().1;
+        let old_host = f.registrations[0].clone();
+        let key = id();
+        let auth = f
+            .app
+            .approve_rejoin_settlement(&release, &key, command.clone())
+            .unwrap();
+        f.failure.store(failure, Ordering::SeqCst);
+        let result = f.app.apply_rejoin_settlement(&auth.id, proof.clone());
+        assert_eq!(result.is_ok(), failure == 0);
+        let done = f.app.apply_rejoin_settlement(&auth.id, proof).unwrap();
+        assert!(done.applied_at.is_some());
+        let receipt = f
+            .app
+            .approve_rejoin_settlement(&release, &key, command.clone())
+            .unwrap();
+        assert_eq!(receipt.applied_at, done.applied_at);
+        let work = f
+            .app
+            .inspect_work(&f.operator, &command.settlement.operation)
+            .unwrap();
+        assert_eq!(
+            work.operation.outcome(),
+            rx_domain::operation::Outcome::Succeeded
+        );
+        assert_eq!(
+            work.operation.disposition(),
+            rx_domain::operation::Disposition::Released
+        );
+        let context = f
+            .app
+            .host_rejoin_context(&release, &work.host, &work.cell)
+            .unwrap();
+        assert_eq!(
+            canonical::bytes(&old_host).unwrap(),
+            canonical::bytes(context.cells[&work.cell].registration.as_ref().unwrap()).unwrap()
+        );
+        assert_eq!(
+            canonical::bytes(&cell_before).unwrap(),
+            canonical::bytes(&context.cells[&work.cell].cell).unwrap()
+        );
+        let mut repo = f.app.into_repository();
+        repo.transact(|tx| {
+            let (_, run): (_, Run) = p::load(tx, "run", &work.run, "rx.internal.run.v1")?;
+            assert_eq!(run.state, RunState::Completed);
+            let (_, permit): (_, Permit) =
+                p::load(tx, "permit", &work.permit, "rx.internal.permit.v1")?;
+            assert_eq!(permit.host_boot, old_host.boot_id);
+            let (_, mandate): (_, Mandate) =
+                p::load(tx, "mandate", &permit.mandate, "rx.internal.mandate.v1")?;
+            assert_eq!(mandate.state, MandateState::Revoked);
+            for r in &work.intent.resource_set {
+                let (_, resource): (_, Resource) =
+                    p::load(tx, "resource", r, "rx.internal.resource.v1")?;
+                assert!(resource.holder.is_none() && !resource.quarantined);
+            }
+            Ok(())
+        })
+        .unwrap();
+    }
+}
+
+#[test]
+fn rejoin_settlement_rejects_wrong_result_and_ineligible_current_handover() {
+    for bad in 1..=10 {
+        let (mut f, release, command, proof) = rejoin_settlement_fixture_bad(bad);
+        let key = id();
+        let result = f
+            .app
+            .approve_rejoin_settlement(&release, &key, command.clone());
+        if bad == 7 {
+            assert!(result.is_err());
+            continue;
+        }
+        let auth = result.unwrap();
+        match bad {
+            8 => {
+                f.app
+                    .hold(&f.operator, id().as_str(), &name("cell/a"))
+                    .unwrap();
+            }
+            9 => {
+                f.app
+                    .put_principal(
+                        &f.admin,
+                        principal(release.principal.as_str(), &[Role::Observer]),
+                        Some(Counter(1)),
+                    )
+                    .unwrap();
+            }
+            10 => {
+                f.clock.0.store(30_000_001_001, Ordering::SeqCst);
+            }
+            _ => {}
+        }
+        assert!(
+            f.app.apply_rejoin_settlement(&auth.id, proof).is_err(),
+            "case {bad}"
+        );
+        if bad != 10 {
+            assert_eq!(
+                f.app
+                    .inspect_work(&f.operator, &command.settlement.operation)
+                    .unwrap()
+                    .operation
+                    .disposition(),
+                rx_domain::operation::Disposition::Quarantined
+            );
+        }
+        let mut repo = f.app.into_repository();
+        repo.transact(|tx| {
+            let (_, authorization): (_, rx_application::settlement::Authorization) = p::load(
+                tx,
+                "settlement",
+                &auth.id,
+                "rx.internal.settlement-authorization.v1",
+            )?;
+            assert!(authorization.applied_at.is_none());
+            for row in tx.scan("resource/")? {
+                let resource: Resource = p::decode(&row, "rx.internal.resource.v1")?;
+                assert!(resource.holder.is_some() && resource.quarantined);
+            }
+            Ok(())
+        })
+        .unwrap();
+    }
+}
+
+fn rebind_fixture(
+    cells: usize,
+) -> (
+    Fixture,
+    Identity,
+    rx_application::host_rejoin::BindingView,
+    recovery::ReadEvidence,
+) {
+    let (mut f, input, mut release) = rejoin_fixture(cells);
+    release.session = f
+        .app
+        .authenticated_terminal_user_session(
+            &release.principal,
+            id(),
+            Counter(1_000_000_000_000),
+            Digest::from_bytes([77; 32]),
+        )
+        .unwrap()
+        .id;
+    let who = replace_host(
+        &mut f,
+        &input,
+        id(),
+        input.snapshot.evidence_journal.clone(),
+        Digest::from_bytes([81; 32]),
+    );
+    if cells == 2 {
+        f.app
+            .negotiate_evidence_cell(&who, artifact(12, "rx.cell-definition.v1").sha256)
+            .unwrap();
+    }
+    let context = f
+        .app
+        .host_rejoin_context(&release, &input.host, &input.snapshot.cell)
+        .unwrap();
+    assert!(
+        context.local_prerequisites_current,
+        "{:?}",
+        context.blockers
+    );
+    let mut evidence = recovery::ReadEvidence {
+        platform_session: id(),
+        transport: pin(),
+        configuration: configuration_read(&input.snapshot),
+        configuration_started: f.clock.now(),
+        configuration_finished: f.clock.now(),
+        cells: BTreeMap::new(),
+    };
+    evidence.configuration.snapshot.host_boot = context.producer.peer_boot.clone();
+    evidence.configuration.snapshot.cells.clear();
+    for (cell, cut) in &context.cells {
+        let mut snap = input.snapshot.clone();
+        let reg = cut.registration.as_ref().unwrap();
+        snap.cell = cell.clone();
+        snap.definition = cut.cell.configuration.definition.sha256;
+        snap.envelope = cut.cell.configuration.envelope.sha256;
+        snap.host_boot = context.producer.peer_boot.clone();
+        snap.epoch = reg.epoch;
+        snap.scopes = reg.scopes.clone();
+        snap.resource_fences = reg
+            .grant
+            .resources
+            .iter()
+            .map(|r| (r.clone(), reg.grant.fence))
+            .collect();
+        evidence
+            .configuration
+            .snapshot
+            .cells
+            .push(configuration_read(&snap).snapshot.cells[0].clone());
+        evidence.cells.insert(
+            cell.clone(),
+            recovery::SnapshotRead {
+                snapshot: snap,
+                started: f.clock.now(),
+                finished: f.clock.now(),
+            },
+        );
+    }
+    let input = rx_application::host_rejoin::Prepare {
+        host: context.host.clone(),
+        origin: context.origin.clone(),
+        expected_context: context.digest().unwrap(),
+        expected_cells: context.expected_cells(),
+    };
+    let p = f
+        .app
+        .propose_host_rejoin(&release, &id(), input, verified(evidence.clone()))
+        .unwrap();
+    f.app
+        .approve_host_rejoin(&release, &id(), rejoin_approval_input(&p))
+        .unwrap();
+    for (i, cell) in context.cells.keys().enumerate() {
+        let task = f
+            .app
+            .plan_host_rejoin_fence(&p.proposal.id, cell, verified(evidence.clone()))
+            .unwrap();
+        f.app
+            .record_host_rejoin_fence(
+                &p.proposal.id,
+                cell,
+                FenceAcknowledgment {
+                    cell: cell.clone(),
+                    invalidation: task.request,
+                    epoch: task.epoch,
+                    scopes: task.scopes,
+                    host_boot: context.producer.peer_boot.clone(),
+                    journal: context.cells[cell]
+                        .baseline
+                        .as_ref()
+                        .unwrap()
+                        .delivery_journal
+                        .clone(),
+                    sequence: Counter(100 + i as u64),
+                },
+            )
+            .unwrap();
+        // Actual following reads must show the fence already applied on the affected cell.
+        let read = evidence.cells.get_mut(cell).unwrap();
+        read.snapshot.epoch = context.cells[cell].cell.epoch;
+        read.snapshot.scopes = context.cells[cell].cell.scope_epochs.clone();
+        read.snapshot.block_ids = context.cells[cell]
+            .cell
+            .blocks
+            .iter()
+            .filter(|b| b.latched)
+            .map(|b| b.id.clone())
+            .collect();
+        let c = evidence
+            .configuration
+            .snapshot
+            .cells
+            .iter_mut()
+            .find(|c| &c.cell == cell)
+            .unwrap();
+        c.epoch = read.snapshot.epoch;
+        c.scopes = read.snapshot.scopes.clone();
+        c.blocked = read.snapshot.block_ids.clone();
+    }
+    f.app
+        .refresh_host_rejoin(&p.proposal.id, verified(evidence.clone()))
+        .unwrap();
+    let view = f.app.host_rejoin_binding(&release, &p.proposal.id).unwrap();
+    (f, release, view, evidence)
+}
+fn rebind_approval(
+    view: &rx_application::host_rejoin::BindingView,
+) -> rx_application::host_rejoin::ApproveRebind {
+    rx_application::host_rejoin::ApproveRebind {
+        binding: view.binding.id.clone(),
+        expected_binding_revision: view.binding.revision,
+        proposal_digest: view.proposal.digest().unwrap(),
+        expected_cells: view.proposal.context.expected_cells(),
+    }
+}
+#[test]
+fn host_rebind_commits_all_cells_together_and_preserves_old_baselines() {
+    for failure in [0, 1, 2] {
+        let (mut f, release, parent, mut evidence) = rebind_fixture(2);
+        let who = &parent.proposal.context.producer;
+        let old_session = parent
+            .proposal
+            .context
+            .replacement
+            .as_ref()
+            .unwrap()
+            .before
+            .session
+            .clone();
+        let approval = f
+            .app
+            .approve_host_rebind(&release, &id(), rebind_approval(&parent))
+            .unwrap();
+        assert!(!approval.production_authorized);
+        let ttls = parent
+            .proposal
+            .context
+            .cells
+            .keys()
+            .map(|c| (c.clone(), Counter(1000)))
+            .collect();
+        let mut prepared = f
+            .app
+            .prepare_host_rebind(&approval.rebind.id, verified(evidence.clone()), ttls)
+            .unwrap();
+        assert_eq!(prepared.steps.len(), 2);
+        for (index, cell) in parent.proposal.context.cells.keys().enumerate() {
+            assert!(
+                f.app
+                    .ready_host_rebind(&who.principal, cell, &old_session)
+                    .unwrap()
+                    .is_none()
+            );
+            let plan = f
+                .app
+                .plan_host_rebind_grant(&prepared.id, cell, verified(evidence.clone()))
+                .unwrap();
+            let retry = f
+                .app
+                .plan_host_rebind_grant(&prepared.id, cell, verified(evidence.clone()))
+                .unwrap();
+            assert_eq!(plan.grant_request, retry.grant_request);
+            let mut reply = link_commit(&f, &plan);
+            reply.fence_receipt = prepared.steps[cell].fence.clone();
+            reply.grant_sent_at = plan.prepared_at.clone();
+            assert!(
+                f.app.commit_host_link(reply.clone()).is_err(),
+                "ordinary commit must not adopt changed Host"
+            );
+            for r in &plan.resources {
+                evidence
+                    .cells
+                    .get_mut(cell)
+                    .unwrap()
+                    .snapshot
+                    .resource_fences
+                    .insert(r.clone(), plan.fence);
+            }
+            prepared = f
+                .app
+                .record_host_rebind_grant(&prepared.id, cell, reply, &plan.host_boot)
+                .unwrap();
+            if index == 0 {
+                assert!(
+                    f.app
+                        .commit_host_rebind(&prepared.id, verified(evidence.clone()))
+                        .is_err()
+                );
+            }
+        }
+        f.failure.store(failure, Ordering::SeqCst);
+        let first = f
+            .app
+            .commit_host_rebind(&prepared.id, verified(evidence.clone()));
+        assert_eq!(first.is_ok(), failure == 0);
+        let bound = f
+            .app
+            .commit_host_rebind(&prepared.id, verified(evidence.clone()))
+            .unwrap();
+        assert_eq!(bound.phase, rx_application::host_rejoin::RebindPhase::Bound);
+        for (cell, step) in &bound.steps {
+            assert_eq!(
+                f.app
+                    .ready_host_rebind(&who.principal, cell, &old_session)
+                    .unwrap(),
+                Some(bound.id.clone())
+            );
+            let actual = f.app.bound_host_link(&step.plan.id).unwrap();
+            assert_eq!(actual.boot_id, who.peer_boot);
+            assert_eq!(actual.grant.id, step.commit.as_ref().unwrap().grant.id);
+            assert!(
+                f.app
+                    .host_binding_baseline(&step.plan.id)
+                    .unwrap()
+                    .is_some()
+            );
+            assert!(
+                f.app
+                    .host_binding_baseline(
+                        &parent.proposal.context.cells[cell]
+                            .baseline
+                            .as_ref()
+                            .unwrap()
+                            .plan
+                    )
+                    .unwrap()
+                    .is_some()
+            );
+        }
+        assert!(
+            !f.app
+                .host_rebind(&release, &bound.id)
+                .unwrap()
+                .production_authorized
+        );
+    }
+}
+#[test]
+fn host_rebind_requires_closed_work_and_exact_current_approval_and_read() {
+    let (mut f, release, command, _) = rejoin_settlement_fixture();
+    let parent = f
+        .app
+        .host_rejoin_binding(&release, &command.reference.binding)
+        .unwrap();
+    assert!(
+        f.app
+            .approve_host_rebind(&release, &id(), rebind_approval(&parent))
+            .is_err()
+    );
+    for bad in 0..6 {
+        let (mut f, release, parent, mut read) = rebind_fixture(1);
+        let mut request = rebind_approval(&parent);
+        if bad == 0 {
+            request.proposal_digest = Digest::from_bytes([99; 32]);
+            assert!(f.app.approve_host_rebind(&release, &id(), request).is_err());
+            continue;
+        }
+        let approved = f.app.approve_host_rebind(&release, &id(), request).unwrap();
+        match bad {
+            1 => {
+                read.cells
+                    .get_mut(&name("cell/a"))
+                    .unwrap()
+                    .snapshot
+                    .host_boot = id()
+            }
+            2 => read
+                .cells
+                .get_mut(&name("cell/a"))
+                .unwrap()
+                .snapshot
+                .pending_operations
+                .push(id()),
+            3 => {
+                f.app
+                    .hold(&f.operator, id().as_str(), &name("cell/a"))
+                    .unwrap();
+            }
+            4 => {
+                f.app
+                    .put_principal(
+                        &f.admin,
+                        principal(release.principal.as_str(), &[Role::Observer]),
+                        Some(Counter(1)),
+                    )
+                    .unwrap();
+            }
+            5 => {
+                f.clock.0.store(100_001_001, Ordering::SeqCst);
+            }
+            _ => {}
+        }
+        assert!(
+            f.app
+                .prepare_host_rebind(
+                    &approved.rebind.id,
+                    verified(read),
+                    BTreeMap::from([(name("cell/a"), Counter(1000))])
+                )
+                .is_err(),
+            "case {bad}"
+        );
+    }
+}
+
+#[test]
+fn host_rebind_rejects_wrong_grant_and_retains_late_reply_without_adoption() {
+    for bad in 0..4 {
+        let (mut f, release, parent, read) = rebind_fixture(1);
+        let approved = f
+            .app
+            .approve_host_rebind(&release, &id(), rebind_approval(&parent))
+            .unwrap();
+        let prepared = f
+            .app
+            .prepare_host_rebind(
+                &approved.rebind.id,
+                verified(read.clone()),
+                BTreeMap::from([(name("cell/a"), Counter(1000))]),
+            )
+            .unwrap();
+        let cell = name("cell/a");
+        let plan = f
+            .app
+            .plan_host_rebind_grant(&prepared.id, &cell, verified(read))
+            .unwrap();
+        let mut reply = link_commit(&f, &plan);
+        reply.fence_receipt = prepared.steps[&cell].fence.clone();
+        let mut boot = plan.host_boot.clone();
+        match bad {
+            0 => reply.grant.fence = Counter(900),
+            1 => reply.grant.owner = name("another/platform"),
+            2 => boot = id(),
+            _ => {
+                f.app.hold(&f.operator, id().as_str(), &cell).unwrap();
+            }
+        }
+        let result = f
+            .app
+            .record_host_rebind_grant(&prepared.id, &cell, reply, &boot);
+        if bad < 3 {
+            assert!(result.is_err());
+        } else {
+            let b = result.unwrap();
+            assert_eq!(b.phase, rx_application::host_rejoin::RebindPhase::Attention);
+            assert!(b.steps[&cell].commit.is_some());
+        }
+        let mut repo = f.app.into_repository();
+        repo.transact(|tx| {
+            let (_, host): (_, HostRegistration) = p::load(
+                tx,
+                "host",
+                (&cell, &parent.proposal.context.host),
+                "rx.internal.host-registration.v1",
+            )?;
+            assert_eq!(
+                host.boot_id,
+                parent.proposal.context.cells[&cell]
+                    .registration
+                    .as_ref()
+                    .unwrap()
+                    .boot_id
+            );
+            assert!(tx.scan("host-rebind-configuration-origin/")?.is_empty());
+            Ok(())
+        })
+        .unwrap();
+    }
+}
+
+#[path = "host_rebind_qualification_tests.rs"]
+mod host_rebind_qualification_tests;

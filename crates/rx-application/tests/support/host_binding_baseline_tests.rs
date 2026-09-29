@@ -33,7 +33,7 @@ fn transport() -> TransportPin {
         .unwrap(),
     }
 }
-fn provenance(input: &host_link::Prepare) -> BootstrapProvenance {
+pub(super) fn provenance(input: &host_link::Prepare) -> BootstrapProvenance {
     let read = &input.snapshot;
     BootstrapProvenance {
         transport: transport(),

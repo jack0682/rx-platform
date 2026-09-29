@@ -64,6 +64,7 @@ mod intervention;
 mod invalidation;
 mod lifecycle;
 mod observation;
+mod observation_link;
 mod operator_peer;
 mod operator_start;
 mod package_intake;
@@ -216,3 +217,6 @@ fn missing_as(error: StoreError, fallback: Reject) -> StoreError {
 }
 
 mod host_recovery;
+mod host_rejoin;
+
+mod settlement;

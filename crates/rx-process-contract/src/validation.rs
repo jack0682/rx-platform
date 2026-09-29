@@ -3,7 +3,17 @@ use rx_domain::{canonical, condition::Condition, types::*};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub fn validate(process: &ResolvedProcess) -> Result<(), String> {
-    if process.schema.as_str() != "rx.resolved-process.v1" {
+    let inputs = process
+        .bindings
+        .values()
+        .any(|b| b.program_inputs.is_some());
+    if process.schema.as_str()
+        != if inputs {
+            "rx.resolved-process.v2"
+        } else {
+            "rx.resolved-process.v1"
+        }
+    {
         return Err("resolved process schema".into());
     }
     let mut nodes = BTreeMap::new();
@@ -64,7 +74,7 @@ fn visit<'a>(
                 .bindings
                 .get(binding)
                 .ok_or("compiled binding missing")?;
-            action.intent.normalized().map_err(|e| e.to_string())?;
+            crate::program_inputs::variants(&action.intent, action.program_inputs.as_ref())?;
             used.insert(binding.clone());
             resources.extend(action.intent.resource_set.iter().cloned());
         }

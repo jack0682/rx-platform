@@ -162,6 +162,9 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                 false,
             )?;
             let (_, cell): (_, Cell) = load(tx, "cell", &registration.cell, CELL)?;
+            if observation_link::has_current(tx, &registration.id, &registration.cell)? {
+                return reject(Reject::CapabilityMissing);
+            }
             if registration.id != principal.id
                 || registration.session != identity.session
                 || !cell.configuration.hosts.contains(&registration.id)

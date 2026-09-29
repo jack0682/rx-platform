@@ -24,10 +24,18 @@ def patch_s(final:Path, installation:dict, engine_sha:str, expected_backend:str=
     initial=data['initial_cell'];target=data['target_cell']
     assert initial['environment']==target['environment']=='SIMULATION'
     assert initial['definition']==target['definition'] and initial['envelope']==target['envelope']
+    intents=[]
+    for step in initial['steps']:
+        template=step['intent'];policy=step.get('program_inputs')
+        if policy is None:intents.append(template)
+        else:
+            assert policy['schema']=='rx.program-input-policy.v1' and template['body'].keys()=={'program'}
+            for reference in policy['parameter_sets']:
+                value=json.loads(json.dumps(template));value['body']['program']['parameter_set']=reference;intents.append(value)
     binding={'host':data['host'],'platform':data['platform'],'cell':initial['id'],
              'definition':initial['definition'],'envelope':initial['envelope'],
              'qualification':data['initial_unqualified_reference'],'qualification_revision':'1',
-             'allowed_intents':[step['intent'] for step in initial['steps']],
+             'allowed_intents':intents,
              'scope_ids':initial['scopes'],'condition_ids':sorted({v for step in initial['steps'] for v in step['condition_ids']}),
              'environment':'SIMULATION','purposes':['PRODUCTION']}
     publish_new(final/'host-config/bindings.json',[binding])

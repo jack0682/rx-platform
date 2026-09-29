@@ -124,7 +124,14 @@ pub(super) fn submit_transition(
         .iter()
         .find(|s| s.id == activation.node)
         .ok_or(StoreError::Rejected(Reject::CapabilityMissing))?;
-    if slot.as_str() != "main" || step.intent.digest().map_err(domain_error)? != digest {
+    if slot.as_str() != "main"
+        || !rx_process_contract::program_inputs::accepts(
+            &step.intent,
+            step.program_inputs.as_ref(),
+            intent,
+        )
+        .map_err(StoreError::Invalid)?
+    {
         return reject(Reject::CapabilityMissing);
     }
     predecessors_done(tx, run, &activation.part, step)?;

@@ -118,6 +118,7 @@ pub(crate) fn configuration(
                     step_digest: canonical::digest("RX-DRAFT-BINDING-STEP-v1", step)
                         .map_err(|e| e.to_string())?,
                     action_digest: device_action_digest(&ActionBinding {
+                        program_inputs: step.program_inputs.clone(),
                         host: step.host.clone(),
                         intent: step.intent.normalized().map_err(|e| e.to_string())?,
                     })?,

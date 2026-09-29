@@ -56,6 +56,8 @@ pub struct HostDiagnostic {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum HostContext {
+    /// Current read-only source registration; no operation grant or readiness claim.
+    ObservationOnly,
     Unregistered,
     IdentityUnavailable,
     ContextStale,

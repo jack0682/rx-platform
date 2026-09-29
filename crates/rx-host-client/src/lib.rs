@@ -2,6 +2,7 @@
 pub mod bootstrap;
 pub mod connection;
 pub mod delivery;
+pub mod observation_connection;
 use rx_application as app;
 use rx_domain::{canonical, types::*};
 use rx_protocol::{base, cell};

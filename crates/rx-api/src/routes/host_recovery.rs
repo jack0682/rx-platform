@@ -49,7 +49,10 @@ pub(super) struct OperationQuery {
 
 /// Refresh role/session/terminal before revealing worker availability. The worker repeats
 /// exact cell/cohort authorization in its authoritative read/transaction before transport I/O.
-async fn release_identity(s: &ApiState, headers: &HeaderMap) -> Result<Identity, ApiError> {
+pub(super) async fn release_identity(
+    s: &ApiState,
+    headers: &HeaderMap,
+) -> Result<Identity, ApiError> {
     let identity = identity(s, headers)?;
     let Reply::Profile(profile) = s
         .runtime
@@ -67,7 +70,7 @@ async fn release_identity(s: &ApiState, headers: &HeaderMap) -> Result<Identity,
     }
     Ok(identity)
 }
-fn service(s: &ApiState) -> Result<&Arc<dyn Service>, ApiError> {
+pub(super) fn service(s: &ApiState) -> Result<&Arc<dyn Service>, ApiError> {
     s.host_recovery.as_ref().ok_or_else(|| {
         ApiError::new(
             StatusCode::SERVICE_UNAVAILABLE,
@@ -75,7 +78,7 @@ fn service(s: &ApiState) -> Result<&Arc<dyn Service>, ApiError> {
         )
     })
 }
-fn worker_error(error: WorkerError) -> ApiError {
+pub(super) fn worker_error(error: WorkerError) -> ApiError {
     match error {
         WorkerError::Writer(error) => error.into(),
         WorkerError::Unavailable => ApiError {

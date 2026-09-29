@@ -128,9 +128,16 @@ pub(super) fn evaluate_raw(
     for spec in &cell.configuration.fact_specs {
         if let Some(record) = tx.get(&key("fact", (&cell.configuration.id, &spec.id)))? {
             let f: FactRecord = decode(&record, FACT)?;
-            let (_, h): (_, HostRegistration) =
-                load(tx, "host", (&cell.configuration.id, &spec.host), HOST)?;
-            if let Some(g) = h.source_sessions.get(&spec.id) {
+            let source_sessions =
+                if observation_link::has_current(tx, &spec.host, &cell.configuration.id)? {
+                    observation_link::source_sessions(tx, cell, &spec.host, now)?
+                        .unwrap_or_default()
+                } else {
+                    let (_, h): (_, HostRegistration) =
+                        load(tx, "host", (&cell.configuration.id, &spec.host), HOST)?;
+                    h.source_sessions
+                };
+            if let Some(g) = source_sessions.get(&spec.id) {
                 generations.insert(spec.id.clone(), g.clone());
             }
             facts.insert(spec.id.clone(), domain_fact(spec, &f));
@@ -218,6 +225,12 @@ pub(super) fn validate_configuration(c: &CellConfiguration) -> Result<()> {
                 .ok_or(StoreError::Rejected(Reject::InvalidInput))?;
             if !step.predecessors.is_empty()
                 || step.host != binding.host
+                || !rx_process_contract::program_inputs::same(
+                    &step.intent,
+                    step.program_inputs.as_ref(),
+                    binding.program_inputs.as_ref(),
+                )
+                .map_err(StoreError::Invalid)?
                 || step.intent.digest().map_err(domain_error)?
                     != binding.intent.digest().map_err(domain_error)?
             {
@@ -265,7 +278,8 @@ pub(super) fn validate_configuration(c: &CellConfiguration) -> Result<()> {
             {
                 return reject(Reject::InvalidInput);
             }
-            s.intent.normalized().map_err(domain_error)?;
+            rx_process_contract::program_inputs::variants(&s.intent, s.program_inputs.as_ref())
+                .map_err(StoreError::Invalid)?;
             match &s.completion {
                 CompletionRule::NativeOutcomes {
                     table,

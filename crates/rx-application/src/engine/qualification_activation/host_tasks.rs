@@ -132,7 +132,17 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                         .steps
                         .iter()
                         .filter(|s| s.host == t.host)
-                        .map(|s| s.intent.digest().map_err(domain_error))
+                        .map(|s| {
+                            rx_process_contract::program_inputs::variants(
+                                &s.intent,
+                                s.program_inputs.as_ref(),
+                            )
+                            .map_err(StoreError::Invalid)
+                        })
+                        .collect::<Result<Vec<_>>>()?
+                        .into_iter()
+                        .flatten()
+                        .map(|intent| intent.digest().map_err(domain_error))
                         .collect::<Result<BTreeSet<_>>>()?
                         .into_iter()
                         .collect(),

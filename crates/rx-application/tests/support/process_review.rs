@@ -43,6 +43,7 @@ pub fn fixture_mode(cfg: &CellConfiguration, validator: Digest, device: bool) ->
     let bindings = BTreeMap::from([(
         name("load"),
         ActionBinding {
+            program_inputs: None,
             host: cfg.steps[0].host.clone(),
             intent: cfg.steps[0].intent.normalized().unwrap(),
         },

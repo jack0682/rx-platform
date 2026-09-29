@@ -63,8 +63,10 @@ impl Report {
                 .any(|v| v.location.len() > 512 || v.detail.len() > 2048)
             || (self.issues.is_empty() && self.resolved.is_none())
             || self.resolved.as_ref().is_some_and(|r| {
-                r.schema_id.as_str() != "rx.resolved-process.v1"
-                    || r.size_bytes.0 == 0
+                !matches!(
+                    r.schema_id.as_str(),
+                    "rx.resolved-process.v1" | "rx.resolved-process.v2"
+                ) || r.size_bytes.0 == 0
                     || r.size_bytes.0 > 1_048_576
             })
         {

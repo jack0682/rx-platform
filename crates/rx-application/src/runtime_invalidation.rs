@@ -87,7 +87,7 @@ pub fn configuration_digest(
     let bytes = canonical::bytes(configuration).map_err(|e| e.to_string())?;
     Ok(rx_package::content_digest(&bytes))
 }
-fn boundary(revision: Counter, cell: &Cell) -> Result<CellBoundary> {
+pub(crate) fn boundary(revision: Counter, cell: &Cell) -> Result<CellBoundary> {
     Ok(CellBoundary {
         revision,
         epoch: cell.epoch,

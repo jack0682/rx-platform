@@ -48,6 +48,7 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             }
             let previous = tx.get(&key("producer", principal))?;
             let mut previous_runtime_boot = None;
+            let mut replaced = None;
             if let Some(row) = &previous {
                 let old: EvidenceProducer = decode(row, PRODUCER)?;
                 let (_, mut session): (_, Session) = load(tx, "session", &old.session, SESSION)?;
@@ -76,6 +77,9 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                 {
                     previous_runtime_boot = Some(session.runtime_boot.clone());
                 }
+                if old.peer_boot != peer_boot {
+                    replaced = Some((old.clone(), session.runtime_boot.clone()));
+                }
                 let (rev, _): (_, Session) = load(tx, "session", &old.session, SESSION)?;
                 session.active = false;
                 save(tx, "session", &session.id, Some(rev), SESSION, &session)?;
@@ -85,6 +89,17 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                 .iter()
                 .map(|r| decode::<HostRegistration>(r, HOST))
                 .collect::<Result<Vec<_>>>()?;
+            let previous_cells = if replaced.is_some() {
+                tx.scan("cell/")?
+                    .iter()
+                    .map(|row| {
+                        let cell: Cell = decode(row, CELL)?;
+                        Ok((cell.configuration.id.clone(), (row.revision, cell)))
+                    })
+                    .collect::<Result<BTreeMap<_, _>>>()?
+            } else {
+                BTreeMap::new()
+            };
             let runtime_only = if let Some(previous_boot) = previous_runtime_boot {
                 runtime_restart::covers_registrations(
                     tx,
@@ -99,9 +114,9 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             // A proven P-only session replacement already has exact durable RuntimeRestart
             // restrictions. Preserve them; this classification restores no Host registration,
             // grant, qualification, permit, mandate or Run. Unknown changes still revoke.
+            let mut touched = BTreeSet::new();
             if !runtime_only {
-                let mut touched = BTreeSet::new();
-                for host in registrations {
+                for host in &registrations {
                     if &host.id == principal && !touched.contains(&host.cell) {
                         touched.extend(invalidate_closure(
                             tx,
@@ -125,21 +140,36 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             // Service identity lifetime is tied to Runtime/peer incarnation and current role,
             // not a renewable browser login timeout. This grants no native operating permission.
             save(tx, "session", &session.id, None, SESSION, &session)?;
+            let producer = EvidenceProducer {
+                principal: principal.clone(),
+                session: session.id.clone(),
+                peer_boot,
+                journal,
+                authentication_binding,
+                cells: BTreeMap::new(),
+            };
             tx.put(
                 &key("producer", principal),
                 previous.map(|r| r.revision),
-                &doc(
-                    PRODUCER,
-                    &EvidenceProducer {
-                        principal: principal.clone(),
-                        session: session.id.clone(),
-                        peer_boot,
-                        journal,
-                        authentication_binding,
-                        cells: BTreeMap::new(),
-                    },
-                )?,
+                &doc(PRODUCER, &producer)?,
             )?;
+            if let Some((old, runtime)) = replaced
+                && !touched.is_empty()
+            {
+                crate::host_invalidation::record(
+                    tx,
+                    meta,
+                    crate::host_invalidation::Replacement {
+                        previous: &old,
+                        previous_runtime: &runtime,
+                        current: &producer,
+                    },
+                    &registrations,
+                    &previous_cells,
+                    &touched,
+                )?;
+            }
+            observation_link::invalidate_producer(tx, principal, &mut touched)?;
             event(tx, "rx.event.evidence-producer-opened.v1", &session.id)?;
             Ok(session)
         })

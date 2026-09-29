@@ -6,6 +6,36 @@ pub(super) struct RestrictedHost {
     client: HostClient,
 }
 impl RestrictedHost {
+    pub(super) async fn connect_rejoin(
+        slot: &Slot,
+        context: &rx_application::host_rejoin::Context,
+        hello: Hello,
+    ) -> Result<Self, WorkerError> {
+        let client = HostClient::connect_pinned(
+            slot.configuration.endpoint.clone(),
+            context.host.clone(),
+            hello,
+            slot.configuration.server_pin,
+        )
+        .await
+        .map_err(|_| WorkerError::Unavailable)?;
+        if client.transport_pin() != context.transport.as_ref() {
+            return Err(WorkerError::InvalidRead);
+        }
+        for (cell, cut) in &context.cells {
+            if cut.cell.configuration.hosts.contains(&context.host) {
+                client
+                    .open_configuration_cell(
+                        cell,
+                        cut.cell.configuration.definition.sha256,
+                        &context.clock_id,
+                    )
+                    .await
+                    .map_err(map_rpc)?;
+            }
+        }
+        Ok(Self { client })
+    }
     pub(super) async fn connect(
         slot: &Slot,
         context: &data::Context,
@@ -84,6 +114,12 @@ impl RestrictedHost {
             sequence: Counter(reply.seq),
         })
     }
+    pub(super) async fn handover(
+        &self,
+        operation: &Id,
+    ) -> Result<Vec<rx_application::HandoverObservation>, WorkerError> {
+        self.client.handover(operation).await.map_err(map_rpc)
+    }
     pub(super) async fn receipt(
         &self,
         operation: &Id,
@@ -104,5 +140,35 @@ pub(super) fn map_rpc(error: tonic::Status) -> WorkerError {
         | tonic::Code::Cancelled
         | tonic::Code::ResourceExhausted => WorkerError::Unavailable,
         _ => WorkerError::InvalidRead,
+    }
+}
+
+/// Only explicit rebind coordination gets this grant-capable wrapper. Ordinary recovery
+/// retains RestrictedHost and cannot access a generic HostClient or native admission methods.
+pub(super) struct RebindingHost {
+    read: RestrictedHost,
+}
+impl RebindingHost {
+    pub(super) fn new(read: RestrictedHost) -> Self {
+        Self { read }
+    }
+    pub(super) fn reader(&self) -> &RestrictedHost {
+        &self.read
+    }
+    pub(super) async fn grant(
+        &self,
+        plan: &rx_application::host_link::Plan,
+    ) -> Result<(rx_application::Grant, Id), WorkerError> {
+        self.read
+            .client
+            .acquire_grant(
+                &plan.grant_request,
+                plan.resources.clone(),
+                plan.fence,
+                plan.ttl_ms,
+                plan.prepared_at.clone(),
+            )
+            .await
+            .map_err(map_rpc)
     }
 }

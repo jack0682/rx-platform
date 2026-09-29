@@ -126,7 +126,9 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             } else {
                 None
             };
+            let settlement = super::settlement::pending_authorization(tx, operation)?;
             Ok(ReconciliationPlan {
+                settlement,
                 request: plan,
                 work,
                 cell_revision,
@@ -186,6 +188,73 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
 }
 
 impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
+    /// Refresh retained native evidence against current postconditions without
+    /// replaying native work or restoring a lost authorization context.
+    pub fn refresh_reconciliation_completion(
+        &mut self,
+        identity: &Identity,
+        operation: &Id,
+        request: &Id,
+    ) -> Result<Work> {
+        let clock = &self.clock;
+        let meta = &self.installation;
+        self.repository.transact(|tx| {
+            let now = clock.now();
+            let (_, plan): (_, ReconciliationRequest) =
+                load(tx, "reconciliation", operation, PLAN)?;
+            let principal = authorize(
+                tx,
+                identity,
+                meta,
+                &now,
+                Some(&plan.cell),
+                Role::Host,
+                false,
+            )?;
+            let (_, work): (_, Work) = load(tx, "work", operation, WORK)?;
+            let (_, host): (_, HostRegistration) =
+                load(tx, "host", (&work.cell, &work.host), HOST)?;
+            if plan.id != *request
+                || plan.state != ReconciliationState::Pending
+                || plan.host != principal.id
+                || work.host != principal.id
+                || plan.cell != work.cell
+                || host.session != identity.session
+                || host.delivery_journal != work.host_journal
+            {
+                return reject(Reject::ContinuityUnproven);
+            }
+            if work.operation.outcome() == Outcome::None
+                && work.operation.integrity() == Integrity::Valid
+            {
+                let (_, cell): (_, Cell) = load(tx, "cell", &work.cell, CELL)?;
+                let (_, permit): (_, Permit) = load(tx, "permit", &work.permit, PERMIT)?;
+                let postconditions = match &work.completion {
+                    CompletionRule::Native { postconditions, .. }
+                    | CompletionRule::NativeOutcomes { postconditions, .. } => postconditions,
+                    _ => return Ok(work),
+                };
+                if !postconditions.is_empty()
+                    && cell.blocks.is_empty()
+                    && cell.epoch == permit.epoch
+                    && cell.scope_epochs == permit.scopes
+                    && host.boot_id == permit.host_boot
+                {
+                    match evaluate(tx, &cell, postconditions, &now) {
+                        Ok(_) => super::evidence::reapply_correlated_native(
+                            tx, &principal, operation, &now,
+                        )?,
+                        Err(StoreError::Rejected(
+                            Reject::ConditionFailed | Reject::ConditionUnknown,
+                        )) => {}
+                        Err(error) => return Err(error),
+                    }
+                }
+            }
+            Ok(load(tx, "work", operation, WORK)?.1)
+        })
+    }
+
     /// Retain authenticated observation facts even when they cannot justify handover.
     pub fn record_reconciliation_observations(
         &mut self,

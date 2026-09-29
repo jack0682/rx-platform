@@ -2,7 +2,7 @@ use super::*;
 use rx_ports::{OutboxRecord, OutboxState};
 const PAGE: usize = 128;
 
-pub(super) fn candidates<R: Repository>(repository: &mut R) -> Result<Vec<Id>> {
+pub(in crate::engine) fn candidates<R: Repository>(repository: &mut R) -> Result<Vec<Id>> {
     let mut after = None;
     let mut ids = Vec::new();
     loop {
@@ -40,7 +40,7 @@ fn matches(row: &OutboxRecord, host: &Name, task: &r::FenceTask) -> Result<bool>
         if cell == task.cell && target == *host && epoch == task.epoch && scopes == task.scopes && block_ids == task.block_ids),
     )
 }
-pub(super) fn matching(
+pub(in crate::engine) fn matching(
     tx: &mut dyn Transaction,
     host: &Name,
     task: &r::FenceTask,
@@ -75,7 +75,11 @@ fn original(
     }
     Ok(Some(row))
 }
-pub(super) fn enter(tx: &mut dyn Transaction, host: &Name, task: &r::FenceTask) -> Result<()> {
+pub(in crate::engine) fn enter(
+    tx: &mut dyn Transaction,
+    host: &Name,
+    task: &r::FenceTask,
+) -> Result<()> {
     if let Some(row) = original(tx, host, task)? {
         match row.state {
             OutboxState::New => {
@@ -87,7 +91,11 @@ pub(super) fn enter(tx: &mut dyn Transaction, host: &Name, task: &r::FenceTask) 
     }
     Ok(())
 }
-pub(super) fn complete(tx: &mut dyn Transaction, host: &Name, task: &r::FenceTask) -> Result<()> {
+pub(in crate::engine) fn complete(
+    tx: &mut dyn Transaction,
+    host: &Name,
+    task: &r::FenceTask,
+) -> Result<()> {
     if let Some(row) = original(tx, host, task)? {
         match row.state {
             OutboxState::EmitEntered => {

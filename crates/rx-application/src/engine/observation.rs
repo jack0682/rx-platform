@@ -28,7 +28,7 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             let (_, cell): (_, Cell) = load(tx, "cell", cell_id, CELL)?;
             let (_, host): (_, HostRegistration) =
                 load(tx, "host", (cell_id, &principal.id), HOST)?;
-            accept_facts(tx, &cell, &host, facts, &now)
+            accept_facts(tx, &cell, SourceBinding::from(&host), facts, &now)
         })
     }
     /// Only the pinned transport adapter invokes this after read-binding verification.
@@ -151,7 +151,7 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                     maintained_revoked: vec![],
                 });
             }
-            accept_facts(tx, &cell, &host, facts, &now)
+            accept_facts(tx, &cell, SourceBinding::from(&host), facts, &now)
         })
     }
     /// Local writer watchdog. An absence of new observations cannot extend their validity.
@@ -194,10 +194,23 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
         })
     }
 }
+/// Minimum validated source identity needed by fact acceptance. It carries no grant.
+pub(super) struct SourceBinding<'a> {
+    pub host: &'a Name,
+    pub generations: &'a BTreeMap<Name, Id>,
+}
+impl<'a> From<&'a HostRegistration> for SourceBinding<'a> {
+    fn from(host: &'a HostRegistration) -> Self {
+        Self {
+            host: &host.id,
+            generations: &host.source_sessions,
+        }
+    }
+}
 pub(super) fn accept_facts(
     tx: &mut dyn Transaction,
     cell: &Cell,
-    host: &HostRegistration,
+    source: SourceBinding<'_>,
     facts: Vec<FactRecord>,
     now: &TimePoint,
 ) -> Result<BatchReceipt> {
@@ -222,8 +235,8 @@ pub(super) fn accept_facts(
             .find(|s| s.id == fact.id)
             .ok_or(StoreError::Rejected(Reject::CapabilityMissing))?;
         if fact.cell != cell.configuration.id
-            || spec.host != host.id
-            || fact.source_host != host.id
+            || &spec.host != source.host
+            || &fact.source_host != source.host
             || spec.schema != fact.schema
             || spec.unit != fact.unit
             || fact.maximum_age_ns != spec.maximum_age_ns
@@ -234,7 +247,7 @@ pub(super) fn accept_facts(
     }
     let mut entries = vec![];
     for fact in &facts {
-        entries.push(record_fact(tx, host, fact.clone(), now)?);
+        entries.push(record_fact(tx, &source, fact.clone(), now)?);
     }
     let mut revoked = BTreeSet::new();
     if maintained_lost(tx, cell, now)? {
@@ -288,7 +301,7 @@ fn maintained_lost(tx: &mut dyn Transaction, cell: &Cell, now: &TimePoint) -> Re
 }
 fn record_fact(
     tx: &mut dyn Transaction,
-    host: &HostRegistration,
+    source: &SourceBinding<'_>,
     mut fact: FactRecord,
     now: &TimePoint,
 ) -> Result<Entry> {
@@ -319,7 +332,7 @@ fn record_fact(
     } else {
         tx.put(&evidence_key, None, &evidence)?;
     }
-    let changed_generation = host.source_sessions.get(&fact.id) != Some(&fact.source_generation)
+    let changed_generation = source.generations.get(&fact.id) != Some(&fact.source_generation)
         || fact.acquired_at.clock_id != now.clock_id;
     let current_key = key("fact", (&fact.cell, &fact.id));
     let previous = tx.get(&current_key)?;
@@ -364,7 +377,7 @@ fn record_fact(
                 &fact.id,
                 &fact.source_generation,
                 &fact.acquired_at.clock_id,
-                host.source_sessions.get(&fact.id),
+                source.generations.get(&fact.id),
             ),
         );
         if tx.get(&incident)?.is_none() {

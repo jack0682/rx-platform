@@ -380,12 +380,26 @@ fn validate_emission(
             {
                 return reject(Reject::StaleEpoch);
             }
+            let (_, activation): (_, Activation) =
+                load(tx, "activationid", &work.activation, ACTIVATION)?;
+            if activation.run != work.run || activation.part != work.part {
+                return reject(Reject::ContinuityUnproven);
+            }
             let step = cell
                 .configuration
                 .steps
                 .iter()
-                .find(|s| s.intent.digest().ok() == work.intent.digest().ok())
+                .find(|s| s.id == activation.node && s.host == work.host)
                 .ok_or(StoreError::Rejected(Reject::CapabilityMissing))?;
+            if !rx_process_contract::program_inputs::accepts(
+                &step.intent,
+                step.program_inputs.as_ref(),
+                &work.intent,
+            )
+            .map_err(StoreError::Invalid)?
+            {
+                return reject(Reject::CapabilityMissing);
+            }
             evaluate(tx, &cell, &step.conditions, now)?;
         }
         Delivery::Arm {

@@ -1,6 +1,8 @@
 //! Release-configured recovery worker. Its transport surface excludes operation admission.
 mod progress;
 mod query;
+mod rebind;
+mod rejoin;
 mod transport;
 
 use crate::{Hello, HostClient, connection::ConnectionConfiguration};
@@ -23,6 +25,7 @@ struct Slot {
     configuration: ConnectionConfiguration,
     pin: data::TransportPin,
     cells: BTreeSet<Name>,
+    ttls: BTreeMap<Name, Counter>,
     serial: Mutex<()>,
 }
 
@@ -50,11 +53,15 @@ impl Worker {
                 if previous.pin != pin || !previous.cells.insert(configuration.cell.clone()) {
                     return Err("duplicate Host cell or conflicting recovery transport pins".into());
                 }
+                previous
+                    .ttls
+                    .insert(configuration.cell.clone(), configuration.ttl_ms);
             } else {
                 slots.insert(
                     configuration.host.clone(),
                     Slot {
                         cells: BTreeSet::from([configuration.cell.clone()]),
+                        ttls: BTreeMap::from([(configuration.cell.clone(), configuration.ttl_ms)]),
                         configuration,
                         pin,
                         serial: Mutex::new(()),
@@ -210,6 +217,64 @@ impl Worker {
     }
 }
 impl Service for Worker {
+    fn rebind(
+        &self,
+        identity: Identity,
+        key: Id,
+        input: rx_application::host_rejoin::ApproveRebind,
+    ) -> ServiceFuture<'_, rx_application::host_rejoin::RebindView> {
+        Box::pin(self.rebind_value(identity, key, input))
+    }
+    fn progress_rebind(
+        &self,
+        identity: Identity,
+        id: Id,
+    ) -> ServiceFuture<'_, rx_application::host_rejoin::RebindView> {
+        Box::pin(self.progress_rebind_value(identity, id))
+    }
+
+    fn settle_rejoin(
+        &self,
+        identity: Identity,
+        key: Id,
+        command: rx_application::host_rejoin::ApproveSettlement,
+    ) -> ServiceFuture<'_, rx_application::settlement::Authorization> {
+        Box::pin(self.settle_rejoin_value(identity, key, command))
+    }
+
+    fn query_rejoin(
+        &self,
+        identity: Identity,
+        id: Id,
+        operation: Id,
+    ) -> ServiceFuture<'_, rx_application::host_rejoin::QueryObservation> {
+        Box::pin(self.query_rejoin_value(identity, id, operation))
+    }
+
+    fn approve_rejoin(
+        &self,
+        identity: Identity,
+        key: Id,
+        input: rx_application::host_rejoin::Approve,
+    ) -> ServiceFuture<'_, rx_application::host_rejoin::BindingView> {
+        Box::pin(self.approve_rejoin_value(identity, key, input))
+    }
+    fn progress_rejoin(
+        &self,
+        identity: Identity,
+        id: Id,
+    ) -> ServiceFuture<'_, rx_application::host_rejoin::BindingView> {
+        Box::pin(self.progress_rejoin_value(identity, id))
+    }
+
+    fn propose_rejoin(
+        &self,
+        identity: Identity,
+        key: Id,
+        input: rx_application::host_rejoin::Prepare,
+    ) -> ServiceFuture<'_, rx_application::host_rejoin::ProposalView> {
+        Box::pin(self.propose_rejoin_value(identity, key, input))
+    }
     fn context(
         &self,
         identity: Identity,

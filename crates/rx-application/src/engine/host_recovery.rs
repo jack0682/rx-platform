@@ -1,12 +1,39 @@
 use super::*;
 use crate::{host_binding_baseline as baseline, host_recovery as r};
 mod context;
-mod fences;
+pub(super) mod fences;
 mod reads;
 mod receipts;
 const PREFIX: &str = "host-recovery";
 const TRANSPORT: &str = "rx.host-recovery-transport.v1";
 const REFERENCE: &str = "rx.host-recovery-ref.v1";
+pub(super) fn registered_transport(
+    tx: &mut dyn Transaction,
+    meta: &Installation,
+    host: &Name,
+) -> Result<baseline::TransportPin> {
+    context::transport(tx, meta, host)
+}
+pub(super) fn local_live_authority(tx: &mut dyn Transaction, cell: &Name) -> Result<bool> {
+    context::live_authority(tx, cell)
+}
+pub(super) fn retained_configuration(
+    tx: &mut dyn Transaction,
+    digest: Digest,
+    base: &baseline::HostBindingBaseline,
+    observed: &rx_domain::host_configuration::CellObservation,
+    binding: Digest,
+) -> Result<()> {
+    reads::configuration(tx, digest, base, observed, binding)
+}
+
+pub(super) fn original_operations(
+    tx: &mut dyn Transaction,
+    host: &Name,
+    cells: &[Name],
+) -> Result<BTreeMap<Id, r::OperationCut>> {
+    context::operations(tx, host, cells)
+}
 
 #[derive(serde::Serialize, serde::Deserialize)]
 struct TransportRegistration {

@@ -171,6 +171,8 @@ pub struct CellTarget {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Request {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub host_rebind_restrictions: Vec<crate::host_rejoin::Restriction>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub impact_digest: Option<Digest>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -195,8 +197,26 @@ impl Request {
                 self.runtime_restrictions.is_empty()
             ),
             ("rx.requalification-request.v1", false, true)
-                | ("rx.requalification-request.v2", true, _)
-        ) || self.runtime_restrictions.len() > 128
+                | (
+                    "rx.requalification-request.v2" | "rx.requalification-request.v3",
+                    true,
+                    _
+                )
+        ) || (self.schema.as_str() == "rx.requalification-request.v3")
+            != !self.host_rebind_restrictions.is_empty()
+            || self.host_rebind_restrictions.len() > 128
+            || self
+                .host_rebind_restrictions
+                .windows(2)
+                .any(|w| w[0].block.id >= w[1].block.id)
+            || self.host_rebind_restrictions.iter().any(|r| {
+                r.digest().is_err()
+                    || !self
+                        .cells
+                        .iter()
+                        .any(|c| c.profile.cell == r.cell && c.blocks.contains(&r.block.id))
+            })
+            || self.runtime_restrictions.len() > 128
             || self
                 .runtime_restrictions
                 .windows(2)
@@ -242,6 +262,8 @@ pub struct Job {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Begin {
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub host_rebind_restrictions: BTreeMap<Id, Digest>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub runtime_restrictions: BTreeMap<Id, Digest>,
     pub id: Id,
@@ -554,6 +576,9 @@ pub fn required_dependencies(c: &crate::CellConfiguration) -> BTreeSet<Digest> {
         c.site_config_digest,
     ]);
     for s in &c.steps {
+        if let Some(policy) = &s.program_inputs {
+            set.extend(policy.parameter_sets.iter().map(|p| p.sha256));
+        }
         set.insert(s.intent.profile_digest);
         set.insert(s.intent.site_config_digest);
         set.extend(s.intent.calibration_digests.iter().copied());

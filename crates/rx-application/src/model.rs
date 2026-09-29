@@ -125,6 +125,8 @@ pub enum Environment {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct StepBinding {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub program_inputs: Option<rx_process_contract::program_inputs::Policy>,
     pub id: Name,
     pub host: Name,
     pub intent: Intent,
@@ -778,6 +780,7 @@ pub struct ReconciliationRequest {
 }
 #[derive(Clone, Debug)]
 pub struct ReconciliationPlan {
+    pub settlement: Option<Id>,
     pub request: ReconciliationRequest,
     pub work: Work,
     pub cell_revision: Counter,

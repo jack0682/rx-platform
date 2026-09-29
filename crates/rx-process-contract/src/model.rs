@@ -75,6 +75,8 @@ impl NodeBody {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ActionBinding {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub program_inputs: Option<crate::program_inputs::Policy>,
     pub host: Name,
     pub intent: Intent,
 }

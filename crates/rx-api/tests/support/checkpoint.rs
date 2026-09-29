@@ -36,6 +36,7 @@ pub fn configuration(configuration: CellConfiguration, kind: &str) -> CellConfig
         process.bindings.insert(
             name("other"),
             ActionBinding {
+                program_inputs: None,
                 host: step.host.clone(),
                 intent: step.intent.clone(),
             },

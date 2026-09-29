@@ -1,3 +1,5 @@
+#[path = "support/observation_link_tests.rs"]
+mod observation_link_tests;
 use rx_application::*;
 #[path = "support/host_binding_baseline_tests.rs"]
 mod host_binding_baseline_tests;
@@ -324,6 +326,7 @@ fn fixture_configured(
     };
     let steps: Vec<StepBinding> = (0..host_count)
         .map(|i| StepBinding {
+            program_inputs: None,
             id: name(&format!("step/{i}")),
             host: name(&format!("host/{i}")),
             intent: Intent {
@@ -2031,6 +2034,7 @@ fn process_configuration(
     let mut bindings = BTreeMap::from([(
         name("left"),
         ActionBinding {
+            program_inputs: None,
             host: original.host.clone(),
             intent: original.intent.clone(),
         },
@@ -2040,6 +2044,7 @@ fn process_configuration(
             bindings.insert(
                 name("right"),
                 ActionBinding {
+                    program_inputs: None,
                     host: alternative.host.clone(),
                     intent: alternative.intent.clone(),
                 },
@@ -5977,8 +5982,17 @@ fn runtime_stop_barrier_is_atomic_blocks_new_authority_and_keeps_unknown_work() 
 }
 
 fn link_fixture() -> (Fixture, rx_application::host_link::Prepare) {
+    link_fixture_native(false)
+}
+fn link_fixture_native(native_result: bool) -> (Fixture, rx_application::host_link::Prepare) {
+    link_fixture_configured(native_result, |c| c)
+}
+fn link_fixture_configured(
+    native_result: bool,
+    edit: impl FnOnce(CellConfiguration) -> CellConfiguration,
+) -> (Fixture, rx_application::host_link::Prepare) {
     use rx_domain::host_snapshot::*;
-    let mut f = fixture_registration(1, true, false, false, None, false, false);
+    let mut f = fixture_configured((1, true, false, native_result, None, false, false), edit);
     let boot = id();
     let journal = id();
     let session = f
@@ -8691,3 +8705,214 @@ fn device_provenance_cannot_pass_the_legacy_process_review_even_when_actions_mat
 
 #[path = "support/assignment_tests.rs"]
 mod assignment_tests;
+
+#[test]
+fn program_input_policy_admission_binds_selected_value_without_expanding_other_rights() {
+    use rx_process_contract::program_inputs::{Policy, SCHEMA};
+    let chosen = artifact(98, "rx.sim.parameters.v1");
+    let mut f = fixture_configured((1, true, false, true, None, false, true), |mut c| {
+        let step = &mut c.steps[0];
+        let Body::Program(goal) = &step.intent.body else {
+            panic!("Program fixture")
+        };
+        step.program_inputs = Some(Policy {
+            schema: name(SCHEMA),
+            template_digest: step.intent.digest().unwrap(),
+            parameter_sets: vec![goal.parameter_set.clone(), chosen.clone()],
+        });
+        c
+    });
+    assert!(
+        rx_application::requalification::required_dependencies(&f.configuration)
+            .contains(&chosen.sha256)
+    );
+    let run = start(&mut f, 1);
+    let a = activation(&mut f, &run);
+    let cr = f
+        .app
+        .inspect_cell(&f.executor, &f.configuration.id)
+        .unwrap()
+        .0;
+    let rr = f.app.inspect_run(&f.executor, &run.id).unwrap().0;
+    let mut command = work_command(&f, &a, cr, rr);
+    let Body::Program(goal) = &mut command.intent.body else {
+        unreachable!()
+    };
+    goal.parameter_set = chosen.clone();
+    let mut forbidden = command.clone();
+    forbidden.intent.target = name("other-device");
+    assert!(matches!(
+        f.app.submit(&f.executor, id().as_str(), forbidden),
+        Err(StoreError::Rejected(Rejection::CapabilityMissing))
+    ));
+    let mut forged = command.clone();
+    let Body::Program(goal) = &mut forged.intent.body else {
+        unreachable!()
+    };
+    goal.parameter_set.size_bytes = Counter(2);
+    assert!(matches!(
+        f.app.submit(&f.executor, id().as_str(), forged),
+        Err(StoreError::Rejected(Rejection::CapabilityMissing))
+    ));
+    let key = id();
+    let work = f
+        .app
+        .submit(&f.executor, key.as_str(), command.clone())
+        .unwrap();
+    assert_eq!(
+        work.intent.digest().unwrap(),
+        command.intent.digest().unwrap()
+    );
+    assert_ne!(
+        work.intent.digest().unwrap(),
+        f.configuration.steps[0].intent.digest().unwrap()
+    );
+    assert!(f.app.begin_delivery(work.operation.id()).unwrap());
+    assert!(
+        f.app
+            .plan_delivery(&f.hosts[0], work.operation.id())
+            .is_ok()
+    );
+    assert_eq!(
+        f.app
+            .inspect_permit(&f.operator, &work.permit)
+            .unwrap()
+            .intent_digest,
+        command.intent.digest().unwrap()
+    );
+    let again = f.app.submit(&f.executor, key.as_str(), command).unwrap();
+    assert_eq!(again.operation.id(), work.operation.id());
+    let changed = work_command(&f, &a, cr, rr);
+    assert!(matches!(
+        f.app.submit(&f.executor, key.as_str(), changed),
+        Err(StoreError::KeyConflict)
+    ));
+}
+
+#[path = "support/settlement.rs"]
+mod settlement_tests;
+
+#[test]
+fn reconciliation_refreshes_late_postconditions_without_reusing_a_lost_context() {
+    for lose_context in [false, true] {
+        let mut f = fixture_configured((1, true, false, true, None, true, true), |mut c| {
+            let post = c.start_conditions.clone();
+            if let CompletionRule::Native { postconditions, .. } = &mut c.steps[0].completion {
+                *postconditions = post;
+            }
+            c
+        });
+        let (work, native) = native_started(&mut f);
+        let fact = |f: &Fixture, value: bool| FactRecord {
+            cell: f.configuration.id.clone(),
+            id: name("ready"),
+            source_host: f.hosts[0].principal.clone(),
+            source_generation: f.registrations[0].source_sessions[&name("ready")].clone(),
+            schema: name("boolean/v1"),
+            unit: name("unitless"),
+            acquired_at: f.clock.now(),
+            maximum_age_ns: Counter(20000),
+            acquisition_uncertainty_ns: Counter(0),
+            quality_good: true,
+            origin_age_bounded: true,
+            disputed: false,
+            value: TypedValue::Boolean(value),
+            evidence_id: id(),
+        };
+        f.clock.0.store(1100, Ordering::SeqCst);
+        f.app.report_fact(&f.hosts[0], fact(&f, false)).unwrap();
+        let batch = EvidenceBatch {
+            journal: id(),
+            first: Counter(1),
+            records: vec![native.clone()],
+        };
+        f.app.ingest_evidence(&f.hosts[0], batch.clone()).unwrap();
+        f.app
+            .request_reconciliation(&f.executor, work.operation.id())
+            .unwrap();
+        let request = f
+            .app
+            .pending_reconciliations(&f.hosts[0], None, 8)
+            .unwrap()
+            .remove(0)
+            .id;
+        assert!(
+            f.app
+                .refresh_reconciliation_completion(&f.executor, work.operation.id(), &request)
+                .is_err()
+        );
+        assert!(
+            f.app
+                .refresh_reconciliation_completion(&f.hosts[0], work.operation.id(), &id())
+                .is_err()
+        );
+        assert_eq!(
+            f.app
+                .refresh_reconciliation_completion(&f.hosts[0], work.operation.id(), &request)
+                .unwrap()
+                .operation
+                .outcome(),
+            rx_domain::operation::Outcome::None
+        );
+        f.clock.0.store(1200, Ordering::SeqCst);
+        let current = fact(&f, true);
+        f.app.report_fact(&f.hosts[0], current.clone()).unwrap();
+        // Re-reading an identical native event is deliberately idempotent; it
+        // must not stand in for the explicit current-postcondition evaluation.
+        f.app.ingest_evidence(&f.hosts[0], batch).unwrap();
+        assert_eq!(
+            f.app
+                .inspect_work(&f.operator, work.operation.id())
+                .unwrap()
+                .operation
+                .outcome(),
+            rx_domain::operation::Outcome::None
+        );
+        f.clock.0.store(30000, Ordering::SeqCst);
+        assert_eq!(
+            f.app
+                .refresh_reconciliation_completion(&f.hosts[0], work.operation.id(), &request)
+                .unwrap()
+                .operation
+                .outcome(),
+            rx_domain::operation::Outcome::None
+        );
+        f.clock.0.store(30100, Ordering::SeqCst);
+        let fresh = fact(&f, true);
+        f.app.report_fact(&f.hosts[0], fresh.clone()).unwrap();
+        if lose_context {
+            f.app
+                .hold(&f.operator, id().as_str(), &f.configuration.id)
+                .unwrap();
+        }
+        let result = f
+            .app
+            .refresh_reconciliation_completion(&f.hosts[0], work.operation.id(), &request)
+            .unwrap();
+        if lose_context {
+            assert_eq!(
+                result.operation.outcome(),
+                rx_domain::operation::Outcome::None
+            );
+        } else {
+            assert_eq!(
+                result.operation.outcome(),
+                rx_domain::operation::Outcome::Succeeded
+            );
+            assert!(result.operation.evidence_ids().contains(&native.id));
+            assert!(result.operation.evidence_ids().contains(&fresh.evidence_id));
+            assert_eq!(
+                result.operation.revision(),
+                f.app
+                    .refresh_reconciliation_completion(&f.hosts[0], work.operation.id(), &request)
+                    .unwrap()
+                    .operation
+                    .revision()
+            );
+        }
+        assert_eq!(
+            result.operation.disposition(),
+            rx_domain::operation::Disposition::Quarantined
+        );
+    }
+}

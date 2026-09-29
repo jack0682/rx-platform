@@ -18,6 +18,7 @@ pub mod host_binding_baseline;
 pub mod host_link;
 
 pub mod observation;
+pub mod observation_link;
 
 pub mod diagnostics;
 
@@ -42,8 +43,12 @@ pub mod requalification;
 
 pub mod qualification_activation;
 
+pub mod host_invalidation;
+pub mod host_rejoin;
 pub mod runtime_invalidation;
 
 pub mod operator_start;
 
 pub mod host_recovery;
+
+pub mod settlement;

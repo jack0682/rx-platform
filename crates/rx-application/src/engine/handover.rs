@@ -56,96 +56,15 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             {
                 return reject(Reject::ContinuityUnproven);
             }
-            let mut native = None;
-            for id in work.operation.evidence_ids() {
-                if let Some(row) = tx.get(&key("evidence", id))?
-                    && row.document.schema.as_str() == "rx.internal.native-evidence.v1"
-                {
-                    let evidence: NativeEvidence = decode(&row, "rx.internal.native-evidence.v1")?;
-                    if evidence.operation == command.operation
-                        && work.invocation.as_ref() == Some(&evidence.invocation)
-                    {
-                        native = Some(evidence);
-                    }
-                }
-            }
-            let native = native.ok_or(StoreError::Rejected(Reject::ConditionUnknown))?;
-            let expected: BTreeSet<_> = ["no-pending", "control", "support"]
-                .into_iter()
-                .map(|s| name(format!("handover/{}/{s}", command.operation)))
-                .collect();
-            if command.observations.len() != 3
-                || command
-                    .observations
-                    .iter()
-                    .map(|o| o.source.clone())
-                    .collect::<BTreeSet<_>>()
-                    != expected
-                || command
-                    .observations
-                    .iter()
-                    .map(|o| o.id.clone())
-                    .collect::<BTreeSet<_>>()
-                    .len()
-                    != 3
-            {
-                return reject(Reject::InvalidInput);
-            }
-            let mut evidence_ids = Vec::new();
-            for observation in &command.observations {
-                let age = now
-                    .age_ns(&observation.observed_at)
-                    .and_then(|n| n.checked_add(observation.uncertainty_ns.0));
-                if observation.operation != command.operation
-                    || Some(&observation.invocation) != work.invocation.as_ref()
-                    || observation.profile_digest != work.intent.profile_digest
-                    || observation.device_session != native.device_session
-                    || observation.host_boot != host.boot_id
-                    || observation.schema.as_str() != "rx.handover.v1"
-                    || !observation.value
-                    || !observation.quality_good
-                    || !observation.origin_age_bounded
-                    || age.is_none_or(|n| n > work.handover_max_age_ns.0)
-                    || observation.observed_at.clock_id != native.captured_at.clock_id
-                    || observation.observed_at.ticks_ns < native.captured_at.ticks_ns
-                {
-                    return reject(Reject::ConditionUnknown);
-                }
-                let key_ = key("handover", &observation.id);
-                let incoming = doc(HANDOVER, observation)?;
-                if let Some(old) = tx.get(&key_)? {
-                    if old.document != incoming {
-                        return Err(StoreError::KeyConflict);
-                    }
-                } else {
-                    tx.put(&key_, None, &incoming)?;
-                }
-                evidence_ids.push(observation.id.clone());
-            }
-            for resource_id in &work.intent.resource_set {
-                let (rr, mut resource): (_, Resource) =
-                    load(tx, "resource", resource_id, RESOURCE)?;
-                if resource.holder.as_ref() != Some(work.operation.id()) {
-                    return reject(Reject::Busy);
-                }
-                resource.holder = None;
-                resource.quarantined = false;
-                save(tx, "resource", resource_id, Some(rr), RESOURCE, &resource)?;
-                event(tx, "rx.event.resource-released.v1", &resource)?;
-            }
-            work.operation
-                .release(
-                    ReleaseConditions {
-                        no_residual_native: true,
-                        control_handover_confirmed: true,
-                        support_handover_confirmed: true,
-                    },
-                    evidence_ids,
-                )
-                .map_err(domain_error)?;
-            save(tx, "work", work.operation.id(), Some(revision), WORK, &work)?;
+            release_confirmed(
+                tx,
+                revision,
+                &mut work,
+                &host.boot_id,
+                &now,
+                &command.observations,
+            )?;
             remember(tx, &scope, fingerprint, WORK, &work)?;
-            event(tx, "rx.event.operation-resources-released.v1", &work)?;
             Ok(work)
         })
     }
@@ -256,8 +175,10 @@ pub(super) fn complete_part_transition(
         run.state = RunState::Completed;
         if let Some(id) = &run.mandate {
             let (revision, mut mandate): (_, Mandate) = load(tx, "mandate", id, MANDATE)?;
-            mandate.state = MandateState::Exhausted;
-            save(tx, "mandate", id, Some(revision), MANDATE, &mandate)?;
+            if mandate.state == MandateState::Active {
+                mandate.state = MandateState::Exhausted;
+                save(tx, "mandate", id, Some(revision), MANDATE, &mandate)?;
+            }
         }
     }
     save(tx, "run", &run.id, Some(run_revision), RUN, &run)?;
@@ -266,4 +187,102 @@ pub(super) fn complete_part_transition(
         revision,
         part: part.clone(),
     })
+}
+
+pub(super) fn release_confirmed(
+    tx: &mut dyn Transaction,
+    revision: Counter,
+    work: &mut Work,
+    host_boot: &Id,
+    now: &TimePoint,
+    observations: &[HandoverObservation],
+) -> Result<()> {
+    let operation = work.operation.id().clone();
+    let mut native = None;
+    for id in work.operation.evidence_ids() {
+        if let Some(row) = tx.get(&key("evidence", id))?
+            && row.document.schema.as_str() == "rx.internal.native-evidence.v1"
+        {
+            let evidence: NativeEvidence = decode(&row, "rx.internal.native-evidence.v1")?;
+            if evidence.operation == operation
+                && work.invocation.as_ref() == Some(&evidence.invocation)
+            {
+                native = Some(evidence);
+            }
+        }
+    }
+    let native = native.ok_or(StoreError::Rejected(Reject::ConditionUnknown))?;
+    let expected: BTreeSet<_> = ["no-pending", "control", "support"]
+        .into_iter()
+        .map(|s| name(format!("handover/{}/{s}", operation)))
+        .collect();
+    if observations.len() != 3
+        || observations
+            .iter()
+            .map(|o| o.source.clone())
+            .collect::<BTreeSet<_>>()
+            != expected
+        || observations
+            .iter()
+            .map(|o| o.id.clone())
+            .collect::<BTreeSet<_>>()
+            .len()
+            != 3
+    {
+        return reject(Reject::InvalidInput);
+    }
+    let mut evidence_ids = Vec::new();
+    for observation in observations {
+        let age = now
+            .age_ns(&observation.observed_at)
+            .and_then(|n| n.checked_add(observation.uncertainty_ns.0));
+        if observation.operation != operation
+            || Some(&observation.invocation) != work.invocation.as_ref()
+            || observation.profile_digest != work.intent.profile_digest
+            || observation.device_session != native.device_session
+            || &observation.host_boot != host_boot
+            || observation.schema.as_str() != "rx.handover.v1"
+            || !observation.value
+            || !observation.quality_good
+            || !observation.origin_age_bounded
+            || age.is_none_or(|n| n > work.handover_max_age_ns.0)
+            || observation.observed_at.clock_id != native.captured_at.clock_id
+            || observation.observed_at.ticks_ns < native.captured_at.ticks_ns
+        {
+            return reject(Reject::ConditionUnknown);
+        }
+        let key_ = key("handover", &observation.id);
+        let incoming = doc(HANDOVER, observation)?;
+        if let Some(old) = tx.get(&key_)? {
+            if old.document != incoming {
+                return Err(StoreError::KeyConflict);
+            }
+        } else {
+            tx.put(&key_, None, &incoming)?;
+        }
+        evidence_ids.push(observation.id.clone());
+    }
+    for resource_id in &work.intent.resource_set {
+        let (rr, mut resource): (_, Resource) = load(tx, "resource", resource_id, RESOURCE)?;
+        if resource.holder.as_ref() != Some(work.operation.id()) {
+            return reject(Reject::Busy);
+        }
+        resource.holder = None;
+        resource.quarantined = false;
+        save(tx, "resource", resource_id, Some(rr), RESOURCE, &resource)?;
+        event(tx, "rx.event.resource-released.v1", &resource)?;
+    }
+    work.operation
+        .release(
+            ReleaseConditions {
+                no_residual_native: true,
+                control_handover_confirmed: true,
+                support_handover_confirmed: true,
+            },
+            evidence_ids,
+        )
+        .map_err(domain_error)?;
+    save(tx, "work", work.operation.id(), Some(revision), WORK, work)?;
+    event(tx, "rx.event.operation-resources-released.v1", work)?;
+    Ok(())
 }

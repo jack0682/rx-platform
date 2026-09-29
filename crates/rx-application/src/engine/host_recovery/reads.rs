@@ -11,16 +11,93 @@ fn window(now: &TimePoint, started: &TimePoint, finished: &TimePoint) -> Result<
     }
     Ok(())
 }
-fn configuration(
+pub(super) fn configuration(
     tx: &mut dyn Transaction,
-    cut: &r::CellCut,
+    configuration_digest: Digest,
     base: &baseline::HostBindingBaseline,
     observed: &h::CellObservation,
     binding_digest: Digest,
 ) -> Result<()> {
+    configuration_at(tx, configuration_digest, base, observed, binding_digest, 0)
+}
+fn configuration_at(
+    tx: &mut dyn Transaction,
+    configuration_digest: Digest,
+    base: &baseline::HostBindingBaseline,
+    observed: &h::CellObservation,
+    binding_digest: Digest,
+    depth: usize,
+) -> Result<()> {
+    if depth > 64 {
+        return Err(StoreError::Integrity(
+            "configuration origin chain overflow".into(),
+        ));
+    }
+    if let Some(row) = tx.get(&key("host-rebind-configuration-origin", &base.plan))? {
+        let origin: crate::host_rejoin::ConfigurationOrigin =
+            decode(&row, "rx.host-rebind-configuration-origin.v1")?;
+        if same(&observed.applied, &origin.applied_context)?
+            && configuration_digest == origin.configuration
+        {
+            let (_, rebind): (_, crate::host_rejoin::Rebind) = load(
+                tx,
+                "host-rejoin-rebind",
+                &origin.rebind,
+                crate::host_rejoin::REBIND_SCHEMA,
+            )?;
+            let (_, proposal): (_, crate::host_rejoin::Proposal) = load(
+                tx,
+                "host-rejoin-proposal",
+                &rebind.binding,
+                crate::host_rejoin::PROPOSAL_SCHEMA,
+            )?;
+            let step = rebind
+                .steps
+                .get(&base.cell)
+                .ok_or(StoreError::Rejected(Reject::ContinuityUnproven))?;
+            if rebind.phase != crate::host_rejoin::RebindPhase::Bound
+                || rebind.id != origin.rebind
+                || step.plan.id != base.plan
+                || rebind.proposal_digest != proposal.digest().map_err(StoreError::Integrity)?
+                || proposal
+                    .context
+                    .cells
+                    .get(&base.cell)
+                    .and_then(|c| c.baseline.as_ref())
+                    .is_none_or(|b| b.plan != origin.prior_plan)
+                || !same(&origin.applied_context, &base.applied_context)?
+                || origin.configuration != base.original_configuration_digest
+            {
+                return reject(Reject::ContinuityUnproven);
+            }
+            let prior = baseline::load(tx, &origin.prior_plan)?
+                .ok_or(StoreError::Rejected(Reject::ContinuityUnproven))?;
+            if origin.new_plan != base.plan
+                || origin.prior_plan == base.plan
+                || prior.digest().map_err(StoreError::Integrity)? != origin.prior_baseline_digest
+                || prior.host != base.host
+                || prior.cell != base.cell
+                || prior.installation != base.installation
+                || prior.store_generation != base.store_generation
+                || prior.delivery_journal != base.delivery_journal
+                || prior.transport != base.transport
+                || prior.source_sessions != base.source_sessions
+            {
+                return reject(Reject::ContinuityUnproven);
+            }
+            return configuration_at(
+                tx,
+                configuration_digest,
+                &prior,
+                observed,
+                binding_digest,
+                depth + 1,
+            );
+        }
+    }
     let Some(applied) = &observed.applied else {
         if base.applied_context.is_none()
-            && cut.configuration_digest == base.original_configuration_digest
+            && configuration_digest == base.original_configuration_digest
             && binding_digest == base.host_binding_digest
         {
             return Ok(());
@@ -28,7 +105,7 @@ fn configuration(
         return reject(Reject::ContinuityUnproven);
     };
     if applied.cell != base.cell
-        || applied.configuration != cut.configuration_digest
+        || applied.configuration != configuration_digest
         || applied.binding_digest != binding_digest
         || binding_digest != base.host_binding_digest
     {
@@ -51,7 +128,7 @@ fn configuration(
     if !application
         .cells
         .iter()
-        .any(|c| c.cell == base.cell && c.after.sha256 == cut.configuration_digest)
+        .any(|c| c.cell == base.cell && c.after.sha256 == configuration_digest)
     {
         return reject(Reject::ContinuityUnproven);
     }
@@ -86,7 +163,7 @@ fn configuration(
             != proof.receipt_digest
         || !request.cells.iter().any(|c| {
             c.cell == base.cell
-                && c.after_configuration == cut.configuration_digest
+                && c.after_configuration == configuration_digest
                 && c.definition == observed.definition
                 && c.envelope == observed.envelope
                 && c.environment == observed.environment
@@ -281,7 +358,7 @@ pub(super) fn validate(
         }
         configuration(
             tx,
-            cut,
+            cut.configuration_digest,
             &base,
             configuration_observation,
             read.configuration.snapshot.binding_digest,
@@ -327,7 +404,7 @@ pub(super) fn ingest(
             });
         }
         if !facts.is_empty() {
-            super::super::observation::accept_facts(tx, &cell, &host, facts, now)?;
+            super::super::observation::accept_facts(tx, &cell, (&host).into(), facts, now)?;
         }
     }
     Ok(())

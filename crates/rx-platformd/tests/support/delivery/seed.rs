@@ -101,6 +101,18 @@ pub fn export() -> Result<()> {
     let profile = supplied("profile")?;
     let program = supplied("program")?;
     let parameters = supplied("parameters")?;
+    let mut parameter_choices = Vec::new();
+    if let Some(path) = std::env::var_os("RX_CELL_PROGRAM_INPUTS") {
+        let values: Vec<serde_json::Value> = read(Path::new(&path))?;
+        for value in values {
+            let schema = value["schema"]
+                .as_str()
+                .ok_or("parameter schema required")?
+                .to_owned();
+            parameter_choices.push(material(&schema, value)?);
+        }
+    }
+
     let initial_recipe = material(
         "rx.uncompiled-process-reference.v1",
         json!({"schema":"rx.uncompiled-process-reference.v1","process":"delivery/cycle","status":"AWAITING_SIGNED_S_COMPILATION"}),
@@ -111,6 +123,40 @@ pub fn export() -> Result<()> {
         unit: name("unitless"),
         expected: TypedValue::Boolean(true),
     };
+    // An explicitly declared provider observation can distinguish service
+    // integrity from readiness for another command. Legacy fixtures keep ready.
+    let operational = adapter
+        .as_ref()
+        .and_then(|v| v.get("observation_contract"))
+        .and_then(|v| v.get("operational_source"))
+        .and_then(|v| v.as_str())
+        .map(name);
+    if operational.as_ref() == Some(&name("ready")) {
+        return Err("operational/readiness sources must differ".into());
+    }
+    let maintained = operational.as_ref().map_or_else(
+        || ready.clone(),
+        |source| Condition::Eq {
+            fact: source.clone(),
+            schema: name("boolean/v1"),
+            unit: name("unitless"),
+            expected: TypedValue::Boolean(true),
+        },
+    );
+    let mut fact_specs = vec![FactSpec {
+        id: name("ready"),
+        host: name(HOST),
+        schema: name("boolean/v1"),
+        unit: name("unitless"),
+        maximum_age_ns: Counter(2_000_000_000),
+        maximum_uncertainty_ns: Counter(0),
+    }];
+    if let Some(source) = operational {
+        fact_specs.push(FactSpec {
+            id: source,
+            ..fact_specs[0].clone()
+        });
+    }
     let intent = Intent {
         kind: Kind::FiniteAction,
         target: name(target),
@@ -126,6 +172,19 @@ pub fn export() -> Result<()> {
             program: program.clone(),
             parameter_set: parameters.clone(),
         }),
+    };
+    let program_inputs = if parameter_choices.is_empty() {
+        None
+    } else {
+        let mut sets = vec![parameters.clone()];
+        sets.extend(parameter_choices.clone());
+        let policy = rx_process_contract::program_inputs::Policy {
+            schema: name(rx_process_contract::program_inputs::SCHEMA),
+            template_digest: intent.digest()?,
+            parameter_sets: sets,
+        };
+        policy.validate(&intent)?;
+        Some(policy)
     };
     let configuration = CellConfiguration {
         process: None,
@@ -143,16 +202,10 @@ pub fn export() -> Result<()> {
         permit_ttl_ns: Counter(1_000_000_000),
         start_timeout_ns: Counter(5_000_000_000),
         start_conditions: vec![ready.clone()],
-        maintained_conditions: vec![ready.clone()],
-        fact_specs: vec![FactSpec {
-            id: name("ready"),
-            host: name(HOST),
-            schema: name("boolean/v1"),
-            unit: name("unitless"),
-            maximum_age_ns: Counter(2_000_000_000),
-            maximum_uncertainty_ns: Counter(0),
-        }],
+        maintained_conditions: vec![maintained],
+        fact_specs,
         steps: vec![StepBinding {
+            program_inputs: program_inputs.clone(),
             id: name("step/cycle"),
             host: name(HOST),
             predecessors: vec![],
@@ -173,13 +226,18 @@ pub fn export() -> Result<()> {
     let bindings = BTreeMap::from([(
         name(ALIAS),
         ActionBinding {
+            program_inputs,
             host: name(HOST),
             intent: configuration.steps[0].intent.normalized()?,
         },
     )]);
     let input = CompileInput {
         device_sources: BTreeMap::new(),
-        schema: name("rx.process-compile-input.v1"),
+        schema: name(if parameter_choices.is_empty() {
+            "rx.process-compile-input.v1"
+        } else {
+            "rx.process-compile-input.v3"
+        }),
         draft: id(),
         cell: name(CELL),
         source_revision: Counter(1),
@@ -208,7 +266,9 @@ pub fn export() -> Result<()> {
         architecture,
         ros_distribution: None,
     };
-    let recipe = json!({"schema":"rx.process-package-recipe.v1","package":"delivery/cycle","version":"0.1.0","publisher":"delivery-test-only","contracts":contracts,"targets":[target],"dependencies":[],"assets":[program,parameters]});
+    let mut assets = vec![program, parameters];
+    assets.extend(parameter_choices);
+    let recipe = json!({"schema":"rx.process-package-recipe.v1","package":"delivery/cycle","version":"0.1.0","publisher":"delivery-test-only","contracts":contracts,"targets":[target],"dependencies":[],"assets":assets});
     let policy = policy::Policy {
         additional_package_abis: vec![],
         schema: name("rx.package-verification-policy.v1"),
@@ -226,7 +286,7 @@ pub fn export() -> Result<()> {
                 },
             ]),
         }],
-        assets: [program, parameters]
+        assets: assets
             .into_iter()
             .map(|reference| policy::Asset {
                 path: PathBuf::from(format!("/config/assets/{}.bin", reference.sha256)),

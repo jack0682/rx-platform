@@ -17,6 +17,99 @@ pub enum Command {
         host: Name,
         origin: Name,
     },
+    HostRejoinContext {
+        identity: Identity,
+        host: Name,
+        origin: Name,
+    },
+    LookupHostRejoinProposal {
+        identity: Identity,
+        key: Id,
+        input: host_rejoin::Prepare,
+    },
+    ProposeHostRejoin {
+        identity: Identity,
+        key: Id,
+        input: host_rejoin::Prepare,
+        read: Box<host_recovery::VerifiedRead>,
+    },
+    GetHostRejoinProposal {
+        identity: Identity,
+        id: Id,
+    },
+    ApproveHostRebind {
+        identity: Identity,
+        key: Id,
+        input: host_rejoin::ApproveRebind,
+    },
+    GetHostRebind {
+        identity: Identity,
+        id: Id,
+    },
+    PrepareHostRebind {
+        id: Id,
+        read: Box<host_recovery::VerifiedRead>,
+        ttls: std::collections::BTreeMap<Name, Counter>,
+    },
+    PlanHostRebindGrant {
+        id: Id,
+        cell: Name,
+        read: Box<host_recovery::VerifiedRead>,
+    },
+    RecordHostRebindGrant {
+        id: Id,
+        cell: Name,
+        commit: Box<host_link::Commit>,
+        host_boot: Id,
+    },
+    CommitHostRebind {
+        id: Id,
+        read: Box<host_recovery::VerifiedRead>,
+    },
+    ReadyHostRebind {
+        host: Name,
+        cell: Name,
+        retired_session: Id,
+    },
+    ApproveRejoinSettlement {
+        identity: Identity,
+        key: Id,
+        command: host_rejoin::ApproveSettlement,
+    },
+    ApplyRejoinSettlement {
+        id: Id,
+        proof: Box<host_rejoin::VerifiedHandover>,
+    },
+    HostRejoinQueryPlan {
+        id: Id,
+        operation: Id,
+    },
+    RecordHostRejoinQuery {
+        query: Box<host_rejoin::VerifiedQuery>,
+    },
+    ApproveHostRejoin {
+        identity: Identity,
+        key: Id,
+        input: host_rejoin::Approve,
+    },
+    GetHostRejoinBinding {
+        identity: Identity,
+        id: Id,
+    },
+    PlanHostRejoinFence {
+        id: Id,
+        cell: Name,
+        read: Box<host_recovery::VerifiedRead>,
+    },
+    RecordHostRejoinFence {
+        id: Id,
+        cell: Name,
+        acknowledgment: FenceAcknowledgment,
+    },
+    RefreshHostRejoin {
+        id: Id,
+        read: Box<host_recovery::VerifiedRead>,
+    },
     LookupHostRecoveryProposal {
         identity: Identity,
         key: Id,
@@ -375,6 +468,8 @@ pub enum Command {
     ReplaceHostService(rx_application::service_health::Owner),
     PublishHostService(Box<rx_application::service_health::Publish>),
     IngestHostRead(Box<rx_application::observation::HostRead>),
+    RegisterObservationLink(Box<rx_application::observation_link::Register>),
+    IngestObservationRead(Box<rx_application::observation_link::Read>),
     CheckMaintainedConditions,
     ReportFact {
         identity: Identity,
@@ -498,6 +593,11 @@ pub enum Command {
         limit: usize,
     },
     PlanReconciliation {
+        identity: Identity,
+        operation: Id,
+        request: Id,
+    },
+    RefreshReconciliationCompletion {
         identity: Identity,
         operation: Id,
         request: Id,
@@ -634,6 +734,10 @@ pub enum Command {
         identity: Identity,
         run: Id,
     },
+    HostRebindRestrictions {
+        identity: Identity,
+        cell: Name,
+    },
     RuntimeRestrictions {
         identity: Identity,
         cell: Name,
@@ -663,6 +767,16 @@ pub enum Command {
         identity: Identity,
         key: Id,
         command: Box<SubmitWork>,
+    },
+    ApproveSettlement {
+        identity: Identity,
+        key: Id,
+        command: rx_application::settlement::Approve,
+    },
+    SettleResources {
+        identity: Identity,
+        authorization: Id,
+        command: ReleaseResources,
     },
     ReleaseResources {
         identity: Identity,
@@ -739,7 +853,17 @@ pub enum Command {
     },
 }
 pub enum Reply {
+    Settlement(Box<rx_application::settlement::Authorization>),
     HostRecoveryContext(Box<rx_application::host_recovery::Context>),
+    HostRejoinContext(Box<rx_application::host_rejoin::Context>),
+    OptionalHostRejoinProposal(Option<Box<host_rejoin::ProposalView>>),
+    HostRejoinProposal(Box<host_rejoin::ProposalView>),
+    HostRejoinQueryObservation(Box<host_rejoin::QueryObservation>),
+    HostRebind(Box<host_rejoin::Rebind>),
+    HostRebindView(Box<host_rejoin::RebindView>),
+    HostRebindReady(Option<Id>),
+    HostRejoinBinding(Box<host_rejoin::Binding>),
+    HostRejoinBindingView(Box<host_rejoin::BindingView>),
     HostRecoveryBinding(Box<rx_application::host_recovery::Binding>),
     OptionalHostRecoveryBinding(Option<Box<rx_application::host_recovery::Binding>>),
     HostRecoveryView(Box<rx_application::host_recovery::View>),
@@ -804,6 +928,7 @@ pub enum Reply {
     HostServiceOwners(Vec<rx_application::service_health::Owner>),
     HostServiceOwner(Box<rx_application::service_health::Owner>),
     Observations(rx_application::observation::BatchReceipt),
+    ObservationLink(Box<rx_application::observation_link::Link>),
     MaintainedRevoked(Vec<Name>),
     HostLink(Box<rx_application::host_link::Plan>),
     HostRegistration(Box<HostRegistration>),
@@ -838,6 +963,7 @@ pub enum Reply {
     Work(Box<Work>),
     ReconciliationWork(Vec<Work>),
     VersionedRun(Counter, Run),
+    HostRebindRestrictions(Box<host_rejoin::Restrictions>),
     RuntimeRestrictions(Box<rx_application::runtime_invalidation::RuntimeRestrictions>),
     OperatorStartContext(Box<rx_application::operator_start::StartContext>),
     OperatorStartAttempt(Box<rx_application::operator_start::AttemptContext>),
@@ -898,6 +1024,9 @@ impl<R: Repository + Send + 'static, C: Clock + 'static, A: QualificationAuthori
             | Command::PutPrincipal { .. }
             | Command::DeliveryAttention { .. }
             | Command::FinishFence { .. }
+            | Command::PlanHostRejoinFence { .. }
+            | Command::RecordHostRejoinFence { .. }
+            | Command::RefreshHostRejoin { .. }
             | Command::PlanHostRecoveryFence { .. }
             | Command::RecordHostRecoveryFence { .. }
             | Command::CommitHostRecovery { .. } => Priority::Control,
@@ -918,6 +1047,124 @@ impl<R: Repository + Send + 'static, C: Clock + 'static, A: QualificationAuthori
                 .engine
                 .host_recovery_context(&identity, &host, &origin)
                 .map(|v| Reply::HostRecoveryContext(Box::new(v))),
+            Command::HostRejoinContext {
+                identity,
+                host,
+                origin,
+            } => self
+                .engine
+                .host_rejoin_context(&identity, &host, &origin)
+                .map(|v| Reply::HostRejoinContext(Box::new(v))),
+            Command::LookupHostRejoinProposal {
+                identity,
+                key,
+                input,
+            } => self
+                .engine
+                .lookup_host_rejoin_proposal(&identity, &key, input)
+                .map(|v| Reply::OptionalHostRejoinProposal(v.map(Box::new))),
+            Command::ProposeHostRejoin {
+                identity,
+                key,
+                input,
+                read,
+            } => self
+                .engine
+                .propose_host_rejoin(&identity, &key, input, *read)
+                .map(|v| Reply::HostRejoinProposal(Box::new(v))),
+            Command::GetHostRejoinProposal { identity, id } => self
+                .engine
+                .host_rejoin_proposal(&identity, &id)
+                .map(|v| Reply::HostRejoinProposal(Box::new(v))),
+            Command::ApproveHostRebind {
+                identity,
+                key,
+                input,
+            } => self
+                .engine
+                .approve_host_rebind(&identity, &key, input)
+                .map(|v| Reply::HostRebindView(Box::new(v))),
+            Command::GetHostRebind { identity, id } => self
+                .engine
+                .host_rebind(&identity, &id)
+                .map(|v| Reply::HostRebindView(Box::new(v))),
+            Command::PrepareHostRebind { id, read, ttls } => self
+                .engine
+                .prepare_host_rebind(&id, *read, ttls)
+                .map(|v| Reply::HostRebind(Box::new(v))),
+            Command::PlanHostRebindGrant { id, cell, read } => self
+                .engine
+                .plan_host_rebind_grant(&id, &cell, *read)
+                .map(|v| Reply::HostLink(Box::new(v))),
+            Command::RecordHostRebindGrant {
+                id,
+                cell,
+                commit,
+                host_boot,
+            } => self
+                .engine
+                .record_host_rebind_grant(&id, &cell, *commit, &host_boot)
+                .map(|v| Reply::HostRebind(Box::new(v))),
+            Command::CommitHostRebind { id, read } => self
+                .engine
+                .commit_host_rebind(&id, *read)
+                .map(|v| Reply::HostRebind(Box::new(v))),
+            Command::ReadyHostRebind {
+                host,
+                cell,
+                retired_session,
+            } => self
+                .engine
+                .ready_host_rebind(&host, &cell, &retired_session)
+                .map(Reply::HostRebindReady),
+            Command::ApproveRejoinSettlement {
+                identity,
+                key,
+                command,
+            } => self
+                .engine
+                .approve_rejoin_settlement(&identity, &key, command)
+                .map(|v| Reply::Settlement(Box::new(v))),
+            Command::ApplyRejoinSettlement { id, proof } => self
+                .engine
+                .apply_rejoin_settlement(&id, *proof)
+                .map(|v| Reply::Settlement(Box::new(v))),
+            Command::HostRejoinQueryPlan { id, operation } => self
+                .engine
+                .host_rejoin_query_plan(&id, &operation)
+                .map(Reply::HostRecoveryQuery),
+            Command::RecordHostRejoinQuery { query } => self
+                .engine
+                .record_host_rejoin_query(*query)
+                .map(|v| Reply::HostRejoinQueryObservation(Box::new(v))),
+            Command::ApproveHostRejoin {
+                identity,
+                key,
+                input,
+            } => self
+                .engine
+                .approve_host_rejoin(&identity, &key, input)
+                .map(|v| Reply::HostRejoinBindingView(Box::new(v))),
+            Command::GetHostRejoinBinding { identity, id } => self
+                .engine
+                .host_rejoin_binding(&identity, &id)
+                .map(|v| Reply::HostRejoinBindingView(Box::new(v))),
+            Command::PlanHostRejoinFence { id, cell, read } => self
+                .engine
+                .plan_host_rejoin_fence(&id, &cell, *read)
+                .map(Reply::HostRecoveryFence),
+            Command::RecordHostRejoinFence {
+                id,
+                cell,
+                acknowledgment,
+            } => self
+                .engine
+                .record_host_rejoin_fence(&id, &cell, acknowledgment)
+                .map(|v| Reply::HostRejoinBinding(Box::new(v))),
+            Command::RefreshHostRejoin { id, read } => self
+                .engine
+                .refresh_host_rejoin(&id, *read)
+                .map(|v| Reply::HostRejoinBinding(Box::new(v))),
             Command::LookupHostRecoveryProposal {
                 identity,
                 key,
@@ -1500,6 +1747,14 @@ impl<R: Repository + Send + 'static, C: Clock + 'static, A: QualificationAuthori
                     .publish(*input, self.engine.current_time())?;
                 Ok(Reply::Done)
             }
+            Command::RegisterObservationLink(input) => self
+                .engine
+                .register_observation_link(*input)
+                .map(|v| Reply::ObservationLink(Box::new(v))),
+            Command::IngestObservationRead(input) => self
+                .engine
+                .ingest_observation_read(*input)
+                .map(Reply::Observations),
             Command::IngestHostRead(input) => self
                 .engine
                 .ingest_host_read(*input)
@@ -1708,6 +1963,14 @@ impl<R: Repository + Send + 'static, C: Clock + 'static, A: QualificationAuthori
                 .engine
                 .plan_reconciliation(&identity, &operation, &request)
                 .map(|p| Reply::ReconciliationPlan(Box::new(p))),
+            Command::RefreshReconciliationCompletion {
+                identity,
+                operation,
+                request,
+            } => self
+                .engine
+                .refresh_reconciliation_completion(&identity, &operation, &request)
+                .map(|v| Reply::Work(Box::new(v))),
             Command::UpdateReconciliation {
                 identity,
                 operation,
@@ -1903,6 +2166,10 @@ impl<R: Repository + Send + 'static, C: Clock + 'static, A: QualificationAuthori
                 .engine
                 .inspect_run(&identity, &run)
                 .map(|(r, v)| Reply::VersionedRun(r, v)),
+            Command::HostRebindRestrictions { identity, cell } => self
+                .engine
+                .host_rebind_restrictions(&identity, &cell)
+                .map(|v| Reply::HostRebindRestrictions(Box::new(v))),
             Command::RuntimeRestrictions { identity, cell } => self
                 .engine
                 .runtime_restrictions(&identity, &cell)
@@ -1942,6 +2209,22 @@ impl<R: Repository + Send + 'static, C: Clock + 'static, A: QualificationAuthori
                 .engine
                 .submit(&identity, key.as_str(), *command)
                 .map(|w| Reply::Work(Box::new(w))),
+            Command::ApproveSettlement {
+                identity,
+                key,
+                command,
+            } => self
+                .engine
+                .approve_settlement(&identity, key.as_str(), command)
+                .map(|value| Reply::Settlement(Box::new(value))),
+            Command::SettleResources {
+                identity,
+                authorization,
+                command,
+            } => self
+                .engine
+                .settle_resources(&identity, &authorization, command)
+                .map(|work| Reply::Work(Box::new(work))),
             Command::ReleaseResources {
                 identity,
                 key,

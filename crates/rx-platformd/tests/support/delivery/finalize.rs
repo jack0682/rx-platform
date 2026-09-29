@@ -197,6 +197,9 @@ fn negative(
     pool: &mut BTreeMap<Digest, Vec<u8>>,
 ) -> Result<CellConfiguration> {
     let mut cell = initial.clone();
+    for step in &mut cell.steps {
+        step.program_inputs = None;
+    }
     cell.id = name(NEGATIVE_CELL);
     cell.environment = Environment::Physical;
     cell.process = None;

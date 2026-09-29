@@ -121,7 +121,11 @@ pub fn plan(process: &ResolvedProcess, view: &ProgressView) -> Result<Frontier, 
             .bindings
             .get(binding)
             .ok_or("compiled action binding missing")?;
-        if progress.intent_digest != binding.intent.digest().map_err(|e| e.to_string())?
+        if !crate::program_inputs::accepts_digest(
+            &binding.intent,
+            binding.program_inputs.as_ref(),
+            progress.intent_digest,
+        )? || progress.operation.intent_digest() != progress.intent_digest
             || !ids.insert(progress.operation.id())
         {
             return Err("operation intent/activation correlation differs".into());

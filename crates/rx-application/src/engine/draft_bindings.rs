@@ -233,6 +233,7 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                 resolved.insert(
                     binding.clone(),
                     ActionBinding {
+                        program_inputs: selected.program_inputs.clone(),
                         host: selected.host.clone(),
                         intent: selected.intent.normalized().map_err(domain_error)?,
                     },
@@ -416,6 +417,7 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                     .get(step)
                     .ok_or(StoreError::Rejected(Reject::StaleRevision))?;
                 let action = ActionBinding {
+                    program_inputs: selected.program_inputs.clone(),
                     host: selected.host.clone(),
                     intent: selected.intent.normalized().map_err(domain_error)?,
                 };
@@ -458,7 +460,9 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                 "rx.internal.process-draft-document.v1",
             )?;
             let input = rx_process_contract::compile_input::CompileInput {
-                schema: name(if b.device_sources.is_empty() {
+                schema: name(if b.resolved.values().any(|a| a.program_inputs.is_some()) {
+                    "rx.process-compile-input.v3"
+                } else if b.device_sources.is_empty() {
                     "rx.process-compile-input.v1"
                 } else {
                     "rx.process-compile-input.v2"

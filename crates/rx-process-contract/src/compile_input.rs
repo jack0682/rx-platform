@@ -50,10 +50,17 @@ pub fn bindings_digest(
 }
 impl CompileInput {
     pub fn validate(&self) -> Result<ProcessSource, String> {
-        if !matches!(
-            (self.schema.as_str(), self.device_sources.is_empty()),
-            ("rx.process-compile-input.v1", true) | ("rx.process-compile-input.v2", false)
-        ) || self.source_revision.0 == 0
+        let inputs = self.bindings.values().any(|b| b.program_inputs.is_some());
+        let supported = if inputs {
+            self.schema.as_str() == "rx.process-compile-input.v3"
+        } else {
+            matches!(
+                (self.schema.as_str(), self.device_sources.is_empty()),
+                ("rx.process-compile-input.v1", true) | ("rx.process-compile-input.v2", false)
+            )
+        };
+        if !supported
+            || self.source_revision.0 == 0
             || self.binding_revision.0 == 0
             || self.device_sources.len() > 128
         {
@@ -65,6 +72,9 @@ impl CompileInput {
             || bindings_digest(&self.bindings, &self.device_sources)? != self.bindings_digest
         {
             return Err("compile input integrity differs".into());
+        }
+        for binding in self.bindings.values() {
+            crate::program_inputs::variants(&binding.intent, binding.program_inputs.as_ref())?;
         }
         let mut plans = std::collections::BTreeMap::new();
         for (alias, source) in &self.device_sources {

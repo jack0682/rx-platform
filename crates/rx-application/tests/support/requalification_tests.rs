@@ -1,7 +1,7 @@
 use super::*;
 use rx_application::requalification as q;
 #[path = "requalification_fixture.rs"]
-mod qsupport;
+pub(super) mod qsupport;
 fn setup() -> (Fixture, Identity, process_change::Change, qsupport::Fixture) {
     let (f, r, c, q, _p) = setup_sources();
     (f, r, c, q)
@@ -49,6 +49,7 @@ fn setup_sources_count(
 fn begin_input(f: &mut Fixture, c: &process_change::Change, p: &qsupport::Fixture) -> q::Begin {
     q::Begin {
         runtime_restrictions: BTreeMap::new(),
+        host_rebind_restrictions: BTreeMap::new(),
         id: id(),
         cell: c.cell.clone(),
         change: c.id.clone(),
