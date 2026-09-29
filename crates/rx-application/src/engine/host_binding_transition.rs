@@ -46,6 +46,45 @@ fn registered(tx: &mut dyn Transaction, record: &binding::Record) -> Result<Opti
     }
     Ok(current)
 }
+/// Pure standing decision; `current` is the (session, boot, delivery journal) registered
+/// for every intent cell, or None when the cells disagree or a registration is missing.
+fn standing(
+    record: Option<&binding::Record>,
+    runtime_boot: &Id,
+    plan_digest: &Digest,
+    current: Option<&(Id, Id, Id)>,
+) -> Standing {
+    let Some(r) = record.filter(|r| {
+        &r.intent.runtime_boot == runtime_boot
+            && &r.intent.host_plan_digest == plan_digest
+            && r.baseline.is_some()
+    }) else {
+        return Standing::BaselineRequired;
+    };
+    let Some((session, boot, journal)) = current else {
+        return Standing::CommitUnconfirmed;
+    };
+    let committed = (r.phase == binding::Phase::MetadataMatched)
+        .then_some(())
+        .and(r.observation.as_ref())
+        .map(|o| &o.snapshot);
+    if let Some(s) = committed {
+        return if &s.host_boot == boot
+            && &s.delivery_journal == journal
+            && r.observed_session.as_ref() == Some(session)
+        {
+            Standing::CommitCurrent
+        } else {
+            Standing::CommitUnconfirmed
+        };
+    }
+    match r.baseline.as_ref().map(|b| &b.snapshot) {
+        Some(b) if &b.host_boot == boot && &b.delivery_journal == journal => {
+            Standing::BaselineCurrent
+        }
+        _ => Standing::CommitUnconfirmed,
+    }
+}
 pub(super) fn standings(
     tx: &mut dyn Transaction,
     meta: &Installation,
@@ -65,42 +104,27 @@ pub(super) fn standings(
             }
             None => None,
         };
-        let standing = match record {
-            Some(r)
-                if r.intent.runtime_boot == meta.runtime_boot
-                    && r.intent.host_plan_digest == plan_digest
-                    && r.baseline.is_some() =>
-            {
-                let current = registered(tx, &r)?;
-                let baseline = r.baseline.as_ref().map(|b| &b.snapshot);
-                let committed = (r.phase == binding::Phase::MetadataMatched)
-                    .then_some(())
-                    .and(r.observation.as_ref())
-                    .map(|o| &o.snapshot);
-                match current {
-                    Some((session, boot, journal))
-                        if committed.is_some_and(|s| {
-                            s.host_boot == boot && s.delivery_journal == journal
-                        }) && r.observed_session.as_ref() == Some(&session) =>
-                    {
-                        Standing::CommitCurrent
-                    }
-                    Some((_, boot, journal))
-                        if committed.is_none()
-                            && baseline.is_some_and(|s| {
-                                s.host_boot == boot && s.delivery_journal == journal
-                            }) =>
-                    {
-                        Standing::BaselineCurrent
-                    }
-                    _ => Standing::CommitUnconfirmed,
-                }
-            }
-            _ => Standing::BaselineRequired,
+        let current = match &record {
+            Some(r) => registered(tx, r)?,
+            None => None,
         };
+        let standing = standing(
+            record.as_ref(),
+            &meta.runtime_boot,
+            &plan_digest,
+            current.as_ref(),
+        );
         result.insert(host.clone(), standing);
     }
     Ok(result)
+}
+fn unchanged_except_read_time(old: &binding::Record, new: &binding::Record) -> Result<bool> {
+    let value = |r: &binding::Record| {
+        let mut v = r.clone();
+        v.read_started = None;
+        serde_json::to_value(v).map_err(|e| StoreError::Integrity(e.to_string()))
+    };
+    Ok(value(old)? == value(new)?)
 }
 fn identity(c: &CellConfiguration) -> binding::CellIdentity {
     binding::CellIdentity {
@@ -354,6 +378,7 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             lifecycle::require_serving(tx)?;
             let actor = authorize(tx, identity_, meta, &now, None, Role::Host, false)?;
             let (revision, mut record) = read(tx, id)?;
+            let before = record.clone();
             if actor.id != record.intent.host
                 || record
                     .intent
@@ -427,9 +452,169 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                     };
                 }
             }
+            // The worker re-reads every step. A read that changes nothing but its start
+            // time is not new evidence and must not grow the record history or event log.
+            if unchanged_except_read_time(&before, &record)? {
+                return Ok(before);
+            }
             save(tx, "hostbindingintent", id, Some(revision), RECORD, &record)?;
             event(tx, "rx.event.host-binding-intent-observed.v1", &record)?;
             Ok(record)
         })
+    }
+}
+
+#[cfg(test)]
+mod standing_tests {
+    use super::{Standing, standing, unchanged_except_read_time};
+    use crate::host_binding_transition as binding;
+    use rx_domain::{host_configuration as data, types::*};
+    use std::collections::BTreeMap;
+    fn n(s: &str) -> Name {
+        Name::new(s).unwrap()
+    }
+    fn id(v: u8) -> Id {
+        Id::new(format!("00000000-0000-4000-8000-{v:012}")).unwrap()
+    }
+    fn at(t: u64) -> TimePoint {
+        TimePoint {
+            clock_id: "test/clock".into(),
+            ticks_ns: Counter(t),
+        }
+    }
+    const RUNTIME: u8 = 21;
+    const PLAN: [u8; 32] = [5; 32];
+    fn snapshot(boot: u8) -> data::Snapshot {
+        data::Snapshot {
+            schema: n("rx.host-process-configuration-snapshot.v1"),
+            host: n("host/test"),
+            host_boot: id(boot),
+            delivery_journal: id(2),
+            evidence_journal: Some(id(3)),
+            installation_identity: Some(Digest::from_bytes([1; 32])),
+            binding_commit: None,
+            binding_digest: Digest::from_bytes([2; 32]),
+            cells: vec![],
+        }
+    }
+    fn observation(boot: u8) -> data::Observation {
+        data::Observation {
+            schema: n("rx.host-process-configuration-observation.v1"),
+            snapshot: snapshot(boot),
+            receipt: None,
+            context_matches_current_host: false,
+            activation_authorized: false,
+        }
+    }
+    /// Baseline from Host boot 1 (session 31), P runtime RUNTIME, plan PLAN.
+    fn baselined() -> binding::Record {
+        let cells = BTreeMap::from([(
+            n("cell/a"),
+            binding::CellIdentity {
+                definition: Digest::from_bytes([3; 32]),
+                envelope: Digest::from_bytes([4; 32]),
+                environment: n("SIMULATION"),
+            },
+        )]);
+        binding::Record {
+            intent: binding::Intent {
+                request: id(9),
+                change: id(20),
+                host: n("host/test"),
+                cell: n("cell/a"),
+                host_plan_digest: Digest::from_bytes(PLAN),
+                before_configuration: Digest::from_bytes([6; 32]),
+                after_configuration: Digest::from_bytes([7; 32]),
+                before_cells: cells.clone(),
+                after_cells: cells,
+                runtime_boot: id(RUNTIME),
+                created_at: at(1),
+            },
+            phase: binding::Phase::BaselineRecorded,
+            baseline: Some(binding::Baseline {
+                snapshot: snapshot(1),
+                observed_at: at(2),
+                producer_session: id(31),
+            }),
+            observation: Some(observation(1)),
+            read_started: Some(at(2)),
+            observed_session: Some(id(31)),
+            issue: None,
+            created_by: n("release"),
+            activation_authorized: false,
+        }
+    }
+    /// Commit confirmed from Host boot 4 (session 34).
+    fn matched() -> binding::Record {
+        let mut r = baselined();
+        r.phase = binding::Phase::MetadataMatched;
+        r.observation = Some(observation(4));
+        r.observed_session = Some(id(34));
+        r
+    }
+    fn of(r: Option<&binding::Record>, current: Option<(u8, u8, u8)>) -> Standing {
+        let current = current.map(|(s, b, j)| (id(s), id(b), id(j)));
+        standing(r, &id(RUNTIME), &Digest::from_bytes(PLAN), current.as_ref())
+    }
+    #[test]
+    fn missing_intent_other_runtime_other_plan_or_no_baseline_require_a_baseline() {
+        assert_eq!(Standing::BaselineRequired, of(None, Some((31, 1, 2))));
+        let mut other_runtime = baselined();
+        other_runtime.intent.runtime_boot = id(22);
+        assert_eq!(
+            Standing::BaselineRequired,
+            of(Some(&other_runtime), Some((31, 1, 2)))
+        );
+        let mut other_plan = baselined();
+        other_plan.intent.host_plan_digest = Digest::from_bytes([8; 32]);
+        assert_eq!(
+            Standing::BaselineRequired,
+            of(Some(&other_plan), Some((31, 1, 2)))
+        );
+        let mut awaiting = baselined();
+        awaiting.baseline = None;
+        awaiting.phase = binding::Phase::AwaitingBaseline;
+        assert_eq!(
+            Standing::BaselineRequired,
+            of(Some(&awaiting), Some((31, 1, 2)))
+        );
+    }
+    #[test]
+    fn baseline_is_current_only_for_the_same_host_boot_and_journal() {
+        let r = baselined();
+        assert_eq!(Standing::BaselineCurrent, of(Some(&r), Some((31, 1, 2))));
+        // A reconnect within the same boot keeps the baseline current.
+        assert_eq!(Standing::BaselineCurrent, of(Some(&r), Some((32, 1, 2))));
+        // Restart without a confirmed commit, a changed journal or no registration.
+        assert_eq!(Standing::CommitUnconfirmed, of(Some(&r), Some((33, 3, 2))));
+        assert_eq!(Standing::CommitUnconfirmed, of(Some(&r), Some((31, 1, 5))));
+        assert_eq!(Standing::CommitUnconfirmed, of(Some(&r), None));
+    }
+    #[test]
+    fn a_commit_match_is_current_only_for_the_observed_session_boot_and_journal() {
+        let r = matched();
+        assert_eq!(Standing::CommitCurrent, of(Some(&r), Some((34, 4, 2))));
+        // A later restart or reconnect demotes the old match until it is read again.
+        assert_eq!(Standing::CommitUnconfirmed, of(Some(&r), Some((35, 5, 2))));
+        assert_eq!(Standing::CommitUnconfirmed, of(Some(&r), Some((35, 4, 2))));
+        // A match never falls back to the pre-commit baseline generation.
+        assert_eq!(Standing::CommitUnconfirmed, of(Some(&r), Some((31, 1, 2))));
+        assert_eq!(Standing::CommitUnconfirmed, of(Some(&r), None));
+    }
+    #[test]
+    fn only_the_read_start_time_is_ignored_when_deciding_a_reread_is_new_evidence() {
+        let old = matched();
+        let mut reread = old.clone();
+        reread.read_started = Some(at(99));
+        assert!(unchanged_except_read_time(&old, &reread).unwrap());
+        let mut issue = reread.clone();
+        issue.issue = Some(binding::Rejection::TransportUnavailable);
+        assert!(!unchanged_except_read_time(&old, &issue).unwrap());
+        let mut session = reread.clone();
+        session.observed_session = Some(id(40));
+        assert!(!unchanged_except_read_time(&old, &session).unwrap());
+        let mut snapshot = reread;
+        snapshot.observation = Some(observation(6));
+        assert!(!unchanged_except_read_time(&old, &snapshot).unwrap());
     }
 }
