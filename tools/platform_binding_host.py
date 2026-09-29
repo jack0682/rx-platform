@@ -40,6 +40,7 @@ class BindingHost:
         publisher_cert=put('publisher.pem',(fixture/Path(link['tls']['certificate']['path']).name).read_bytes())
         publisher_key=put('publisher.key',(fixture/Path(link['tls']['key']['path']).name).read_bytes())
         self.publisher={'uri':'https://platform:7443','server_name':'localhost','tls':{'certificate':publisher_cert,'key':publisher_key,'ca':authority}}
+        self.mounts=[]
         self.config=config
         (fixture/'startup.json').write_bytes(encoded(startup))
     def create_network(self):self.run('docker','network','create',self.network)
@@ -56,7 +57,7 @@ class BindingHost:
     def serve(self,startup):
         r=self.run
         r('docker','run','-d','--name',self.service,'--network',self.network,'--network-alias','binding-host','--read-only','--cap-drop','ALL','--security-opt','no-new-privileges','--tmpfs','/tmp:rw',
-            '-v',self.volumes[0]+':/config:ro','-v',self.volumes[1]+':/data','--entrypoint','/opt/rx/bin/rx-hostd',self.image,'run',startup)
+            '-v',self.volumes[0]+':/config:ro','-v',self.volumes[1]+':/data',*self.mounts,'--entrypoint','/opt/rx/bin/rx-hostd',self.image,'run',startup)
         until=time.monotonic()+30
         while True:
             state=json.loads(r('docker','inspect',self.service))[0];assert state['State']['Running'],subprocess.run(['docker','logs',self.service],stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True).stdout[-4000:]
@@ -81,7 +82,7 @@ class BindingHost:
     def hostd(self,*argv):
         """Run a stopped-Host maintenance command with the service's own identity and volumes."""
         reply=subprocess.run(['docker','run','--rm','--user','10001:10001','--network','none','--read-only','--tmpfs','/tmp:rw','-v',self.volumes[0]+':/config:ro','-v',self.volumes[1]+':/data',
-            '--entrypoint','/opt/rx/bin/rx-hostd',self.image,*argv],capture_output=True,text=True)
+            *self.mounts,'--entrypoint','/opt/rx/bin/rx-hostd',self.image,*argv],capture_output=True,text=True)
         if reply.returncode!=0:
             listing=subprocess.run(['docker','run','--rm','--user','0','--network','none','-v',self.volumes[0]+':/config:ro','--entrypoint','/bin/sh',self.image,'-c','ls -la /config /config/device-package'],capture_output=True,text=True)
             raise AssertionError((argv,reply.stdout[-2000:],reply.stderr[-4000:],listing.stdout[-3000:],listing.stderr[-1000:]))
@@ -109,6 +110,11 @@ class BindingHost:
         write('proposed-startup.json',proposed)
         self.put({n:local/n for n in ['host-binding-plan.json','proposed-bindings.json','device-package-policy.json','proposed-startup.json']})
         self.put({'device-package':Path(package),'device-package-assets':assets})
+        # The signed profile pins the prepared Python environment at an absolute path; install it there.
+        pinned=json.loads((Path(package)/'profile.json').read_text())['environment']
+        local_environment=Path(package).parent/'environment'
+        assert json.loads((local_environment/'environment.json').read_text())['environment']['path']==pinned
+        self.mounts=['-v',str(local_environment.resolve())+':'+pinned+':ro']
         return proposed
     def close(self):
         if os.environ.get('RX_KEEP_BINDING_HOST'):

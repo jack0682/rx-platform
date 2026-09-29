@@ -296,7 +296,13 @@ with tempfile.TemporaryDirectory(prefix='rx-platform-image-') as temporary:
                     def wait(predicate,label,timeout=30):
                         until=time.monotonic()+timeout
                         while True:
-                            value=predicate()
+                            try:value=predicate()
+                            except (OSError,urllib.error.URLError) as error:
+                                state=json.loads(run('docker','inspect',service))[0]['State']
+                                failure={'label':label,'error':str(error),'platform_state':state,'platform_log':subprocess.run(['docker','logs','--tail','80',service],stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True).stdout[-12000:],
+                                         'host_log':subprocess.run(['docker','logs','--tail','60',binding_host.service],stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True).stdout[-8000:]}
+                                args.evidence.with_suffix('.failure.json').write_text(json.dumps(failure,indent=2)+'\n')
+                                raise
                             if value:return value
                             if time.monotonic()>=until:
                                 failure={'label':label,'intents':intents(),'blockers':blockers()[2],'platform_log':run('docker','logs',service)[-8000:],

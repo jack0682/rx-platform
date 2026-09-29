@@ -38,5 +38,11 @@ a later boot of the Host demotes an earlier commit match until it is re-admitted
 confirmed again.
 
 This does not apply the change, dispatch Host configuration or authorize work. The live
-image acceptance with `--binding-commit` exercises the approval and the Host stop; it
-currently stops at the Host's signed Python package acquisition (see the rx_docs record).
+image acceptance with `--binding-commit` approves the re-admission, stops the Host normally,
+prepares and commits the Host binding with the P-issued request, restarts the Host on the
+proposed startup, and requires METADATA_MATCHED, a refreshed preparation fenced on the new
+boot, refused configure-hosts/apply, and demotion when the Host restarts again without a new
+approval.
+
+When the Host's producer session is replaced by a new boot, the P-side link now drops its
+workers and returns to linking (which needs a re-admission) instead of failing the runtime.
