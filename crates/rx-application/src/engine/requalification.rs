@@ -1,5 +1,6 @@
 use super::*;
 use crate::requalification as q;
+mod device_restrictions;
 mod runtime_restrictions;
 const POLICY: &str = "rx.internal.requalification-policy.v1";
 const JOB: &str = "rx.requalification-job.v1";
@@ -119,6 +120,7 @@ pub(super) fn current(tx: &mut dyn Transaction, meta: &Installation, j: &q::Job)
     }
     impact_current(tx, j)?;
     runtime_restrictions::current(tx, meta, j)?;
+    device_restrictions::current(tx, meta, j)?;
     for t in &j.request.cells {
         let (rev, cell): (_, Cell) = load(tx, "cell", &t.profile.cell, CELL)?;
         if rev != t.expected_revision
@@ -327,6 +329,7 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                 .as_ref()
                 .ok_or(StoreError::Integrity("application absent".into()))?;
             let restrictions = runtime_restrictions::select(tx, meta, &input, &c)?;
+            let device = device_restrictions::select(tx, meta, &input, &c)?;
             let impact_digest = cohort_impact(
                 tx,
                 &input.cell,
@@ -380,6 +383,7 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                         .filter(|b| {
                             !before.contains(&b.id)
                                 || input.runtime_restrictions.contains_key(&b.id)
+                                || input.device_restrictions.contains_key(&b.id)
                         })
                         .map(|b| b.id)
                         .collect(),
@@ -387,9 +391,14 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             }
             let j = q::Job {
                 request: q::Request {
-                    schema: name("rx.requalification-request.v2"),
+                    schema: name(if input.device_restrictions.is_empty() {
+                        "rx.requalification-request.v2"
+                    } else {
+                        "rx.requalification-request.v3"
+                    }),
                     impact_digest: Some(impact_digest),
                     runtime_restrictions: restrictions,
+                    device_restrictions: device,
                     id: input.id,
                     change: c.id,
                     change_revision: c.revision,
@@ -419,6 +428,7 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             };
             j.request.digest().map_err(StoreError::Invalid)?;
             qualification_activation::bind_runtime_restrictions(tx, meta, &j)?;
+            qualification_activation::bind_device_restrictions(tx, meta, &j)?;
             save(tx, "requalificationjob", &j.request.id, None, JOB, &j)?;
             event(tx, "rx.event.requalification-requested.v1", &j)?;
             remember(tx, &scope, fp, JOB, &j)?;

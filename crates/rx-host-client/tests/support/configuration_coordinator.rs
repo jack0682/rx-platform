@@ -569,6 +569,7 @@ pub async fn run(
             key: id(),
             input: requalification::Begin {
                 runtime_restrictions: BTreeMap::new(),
+                device_restrictions: BTreeMap::new(),
                 id: id(),
                 change: applied.id.clone(),
                 cell: cfg.id.clone(),

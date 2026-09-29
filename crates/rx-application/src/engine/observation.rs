@@ -373,7 +373,7 @@ fn record_fact(
                 None,
                 &doc("rx.internal.source-generation-loss.v1", &fact.evidence())?,
             )?;
-            invalidate_fact_dependents(tx, &fact, BlockReason::DeviceRestart)?;
+            invalidate_fact_dependents_device(tx, &fact, host)?;
             event(tx, "rx.event.source-generation-changed.v1", &fact)?;
         }
     } else {
