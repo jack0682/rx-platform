@@ -7,7 +7,7 @@ use crate::{
 const RECORD: &str = "rx.internal.host-binding-intent.v1";
 const REF: &str = "rx.internal.host-binding-intent-ref.v1";
 const BATCH: &str = "rx.host-binding-intent-batch.v1";
-fn read(tx: &mut dyn Transaction, id: &Id) -> Result<(Counter, binding::Record)> {
+pub(super) fn read(tx: &mut dyn Transaction, id: &Id) -> Result<(Counter, binding::Record)> {
     let (revision, value): (_, binding::Record) = load(tx, "hostbindingintent", id, RECORD)?;
     if value.intent.request != *id || value.activation_authorized {
         return Err(StoreError::Integrity(
@@ -32,12 +32,21 @@ pub(super) enum Standing {
     CommitCurrent,
 }
 fn registered(tx: &mut dyn Transaction, record: &binding::Record) -> Result<Option<(Id, Id, Id)>> {
+    // A registration is current only while its session is the Host's active producer
+    // session; a later boot of the Host makes every earlier registration stale.
+    let Some(row) = tx.get(&key("producer", &record.intent.host))? else {
+        return Ok(None);
+    };
+    let producer: EvidenceProducer = decode(&row, "rx.internal.evidence-producer.v1")?;
     let mut current = None;
     for cell in record.intent.before_cells.keys() {
         let Some(row) = tx.get(&key("host", (cell, &record.intent.host)))? else {
             return Ok(None);
         };
         let h: HostRegistration = decode(&row, HOST)?;
+        if h.session != producer.session || h.boot_id != producer.peer_boot {
+            return Ok(None);
+        }
         let tuple = (h.session, h.boot_id, h.delivery_journal);
         if current.as_ref().is_some_and(|old| old != &tuple) {
             return Ok(None);

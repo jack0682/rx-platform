@@ -163,14 +163,26 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                 .iter()
                 .map(|r| decode::<Cell>(r, CELL))
                 .collect::<Result<Vec<_>>>()?;
-            let matching: Vec<_> = cells
-                .iter()
-                .filter(|c| {
-                    c.configuration.definition.sha256 == definition
-                        && c.configuration.hosts.contains(&p.id)
-                        && p.cells.contains(&c.configuration.id)
-                })
-                .collect();
+            // A new boot under a binding re-admission may present the staged change's after
+            // definition for that one cell; link admission still checks the full generation.
+            let mut matching = vec![];
+            for c in &cells {
+                if !c.configuration.hosts.contains(&p.id) || !p.cells.contains(&c.configuration.id)
+                {
+                    continue;
+                }
+                let transition = super::host_readmission::governing_binding(
+                    tx,
+                    &p.id,
+                    &c.configuration.id,
+                    &producer.peer_boot,
+                )?;
+                if c.configuration.definition.sha256 == definition
+                    || transition.is_some_and(|t| t.after_definition == definition)
+                {
+                    matching.push(c);
+                }
+            }
             if matching.len() != 1 {
                 return reject(Reject::CapabilityMissing);
             }

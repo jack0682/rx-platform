@@ -23,6 +23,68 @@ pub(super) fn current(
     }
     Ok((!r.complete()).then_some((revision, r)))
 }
+pub(super) fn record(tx: &mut dyn Transaction, id: &Id) -> Result<ra::Record> {
+    let (_, r): (_, ra::Record) = load(tx, "hostreadmission", id, RECORD)?;
+    if &r.id != id {
+        return Err(StoreError::Integrity(
+            "Host readmission identity differs".into(),
+        ));
+    }
+    Ok(r)
+}
+/// Binding transition that governs `boot` of `host` for `cell`: a current approval for a
+/// boot other than the replaced one, or the re-admission this boot was already linked under.
+pub(super) fn governing_binding(
+    tx: &mut dyn Transaction,
+    host: &Name,
+    cell: &Name,
+    boot: &Id,
+) -> Result<Option<ra::BindingTransition>> {
+    let mut governing = current(tx, host)?
+        .map(|(_, r)| r)
+        .filter(|r| &r.previous_boot != boot);
+    if governing.is_none()
+        && let Some(row) = tx.get(&key("host-link-current", (host, cell)))?
+    {
+        let previous: Id = decode(&row, "rx.internal.host-link-id.v1")?;
+        let (_, plan): (_, Plan) = load(tx, "host-link-plan", &previous, PLAN)?;
+        if &plan.host_boot == boot
+            && let Some(r) = &plan.readmission
+        {
+            governing = Some(record(tx, r)?);
+        }
+    }
+    Ok(governing
+        .and_then(|r| r.binding)
+        .filter(|t| &t.cell == cell))
+}
+/// Configuration a Host admitted under `readmission` must present for `cell`. Only a
+/// binding transition for this cell whose change is still staged substitutes the change's
+/// after configuration; an applied change already made it current, and any other state
+/// falls back to the current configuration so a mismatching Host stays unadmitted.
+pub(super) fn expected_configuration(
+    tx: &mut dyn Transaction,
+    readmission: Option<&ra::Record>,
+    cell: &Cell,
+) -> Result<CellConfiguration> {
+    let Some(t) = readmission
+        .and_then(|r| r.binding.as_ref())
+        .filter(|t| t.cell == cell.configuration.id)
+    else {
+        return Ok(cell.configuration.clone());
+    };
+    let change = process_change::change(tx, &t.change, &t.cell)?;
+    if change.state != crate::process_change::State::Staged {
+        return Ok(cell.configuration.clone());
+    }
+    let after = process_change::read_config(tx, &change.after)?;
+    if after.definition.sha256 != t.after_definition {
+        return Err(StoreError::Integrity(
+            "binding transition definition differs".into(),
+        ));
+    }
+    Ok(after)
+}
 /// True when `previous` is the registration an approval replaces and `snapshot` is a
 /// different boot of the same Host storage (both journals kept).
 pub(super) fn covers(
@@ -146,6 +208,50 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                     return reject(Reject::Busy);
                 }
             }
+            let binding = match &input.binding_intent {
+                None => None,
+                Some(intent_id) => {
+                    let (_, b) = super::host_binding_transition::read(tx, intent_id)?;
+                    let change = process_change::change(tx, &b.intent.change, &b.intent.cell)?;
+                    let baseline = b
+                        .baseline
+                        .as_ref()
+                        .ok_or(StoreError::Rejected(Reject::CapabilityMissing))?;
+                    if b.intent.host != input.host
+                        || b.intent.runtime_boot != meta.runtime_boot
+                        || change.state != crate::process_change::State::Staged
+                        || change.preparation.is_none()
+                        || change
+                            .host_binding_plan
+                            .as_ref()
+                            .and_then(|p| p.digest().ok())
+                            != Some(b.intent.host_plan_digest)
+                        || b.intent
+                            .before_cells
+                            .keys()
+                            .cloned()
+                            .collect::<BTreeSet<_>>()
+                            != cells
+                    {
+                        return reject(Reject::StaleRevision);
+                    }
+                    // The baseline must describe exactly the generation being replaced.
+                    if baseline.snapshot.host_boot != input.previous_boot
+                        || baseline.snapshot.delivery_journal != input.delivery_journal
+                        || baseline.snapshot.evidence_journal.as_ref()
+                            != Some(&input.evidence_journal)
+                        || b.phase != crate::host_binding_transition::Phase::BaselineRecorded
+                    {
+                        return reject(Reject::ContinuityUnproven);
+                    }
+                    Some(ra::BindingTransition {
+                        intent: intent_id.clone(),
+                        change: change.id.clone(),
+                        cell: b.intent.cell.clone(),
+                        after_definition: b.intent.after_cells[&b.intent.cell].definition,
+                    })
+                }
+            };
             let record = ra::Record {
                 schema: name(ra::SCHEMA),
                 id: id(),
@@ -157,6 +263,7 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                 cells: cells.into_iter().map(|c| (c, None)).collect(),
                 approved_by: principal.id.clone(),
                 approved_at: now,
+                binding,
             };
             save(tx, "hostreadmission", &record.id, None, RECORD, &record)?;
             let pointer = key("hostreadmission-current", &record.host);

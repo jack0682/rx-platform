@@ -1,6 +1,7 @@
 """Isolated FILE_SIMULATION Host for the live Platform binding-reader acceptance."""
 import hashlib
 import json
+import os
 from pathlib import Path
 import ssl
 import subprocess
@@ -51,17 +52,67 @@ class BindingHost:
             '--entrypoint','/bin/sh',self.image,'-c','mkdir -p /data/runtime; chmod -R u+rwX,go-rwx /config; /opt/rx/bin/rx-hostd init /config/startup.json && chown -R 10001:10001 /config /data')
         r('docker','cp',str(self.fixture)+'/.',self.setup+':/config');r('docker','start','--attach',self.setup)
         assert json.loads(r('docker','inspect',self.setup))[0]['State']['ExitCode']==0
+        return self.serve('/config/startup.json')
+    def serve(self,startup):
+        r=self.run
         r('docker','run','-d','--name',self.service,'--network',self.network,'--network-alias','binding-host','--read-only','--cap-drop','ALL','--security-opt','no-new-privileges','--tmpfs','/tmp:rw',
-            '-v',self.volumes[0]+':/config:ro','-v',self.volumes[1]+':/data','--entrypoint','/opt/rx/bin/rx-hostd',self.image,'run','/config/startup.json')
-        until=time.monotonic()+20
+            '-v',self.volumes[0]+':/config:ro','-v',self.volumes[1]+':/data','--entrypoint','/opt/rx/bin/rx-hostd',self.image,'run',startup)
+        until=time.monotonic()+30
         while True:
-            state=json.loads(r('docker','inspect',self.service))[0];assert state['State']['Running'],r('docker','logs',self.service)
+            state=json.loads(r('docker','inspect',self.service))[0];assert state['State']['Running'],subprocess.run(['docker','logs',self.service],stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True).stdout[-4000:]
             reply=subprocess.run(['docker','exec',self.service,'cat','/data/runtime/host-status.json'],capture_output=True,text=True)
             if reply.returncode==0:
                 ready=json.loads(reply.stdout)
-                if ready['phase']=='SOFTWARE_READY_UNARMED':return ready
-            assert time.monotonic()<until;time.sleep(.1)
+                if ready['phase'].startswith('SOFTWARE_READY'):return ready
+            assert time.monotonic()<until,reply.stdout;time.sleep(.1)
+    def stop(self):
+        """Normal stop (SIGTERM) that leaves the Host StopSeal; the container is removed afterwards."""
+        self.run('docker','stop','--time','10',self.service)
+        state=json.loads(self.run('docker','inspect',self.service))[0]['State']
+        assert state['ExitCode']==0,(state,subprocess.run(['docker','logs',self.service],stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True).stdout[-4000:])
+        local=self.fixture/'stopped-status.json'
+        self.run('docker','cp',self.service+':/data/runtime/host-status.json',str(local))
+        self.run('docker','rm',self.service)
+        return json.loads(local.read_text())
+    def put(self,files):
+        """Copy files or directories (name -> local Path) into the Host configuration volume."""
+        for name,source in files.items():self.run('docker','cp',str(source),self.setup+':/config/'+name)
+        self.run('docker','run','--rm','--user','0','--network','none','-v',self.volumes[0]+':/config','--entrypoint','/bin/sh',self.image,'-c','chown -R 10001:10001 /config && chmod -R u+rwX,go-rwx /config')
+    def hostd(self,*argv):
+        """Run a stopped-Host maintenance command with the service's own identity and volumes."""
+        reply=subprocess.run(['docker','run','--rm','--user','10001:10001','--network','none','--read-only','--tmpfs','/tmp:rw','-v',self.volumes[0]+':/config:ro','-v',self.volumes[1]+':/data',
+            '--entrypoint','/opt/rx/bin/rx-hostd',self.image,*argv],capture_output=True,text=True)
+        if reply.returncode!=0:
+            listing=subprocess.run(['docker','run','--rm','--user','0','--network','none','-v',self.volumes[0]+':/config:ro','--entrypoint','/bin/sh',self.image,'-c','ls -la /config /config/device-package'],capture_output=True,text=True)
+            raise AssertionError((argv,reply.stdout[-2000:],reply.stderr[-4000:],listing.stdout[-3000:],listing.stderr[-1000:]))
+        return json.loads(reply.stdout)
+    def proposal(self,plan,package,policy):
+        """Write the approved plan and a proposed startup that changes only bindings and backend."""
+        target=plan['hosts'][self.config['host']];binding=json.loads((self.fixture/'bindings.json').read_text())[0]
+        binding.update(definition=plan['definition'],envelope=plan['envelope'],allowed_intents=target['required_intents'],
+                       scope_ids=sorted(plan['scopes']),condition_ids=sorted(target['required_conditions']))
+        local=self.fixture/'proposal';local.mkdir(exist_ok=True)
+        def write(name,value):
+            raw=encoded(value);(local/name).write_bytes(raw);return raw
+        write('host-binding-plan.json',plan)
+        bindings=write('proposed-bindings.json',[binding])
+        # The verification policy pins assets by absolute path; point them into the Host volume.
+        policy_value=json.loads(Path(policy).read_text());assets=local/'device-package-assets';assets.mkdir(exist_ok=True)
+        for asset in policy_value.get('assets',[]):
+            source=Path(asset['path']);(assets/source.name).write_bytes(source.read_bytes())
+            asset['path']='/config/device-package-assets/'+source.name
+        policy_raw=write('device-package-policy.json',policy_value)
+        proposed=json.loads(json.dumps(self.config))
+        proposed['bindings']={'path':'/config/proposed-bindings.json','sha256':hashlib.sha256(bindings).hexdigest()}
+        proposed['backend']={'kind':'PYTHON_SKILL_PACKAGE','directory':'/config/device-package','manifest_digest':target['device_packages'][0]['manifest'],
+                             'policy':{'path':'/config/device-package-policy.json','sha256':hashlib.sha256(policy_raw).hexdigest()}}
+        write('proposed-startup.json',proposed)
+        self.put({n:local/n for n in ['host-binding-plan.json','proposed-bindings.json','device-package-policy.json','proposed-startup.json']})
+        self.put({'device-package':Path(package),'device-package-assets':assets})
+        return proposed
     def close(self):
+        if os.environ.get('RX_KEEP_BINDING_HOST'):
+            print(json.dumps({'kept_binding_host':{'volumes':self.volumes,'setup':self.setup,'image':self.image}}));return
         subprocess.run(['docker','stop','--time','10',self.service],capture_output=True)
         for n in [self.service,self.setup]:subprocess.run(['docker','rm','-f',n],capture_output=True)
         for n in self.volumes:subprocess.run(['docker','volume','rm',n],capture_output=True)

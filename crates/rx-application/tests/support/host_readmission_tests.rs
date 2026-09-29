@@ -56,6 +56,7 @@ fn approve(r: &HostRegistration, evidence_journal: &Id) -> ra::Approve {
         previous_boot: r.boot_id.clone(),
         delivery_journal: r.delivery_journal.clone(),
         evidence_journal: evidence_journal.clone(),
+        binding_intent: None,
     }
 }
 fn continuity_unproven<T: std::fmt::Debug>(v: Result<T, StoreError>) {
@@ -173,4 +174,25 @@ fn readmission_requires_the_named_generation_and_both_kept_journals() {
     let next = restart(&mut f, &input, &journal);
     let plan = f.app.prepare_host_link(next).unwrap();
     f.app.commit_host_link(relink(&f, &plan, 2)).unwrap();
+}
+
+#[test]
+fn a_binding_readmission_needs_an_existing_intent_for_the_named_generation() {
+    let (mut f, input, first) = linked();
+    let journal = input.snapshot.evidence_journal.clone();
+    let release = release_identity(&mut f);
+    let mut unknown = approve(&first, &journal);
+    unknown.binding_intent = Some(id());
+    assert!(
+        f.app
+            .approve_host_readmission(&release, &id(), unknown)
+            .is_err()
+    );
+    // Without a binding transition a new boot must still present the current definition.
+    f.app
+        .approve_host_readmission(&release, &id(), approve(&first, &journal))
+        .unwrap();
+    let mut next = restart(&mut f, &input, &journal);
+    next.snapshot.definition = Digest::from_bytes([99; 32]);
+    assert!(f.app.prepare_host_link(next).is_err());
 }

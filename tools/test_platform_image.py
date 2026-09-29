@@ -2,9 +2,10 @@
 """Run only the new uncommissioned platform image, using isolated disposable volumes/certificates."""
 import argparse,hashlib,json,os,shutil,socket,ssl,subprocess,sys,tempfile,time,urllib.request,uuid
 from pathlib import Path
-parser=argparse.ArgumentParser();parser.add_argument('--image',default='rx-platform:runtime-draft');parser.add_argument('--evidence',required=True,type=Path);parser.add_argument('--package',type=Path);parser.add_argument('--package-policy',type=Path);parser.add_argument('--device-review-image');parser.add_argument('--device-review-source',type=Path);parser.add_argument('--binding-host-image');parser.add_argument('--host-unreachable-at-stop',action='store_true');args=parser.parse_args()
+parser=argparse.ArgumentParser();parser.add_argument('--image',default='rx-platform:runtime-draft');parser.add_argument('--evidence',required=True,type=Path);parser.add_argument('--package',type=Path);parser.add_argument('--package-policy',type=Path);parser.add_argument('--device-review-image');parser.add_argument('--device-review-source',type=Path);parser.add_argument('--binding-host-image');parser.add_argument('--host-unreachable-at-stop',action='store_true');parser.add_argument('--binding-commit',action='store_true');args=parser.parse_args()
 assert not args.binding_host_image or args.device_review_image
 assert not args.host_unreachable_at_stop or args.binding_host_image
+assert not args.binding_commit or (args.binding_host_image and not args.host_unreachable_at_stop)
 assert bool(args.device_review_image)==bool(args.device_review_source) and (not args.device_review_image or args.package)
 assert bool(args.package)==bool(args.package_policy), 'package and policy must be supplied together'
 root=Path(__file__).resolve().parents[1]
@@ -288,7 +289,61 @@ with tempfile.TemporaryDirectory(prefix='rx-platform-image-') as temporary:
                 assert 'HOST_BINDING_CHANGE_REQUIRED' in kinds and change_detail['change']['state']=='STAGED' and not change_detail['activation_authorized']
                 if not binding_host:
                     assert {'kind':'HOST_BINDING_BASELINE_REQUIRED','host':'host/sim'} in listed and change_detail['change']['preparation'] is None,listed
-                deployment={'process_intake':process_intake,'process_report':process_report,'process_decision':process_decision,'change':change_detail,'guard':deployment_denial,'status':'HOST_BINDING_CHANGE_REQUIRED','binding_intents':binding_intents,'same_intents_on_retry':True}
+                binding_commit=None
+                if args.binding_commit:
+                    # S3-S5: re-admit the committed Host generation and confirm the replacement.
+                    def intents():return api('/api/v1/process-change/host-binding-intents',binding_intent_request,reviewer_cookie)[0]
+                    def wait(predicate,label,timeout=30):
+                        until=time.monotonic()+timeout
+                        while True:
+                            value=predicate()
+                            if value:return value
+                            if time.monotonic()>=until:
+                                failure={'label':label,'intents':intents(),'blockers':blockers()[2],'platform_log':run('docker','logs',service)[-8000:],
+                                         'host_log':subprocess.run(['docker','logs',binding_host.service],stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True).stdout[-8000:]}
+                                args.evidence.with_suffix('.failure.json').write_text(json.dumps(failure,indent=2)+'\n')
+                                raise AssertionError(label+'; inspect '+str(args.evidence.with_suffix('.failure.json')))
+                            time.sleep(.2)
+                    intent=intents()[0];base=intent['baseline']['snapshot'];request_id=intent['intent']['request']
+                    readmission={'host':'host/sim','previous_boot':base['host_boot'],'delivery_journal':base['delivery_journal'],'evidence_journal':base['evidence_journal'],'binding_intent':request_id}
+                    try:api('/api/v1/hosts/readmission',{'request_key':str(uuid.uuid4()),'command':readmission},cookie)
+                    except urllib.error.HTTPError as denied:assert denied.code==403
+                    else:raise AssertionError('readmission accepted without ReleaseManager role')
+                    approval,_=api('/api/v1/hosts/readmission',{'request_key':str(uuid.uuid4()),'command':readmission},reviewer_cookie)
+                    assert approval['binding']['intent']==request_id and all(v is None for v in approval['cells'].values()),approval
+                    stopped_host=binding_host.stop()
+                    proposed=binding_host.proposal(change_detail['change']['host_binding_plan'],args.package,args.package_policy)
+                    host_argv=['/config/host-binding-plan.json','/config/startup.json','/config/proposed-startup.json',request_id]
+                    host_prepared=binding_host.hostd('prepare-binding-change',*host_argv)
+                    host_committed=binding_host.hostd('commit-binding-change',*host_argv)
+                    assert host_committed==binding_host.hostd('commit-binding-change',*host_argv),'commit retry must return the same record'
+                    committed_ready=binding_host.serve('/config/proposed-startup.json')
+                    matched=wait(lambda:[v for v in intents() if v['phase']=='METADATA_MATCHED'],'binding commit was not confirmed')[0]
+                    assert matched['observation']['snapshot']['host_boot']!=base['host_boot'] and not matched['activation_authorized'],matched
+                    change_detail,kinds,listed=wait(lambda:(lambda d:d if 'HOST_BINDING_COMMIT_UNCONFIRMED' not in d[1] else None)(blockers()),'standing did not reach COMMIT_CURRENT')
+                    assert 'HOST_BINDING_CHANGE_REQUIRED' in kinds and 'HOST_BINDING_BASELINE_REQUIRED' not in kinds,listed
+                    # S5: the fences of the replaced boot do not count; refresh fences the committed boot.
+                    refreshed,_=api('/api/v1/process-change/prepare',{'request_key':str(uuid.uuid4()),'command':{'target':transition(change_detail['change']),'refresh':True}},reviewer_cookie)
+                    assert refreshed['preparation']['attempt']!=change_detail['change']['preparation']['attempt'],refreshed
+                    change_detail,kinds,listed=wait(lambda:(lambda d:d if 'HOST_FENCE_UNCONFIRMED' not in d[1] and 'PREPARATION_STALE' not in d[1] else None)(blockers()),'refreshed fence not acknowledged by the committed boot')
+                    still_refused={}
+                    for route in ['/api/v1/process-change/configure-hosts','/api/v1/process-change/apply']:
+                        try:api(route,{'request_key':str(uuid.uuid4()),'command':transition(change_detail['change'])},reviewer_cookie)
+                        except urllib.error.HTTPError as blocked:assert blocked.code in (409,422);still_refused[route]={'status':blocked.code,'body':json.loads(blocked.read())}
+                        else:raise AssertionError(route+' accepted a binding change')
+                    confirmed_detail=change_detail
+                    # Counterexample: restarting the committed Host without a new re-admission demotes it.
+                    binding_host.stop();restarted_ready=binding_host.serve('/config/proposed-startup.json')
+                    demoted=wait(lambda:(lambda d:d if {'kind':'HOST_BINDING_COMMIT_UNCONFIRMED','host':'host/sim'} in d[2] else None)(blockers()),'restart without re-admission was not demoted')
+                    try:api('/api/v1/process-change/prepare',{'request_key':str(uuid.uuid4()),'command':{'target':transition(demoted[0]['change']),'refresh':True}},reviewer_cookie)
+                    except urllib.error.HTTPError as blocked:assert blocked.code in (409,422);demoted_refresh={'status':blocked.code,'body':json.loads(blocked.read())}
+                    else:raise AssertionError('refresh accepted a demoted Host')
+                    assert all(not v['activation_authorized'] for v in intents())
+                    change_detail=demoted[0]
+                    binding_commit={'approval':approval,'stopped_host':stopped_host,'proposed_backend':proposed['backend'],'host_prepared':host_prepared,'host_committed':host_committed,
+                                    'committed_ready':committed_ready,'matched':matched,'confirmed_blockers':confirmed_detail['blockers'],'refreshed_preparation':refreshed['preparation'],'still_refused':still_refused,
+                                    'restarted_ready':restarted_ready,'demoted_blockers':demoted[2],'demoted_refresh':demoted_refresh}
+                deployment={'binding_commit':binding_commit,'process_intake':process_intake,'process_report':process_report,'process_decision':process_decision,'change':change_detail,'guard':deployment_denial,'status':'HOST_BINDING_CHANGE_REQUIRED','binding_intents':binding_intents,'same_intents_on_retry':True}
 
 
                 final_cell,_=api('/api/v1/cell?id=cell%2Fa',cookie=cookie)
@@ -308,8 +363,8 @@ with tempfile.TemporaryDirectory(prefix='rx-platform-image-') as temporary:
         # Stop fences registered Hosts and waits a bounded time for their acknowledgement,
         # so a connected Host must leave no HOST_FENCE_UNCONFIRMED attention and exit 0.
         # A Host that is unreachable at stop must still be reported, with exit 2, after the bounded wait.
-        expected_attention=[{'cell':'cell/a','host':'host/sim','kind':'HOST_FENCE_UNCONFIRMED'}] if args.host_unreachable_at_stop else []
-        if args.host_unreachable_at_stop:assert stop_seconds>=4.5,stop_seconds
+        expected_attention=[{'cell':'cell/a','host':'host/sim','kind':'HOST_FENCE_UNCONFIRMED'}] if args.host_unreachable_at_stop or args.binding_commit else []
+        if expected_attention:assert stop_seconds>=4.5,stop_seconds
         assert stopped['State']['ExitCode']==(2 if expected_attention else 0),(stopped['State'],after['stop'],subprocess.run(['docker','logs','--tail','60',service],stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True).stdout[-6000:],stop_seconds)
         assert after['phase']=='PROCESS_STOPPED';assert after['stop']['lifecycle']['phase']=='STOP_COMMITTED';assert not after['physical_shutdown_assessed']
         assert after['stop']['attention']==expected_attention and after['stop']['attention_count']==str(len(expected_attention)),after['stop']

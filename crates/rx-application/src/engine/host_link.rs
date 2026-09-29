@@ -45,17 +45,37 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                 false,
             )?;
             let (revision, cell): (_, Cell) = load(tx, "cell", &snapshot.cell, CELL)?;
+            // Which re-admission governs this link: a current approval for a new boot, or the
+            // one an already re-admitted boot of this cell was linked under.
+            let approval = super::host_readmission::current(tx, &request.host)?.map(|(_, r)| r);
+            let mut governing = approval
+                .clone()
+                .filter(|r| r.previous_boot != snapshot.host_boot);
+            if governing.is_none()
+                && let Some(row) =
+                    tx.get(&key("host-link-current", (&request.host, &snapshot.cell)))?
+            {
+                let previous: Id = decode(&row, "rx.internal.host-link-id.v1")?;
+                let (_, plan): (_, Plan) = load(tx, "host-link-plan", &previous, PLAN)?;
+                if plan.host_boot == snapshot.host_boot
+                    && let Some(r) = &plan.readmission
+                {
+                    governing = Some(super::host_readmission::record(tx, r)?);
+                }
+            }
+            let expected =
+                super::host_readmission::expected_configuration(tx, governing.as_ref(), &cell)?;
             if producer.peer_boot != snapshot.host_boot
                 || producer.journal != snapshot.evidence_journal
                 || producer.cells.get(&snapshot.cell) != Some(&snapshot.definition)
-                || snapshot.definition != cell.configuration.definition.sha256
-                || snapshot.envelope != cell.configuration.envelope.sha256
+                || snapshot.definition != expected.definition.sha256
+                || snapshot.envelope != expected.envelope.sha256
                 || snapshot.environment.as_str()
-                    != match cell.configuration.environment {
+                    != match expected.environment {
                         Environment::Simulation => "SIMULATION",
                         Environment::Physical => "PHYSICAL",
                     }
-                || !cell.configuration.hosts.contains(&request.host)
+                || !expected.hosts.contains(&request.host)
             {
                 return reject(Reject::ContinuityUnproven);
             }
@@ -74,13 +94,12 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                     provenance,
                     snapshot,
                     &request.read_started,
-                    &cell.configuration,
+                    &expected,
                     &now,
                 )?;
             }
             let mut source_sessions = BTreeMap::new();
-            for spec in cell
-                .configuration
+            for spec in expected
                 .fact_specs
                 .iter()
                 .filter(|s| s.host == request.host)
@@ -134,7 +153,6 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             }
             // A different boot may replace a recorded registration only under an explicit
             // ReleaseManager re-admission naming that generation and both kept journals.
-            let approval = super::host_readmission::current(tx, &request.host)?.map(|(_, r)| r);
             let replaced = |h: &HostRegistration| {
                 approval.as_ref().is_some_and(|r| {
                     super::host_readmission::covers(
@@ -164,10 +182,16 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                     {
                         return reject(Reject::Busy);
                     }
+                    // A relink of the same re-admitted boot keeps its admission.
+                    readmission = governing.as_ref().map(|r| r.id.clone());
                 }
             }
-            let resources: Vec<_> = cell
-                .configuration
+            if expected.definition.sha256 != cell.configuration.definition.sha256
+                && readmission.is_none()
+            {
+                return reject(Reject::ContinuityUnproven);
+            }
+            let resources: Vec<_> = expected
                 .steps
                 .iter()
                 .filter(|s| s.host == request.host)
@@ -407,7 +431,11 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             let mut consumed = None;
             if let Some(row) = &old {
                 let old: HostRegistration = decode(row, HOST)?;
-                if let Some(approved) = &plan.readmission {
+                if let Some(approved) = plan
+                    .readmission
+                    .as_ref()
+                    .filter(|_| old.boot_id != registration.boot_id)
+                {
                     let (approval_revision, r) = super::host_readmission::current(tx, &plan.host)?
                         .ok_or(StoreError::Rejected(Reject::ContinuityUnproven))?;
                     if &r.id != approved
@@ -440,6 +468,13 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             } else if plan.readmission.is_some() {
                 return reject(Reject::ContinuityUnproven);
             }
+            let admitted = plan
+                .readmission
+                .as_ref()
+                .map(|id| super::host_readmission::record(tx, id))
+                .transpose()?;
+            let expected =
+                super::host_readmission::expected_configuration(tx, admitted.as_ref(), &cell)?;
             tx.put(&k, old.map(|r| r.revision), &doc(HOST, &registration)?)?;
             if let Some((approval_revision, r)) = consumed {
                 super::host_readmission::consume(tx, approval_revision, r, &plan.cell, &plan.id)?;
@@ -466,15 +501,7 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             )?;
             plan.bound = true;
             plan.valid_until = registration.grant.valid_until.clone();
-            baseline::create(
-                tx,
-                meta,
-                &producer,
-                &cell.configuration,
-                &plan,
-                &registration,
-                &now,
-            )?;
+            baseline::create(tx, meta, &producer, &expected, &plan, &registration, &now)?;
             save(tx, "host-link-plan", &plan.id, Some(revision), PLAN, &plan)?;
             event(tx, "rx.event.host-link-bound.v1", &registration)?;
             Ok(registration)
@@ -710,6 +737,12 @@ fn renewal_context(
         &plan.id,
         "rx.internal.host-link-receipt.v1",
     )?;
+    let admitted = plan
+        .readmission
+        .as_ref()
+        .map(|id| super::host_readmission::record(tx, id))
+        .transpose()?;
+    let expected = super::host_readmission::expected_configuration(tx, admitted.as_ref(), cell)?;
     if !plan.bound
         || r.epoch != cell.epoch
         || r.scopes != cell.scope_epochs
@@ -721,9 +754,8 @@ fn renewal_context(
         || r.grant.id != bound.registration.grant.id
         || r.grant.fence != plan.fence
         || r.grant.resources.iter().collect::<BTreeSet<_>>() != plan.resources.iter().collect()
-        || cell.configuration.definition.sha256 != plan.definition
-        || cell
-            .configuration
+        || expected.definition.sha256 != plan.definition
+        || expected
             .steps
             .iter()
             .filter(|s| s.host == plan.host)

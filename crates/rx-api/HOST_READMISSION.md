@@ -20,3 +20,23 @@ of the kept delivery journal with different fence content is an integrity confli
 Re-admission restores no grant, Arm, qualification, permit or Run. The blocks raised
 by the restart stay latched, so the cell remains unavailable for work until a
 separate resume/requalification. Physical state of the restarted Host is not assessed.
+
+## Binding transition
+
+An approval may also name `binding_intent`, a P-issued Host binding intent whose baseline
+describes exactly the generation being replaced (same boot, delivery journal and evidence
+journal), whose change is still staged and prepared, and whose cohort is the Host's full
+registered cell set. The re-admitted boot may then present the staged change's after
+configuration for that intent's cell instead of the current one: evidence-cell negotiation,
+link preparation, link commit and grant renewal all compare against it while the change
+stays staged. If the change leaves the staged state without being applied, the current
+configuration applies again and a Host carrying the after definition is no longer admitted.
+
+The binding standing of an intent now treats a registration as current only while its
+session is the Host's active producer session and its boot is the producer's peer boot, so
+a later boot of the Host demotes an earlier commit match until it is re-admitted and
+confirmed again.
+
+This does not apply the change, dispatch Host configuration or authorize work. The live
+image acceptance with `--binding-commit` exercises the approval and the Host stop; it
+currently stops at the Host's signed Python package acquisition (see the rx_docs record).

@@ -16,6 +16,20 @@ pub struct Approve {
     pub previous_boot: Id,
     pub delivery_journal: Id,
     pub evidence_journal: Id,
+    /// A P-issued binding intent whose committed replacement the new boot is expected to carry.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub binding_intent: Option<Id>,
+}
+
+/// Binding replacement the re-admitted boot may present for one cell: the staged change's
+/// after configuration instead of the cell's current one. Link admission grants no work.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BindingTransition {
+    pub intent: Id,
+    pub change: Id,
+    pub cell: Name,
+    pub after_definition: Digest,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -32,6 +46,8 @@ pub struct Record {
     pub cells: BTreeMap<Name, Option<Id>>,
     pub approved_by: Name,
     pub approved_at: TimePoint,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub binding: Option<BindingTransition>,
 }
 impl Record {
     pub fn complete(&self) -> bool {
