@@ -24,6 +24,8 @@ pub(super) struct ProcessingContext<'a> {
     pub meta: &'a Installation,
     pub now: &'a TimePoint,
 }
+/// Lifetime of a preflight ticket between file/key work and its commit.
+const TICKET_TTL_NS: u64 = 30_000_000_000;
 const PRINCIPAL: &str = "rx.internal.principal.v1";
 const SESSION: &str = "rx.internal.session.v1";
 const TERMINAL: &str = "rx.internal.terminal.v1";

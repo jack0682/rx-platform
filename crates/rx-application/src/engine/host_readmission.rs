@@ -156,7 +156,9 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                     true,
                 )?);
             }
-            let principal = principal.expect("non-empty");
+            let principal = principal.ok_or_else(|| {
+                StoreError::Integrity("readmission registrations empty after lookup".into())
+            })?;
             let (scope, fp) = request(
                 meta,
                 &principal,

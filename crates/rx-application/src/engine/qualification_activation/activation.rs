@@ -78,9 +78,7 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                 return Ok(b);
             }
             if b.revision != input.expected
-                || now
-                    .age_ns(&t.issued)
-                    .is_none_or(|age| age >= 30_000_000_000)
+                || now.age_ns(&t.issued).is_none_or(|age| age >= TICKET_TTL_NS)
                 || t.registration != b.registration
             {
                 return reject(Reject::StaleRevision);

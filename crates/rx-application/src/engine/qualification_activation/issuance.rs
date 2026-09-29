@@ -126,9 +126,7 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             if let Some(b) = prior(tx, &scope, fp, BATCH)? {
                 return Ok(b);
             }
-            if now
-                .age_ns(&t.issued)
-                .is_none_or(|age| age >= 30_000_000_000)
+            if now.age_ns(&t.issued).is_none_or(|age| age >= TICKET_TTL_NS)
                 || package_intake::current(tx, meta)?.as_ref() != Some(&t.registration)
             {
                 return reject(Reject::StaleRevision);
@@ -271,7 +269,9 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                 record_task(tx, &task, None)?;
                 tasks.push(task.id);
             }
-            let (terminal, certificate) = t.identity.terminal.clone().unwrap();
+            let (terminal, certificate) = t.identity.terminal.clone().ok_or_else(|| {
+                StoreError::Integrity("terminal missing after terminal authorization".into())
+            })?;
             let b = a::Batch {
                 issuance: input.clone(),
                 id: bid,

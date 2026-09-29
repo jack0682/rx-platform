@@ -83,7 +83,13 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                     .iter()
                     .find(|c| &c.cell == id)
                     .ok_or(StoreError::Integrity("missing issued cell".into()))?;
-                let observed = s.cells.iter().find(|c| &c.cell == id).unwrap();
+                let observed =
+                    s.cells
+                        .iter()
+                        .find(|c| &c.cell == id)
+                        .ok_or(StoreError::Integrity(
+                            "observed cell missing after cohort check".into(),
+                        ))?;
                 let (_, cell): (_, Cell) = load(tx, "cell", id, CELL)?;
                 let context = observed
                     .applied

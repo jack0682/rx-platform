@@ -498,7 +498,9 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             }
             let revision = b.revision;
             let before = digest(&b)?;
-            let step = b.fences.get_mut(cell).unwrap();
+            let step = b.fences.get_mut(cell).ok_or_else(|| {
+                StoreError::Integrity("recovery fence missing after lookup".into())
+            })?;
             step.phase = r::FencePhase::Acknowledged;
             step.acknowledgment = Some(ack);
             let current = approved_current(tx, meta, &now, &b);
@@ -639,7 +641,9 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             bindings.sort_by(|a, b| a.id.cmp(&b.id));
             let more = bindings.len() > limit;
             bindings.truncate(limit);
-            let next = more.then(|| bindings.last().unwrap().id.clone());
+            let next = more
+                .then(|| bindings.last().map(|b| b.id.clone()))
+                .flatten();
             let mut items = Vec::new();
             for b in bindings {
                 let current = view_current(tx, meta, &now, &b)?;
