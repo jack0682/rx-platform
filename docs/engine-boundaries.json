@@ -5,13 +5,14 @@
   "analysis_limit": "Textual resolution of super::, crate::engine:: and bare module paths that reach an engine module through the use super::* chain, outside #[cfg(test)] items. The checker does not type-check, follow re-exports, or see macro-generated paths, and it does not judge whether a reference is appropriate.",
   "groups": {
     "core": {
-      "description": "Generic runtime: admission, identity and access, lifecycle, evidence and delivery, dispatch, reconciliation and settlement, invalidation, observation, host link and recovery, peers, requests, queries, diagnostics, store restore.",
+      "description": "Generic runtime: admission, identity and access, lifecycle, evidence and delivery, dispatch, reconciliation and settlement, invalidation, observation, host link and recovery, peers, requests, queries, diagnostics, runtime and device restriction reads, store restore.",
       "may_reference": ["core"],
       "modules": [
         "mod",
         "access",
         "admission",
         "delivery",
+        "device_restrictions",
         "diagnostics",
         "dispatch",
         "evidence",

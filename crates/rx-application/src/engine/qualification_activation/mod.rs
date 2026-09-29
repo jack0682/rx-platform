@@ -10,6 +10,8 @@ const TASK: &str = "rx.qualification-host-task.v1";
 struct Owner {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     runtime_origin: Option<Digest>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    device_origin: Option<Digest>,
     block: Id,
     cell: Name,
     change: Id,
@@ -37,6 +39,26 @@ pub(super) fn record_blocks(
         } else {
             None
         };
+        // A DeviceRestart block cannot be added inside a change today; if a stored origin exists
+        // it is carried, but its absence is legacy and never fails ownership recording.
+        let device_origin = if b.reason == BlockReason::DeviceRestart {
+            match crate::device_invalidation::load(tx, &b.id)? {
+                Some(origin) => {
+                    if origin.cell != cell.configuration.id
+                        || canonical::bytes(&origin.block).map_err(domain_error)?
+                            != canonical::bytes(b).map_err(domain_error)?
+                    {
+                        return Err(StoreError::Integrity(
+                            "device block owner origin differs".into(),
+                        ));
+                    }
+                    Some(origin.digest().map_err(StoreError::Integrity)?)
+                }
+                None => None,
+            }
+        } else {
+            None
+        };
         save(
             tx,
             "changeblockowner",
@@ -45,6 +67,7 @@ pub(super) fn record_blocks(
             "rx.change-block-owner.v1",
             &Owner {
                 runtime_origin,
+                device_origin,
                 block: b.id.clone(),
                 cell: cell.configuration.id.clone(),
                 change: change.clone(),
@@ -102,6 +125,7 @@ pub(super) fn bind_runtime_restrictions(
                     change: job.request.change.clone(),
                     reason: BlockReason::RuntimeRestart,
                     runtime_origin: Some(digest),
+                    device_origin: None,
                 },
             )?;
         }
@@ -112,6 +136,76 @@ pub(super) fn bind_runtime_restrictions(
             None,
             "rx.runtime-restriction-binding.v1",
             &RuntimeRestrictionBinding {
+                block: origin.block.id.clone(),
+                cell: origin.cell.clone(),
+                change: job.request.change.clone(),
+                review: job.request.id.clone(),
+                request_digest,
+                origin_digest: digest,
+            },
+        )?;
+    }
+    Ok(())
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+struct DeviceRestrictionBinding {
+    block: Id,
+    cell: Name,
+    change: Id,
+    review: Id,
+    request_digest: Digest,
+    origin_digest: Digest,
+}
+const DEVICE_BINDING: &str = "rx.device-restriction-binding.v1";
+pub(super) fn bind_device_restrictions(
+    tx: &mut dyn Transaction,
+    meta: &Installation,
+    job: &q::Job,
+) -> Result<()> {
+    let request_digest = job.request.digest().map_err(StoreError::Invalid)?;
+    for origin in &job.request.device_restrictions {
+        let actual =
+            crate::device_invalidation::read_for_cell(tx, meta, &origin.cell, &origin.block.id)?
+                .ok_or(StoreError::Rejected(Reject::ContinuityUnproven))?;
+        let digest = origin.digest().map_err(StoreError::Integrity)?;
+        if actual.digest().map_err(StoreError::Integrity)? != digest {
+            return reject(Reject::StaleRevision);
+        }
+        let k = key("changeblockowner", &origin.block.id);
+        if let Some(row) = tx.get(&k)? {
+            let owner: Owner = decode(&row, "rx.change-block-owner.v1")?;
+            if owner.block != origin.block.id
+                || owner.cell != origin.cell
+                || owner.change != job.request.change
+                || owner.reason != BlockReason::DeviceRestart
+                || owner.device_origin != Some(digest)
+            {
+                return reject(Reject::Forbidden);
+            }
+        } else {
+            save(
+                tx,
+                "changeblockowner",
+                &origin.block.id,
+                None,
+                "rx.change-block-owner.v1",
+                &Owner {
+                    block: origin.block.id.clone(),
+                    cell: origin.cell.clone(),
+                    change: job.request.change.clone(),
+                    reason: BlockReason::DeviceRestart,
+                    runtime_origin: None,
+                    device_origin: Some(digest),
+                },
+            )?;
+        }
+        save(
+            tx,
+            "devicerestrictionbinding",
+            (&job.request.id, &origin.block.id),
+            None,
+            DEVICE_BINDING,
+            &DeviceRestrictionBinding {
                 block: origin.block.id.clone(),
                 cell: origin.cell.clone(),
                 change: job.request.change.clone(),
@@ -352,7 +446,32 @@ fn owned_clear(tx: &mut dyn Transaction, job: &q::Job, cell: &Cell, ids: &[Id]) 
             {
                 return reject(Reject::Forbidden);
             }
-        } else if owner.runtime_origin.is_some() {
+        } else if b.reason == BlockReason::DeviceRestart {
+            // A DeviceRestart block without provenance selected by this Job is never cleared.
+            let origin = job
+                .request
+                .device_restrictions
+                .iter()
+                .find(|o| o.block.id == *id && o.cell == cell.configuration.id)
+                .ok_or(StoreError::Rejected(Reject::Forbidden))?;
+            let digest = origin.digest().map_err(StoreError::Integrity)?;
+            let (_, binding): (_, DeviceRestrictionBinding) = load(
+                tx,
+                "devicerestrictionbinding",
+                (&job.request.id, id),
+                DEVICE_BINDING,
+            )?;
+            if owner.device_origin != Some(digest)
+                || binding.block != *id
+                || binding.cell != cell.configuration.id
+                || binding.change != job.request.change
+                || binding.review != job.request.id
+                || binding.origin_digest != digest
+                || binding.request_digest != job.request.digest().map_err(StoreError::Integrity)?
+            {
+                return reject(Reject::Forbidden);
+            }
+        } else if owner.runtime_origin.is_some() || owner.device_origin.is_some() {
             return reject(Reject::Forbidden);
         }
     }

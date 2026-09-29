@@ -29,8 +29,10 @@ of the kept delivery journal with different fence content is an integrity confli
 
 Re-admission restores no grant, Arm, qualification, permit or Run. The blocks raised
 by the restart stay latched, so the cell remains unavailable for work until a
-separate resume/requalification. A DeviceRestart block currently has no release path; this
-is recorded as an open core item in rx_docs `docs/implementation/host_readmission_delta.md`.
+separate resume/requalification. A DeviceRestart block with recorded provenance is released
+only by a requalification that selects it after the Host was re-linked
+([DEVICE_INVALIDATION_ORIGIN.md](../rx-application/DEVICE_INVALIDATION_ORIGIN.md)); a block
+raised before provenance was recorded has no release path.
 Physical state of the restarted Host is not assessed.
 
 ## Binding transition

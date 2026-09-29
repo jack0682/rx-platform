@@ -51,6 +51,7 @@ mod configuration;
 mod configuration_dispatch;
 mod delivery;
 mod device_binding;
+mod device_restrictions;
 mod device_review;
 mod diagnostics;
 mod dispatch;

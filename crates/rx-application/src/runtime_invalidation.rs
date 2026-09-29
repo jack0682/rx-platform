@@ -87,7 +87,7 @@ pub fn configuration_digest(
     let bytes = canonical::bytes(configuration).map_err(|e| e.to_string())?;
     Ok(rx_package::content_digest(&bytes))
 }
-fn boundary(revision: Counter, cell: &Cell) -> Result<CellBoundary> {
+pub(crate) fn boundary(revision: Counter, cell: &Cell) -> Result<CellBoundary> {
     Ok(CellBoundary {
         revision,
         epoch: cell.epoch,
@@ -96,7 +96,7 @@ fn boundary(revision: Counter, cell: &Cell) -> Result<CellBoundary> {
             .map_err(StoreError::Integrity)?,
     })
 }
-fn same<T: Serialize>(left: &T, right: &T) -> Result<bool> {
+pub(crate) fn same<T: Serialize>(left: &T, right: &T) -> Result<bool> {
     Ok(
         canonical::bytes(left).map_err(|e| StoreError::Integrity(e.to_string()))?
             == canonical::bytes(right).map_err(|e| StoreError::Integrity(e.to_string()))?,
