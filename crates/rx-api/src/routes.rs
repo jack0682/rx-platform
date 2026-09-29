@@ -257,6 +257,7 @@ fn build_router(
         .route("/api/v1/run/checkpoint", get(run_checkpoint))
         .route("/api/v1/run/checkpoint/artifact", get(checkpoint_artifact))
         .route("/api/v1/runs/start", post(start_run))
+        .route("/api/v1/runs/abandon", post(abandon_run))
         .route("/api/v1/cells/hold", post(hold))
         .route("/api/v1/cases", get(cases))
         .route("/api/v1/case", get(case_detail))
@@ -810,6 +811,26 @@ async fn create_run(
     match s
         .runtime
         .request(Command::CreateRun {
+            identity: current,
+            key: value.request_key,
+            command: value.command,
+        })
+        .await?
+    {
+        Reply::Run(run) => Ok(Json(run).into_response()),
+        _ => Err(mismatch()),
+    }
+}
+async fn abandon_run(
+    State(s): State<ApiState>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Response, ApiError> {
+    let current = identity(&s, &headers)?;
+    let value: Mutation<rx_application::AbandonRun> = decode(&body)?;
+    match s
+        .runtime
+        .request(Command::AbandonRun {
             identity: current,
             key: value.request_key,
             command: value.command,

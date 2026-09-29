@@ -746,6 +746,14 @@ pub struct PauseRunRequest {
     pub expected_run: Counter,
 }
 
+/// A responsible operator's record that a run is abandoned after investigation.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AbandonRun {
+    pub run: Id,
+    pub expected_run: Counter,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum ReconciliationState {
