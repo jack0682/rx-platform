@@ -20,11 +20,13 @@ Authentication binding combines the `RX-EXECUTOR-AUTH-v1` domain, certificate fi
 | Executor boot change | Revoke previous session, tombstone previous boot, create new session | Revoke the executor's cells and shared-resource impact scope |
 | Authentication binding change | Revoke previous session, create new session | Revoke existing authority; cell contracts must be renegotiated |
 | Late Open from a retired boot | Reject | Does not displace the latest session |
-| P restart | Reject historical runtime sessions. Even the current executor's same boot needs a new P session | Preserve existing authority revocation caused by P restart |
+| P restart | Reject historical runtime sessions. Even the current executor's same boot needs a new P session | Preserve existing authority revocation caused by P restart; add none when the restart is proven P-only (below) |
 
 The transition is one repository transaction. New executor registration also revokes active sessions issued to that principal by legacy/local paths. The new session, previous-session deactivation, boot tombstone, cell/run/mandate changes and fence records commit or roll back together.
 
 If no existing session or peer exists at initial registration, no unnecessary cell revocation is created. When replacing an existing session, related cells are left subject to an explicit restart decision rather than being treated merely as login state.
+
+**P-only restart.** The same executor process reconnecting after only P restarted is recognized as the [Host producer](PRODUCER_RUNTIME_RECONNECT.md) reconnect is: same peer boot and authentication binding, the previous peer session still active and of an earlier P runtime, on the same clock, no other active session for the principal, and every cell assigned to the executor carrying a latched RuntimeRestart block whose [origin](RUNTIME_INVALIDATION_ORIGIN.md) ends exactly that session's runtime, for the current configuration and scope vector. Then the new session replaces the old one and no AuthorityRevoked block is added: the executor's authority was already revoked, with provenance, by the restart, and the cells return to service through the requalification that selects that restriction. Without that proof (a new executor boot, a changed binding, an expired or inactive session, a second session, a missing or older origin) the executor's cells are revoked with AuthorityRevoked as before. Such a block has no provenance and no release path yet.
 
 `retiredexecutorboot` survives store reopening. P restart does not allow an old E boot to replace the latest executor again. Reconnection to P by the same current E boot is distinguished from an already retired E boot.
 

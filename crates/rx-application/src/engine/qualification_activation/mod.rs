@@ -107,7 +107,7 @@ pub(super) fn bind_runtime_restrictions(
             if owner.block != origin.block.id
                 || owner.cell != origin.cell
                 || owner.change != job.request.change
-                || owner.reason != BlockReason::RuntimeRestart
+                || owner.reason != origin.block.reason
                 || owner.runtime_origin != Some(digest)
             {
                 return reject(Reject::Forbidden);
@@ -123,7 +123,7 @@ pub(super) fn bind_runtime_restrictions(
                     block: origin.block.id.clone(),
                     cell: origin.cell.clone(),
                     change: job.request.change.clone(),
-                    reason: BlockReason::RuntimeRestart,
+                    reason: origin.block.reason,
                     runtime_origin: Some(digest),
                     device_origin: None,
                 },
@@ -422,7 +422,9 @@ fn owned_clear(tx: &mut dyn Transaction, job: &q::Job, cell: &Cell, ids: &[Id]) 
         {
             return reject(Reject::Forbidden);
         }
-        if b.reason == BlockReason::RuntimeRestart {
+        // A block with runtime provenance (a restart, or a stop's AuthorityRevoked) or device
+        // provenance clears only when this Job selected it and bound that exact origin.
+        if b.reason == BlockReason::RuntimeRestart || owner.runtime_origin.is_some() {
             let origin = job
                 .request
                 .runtime_restrictions
@@ -446,7 +448,7 @@ fn owned_clear(tx: &mut dyn Transaction, job: &q::Job, cell: &Cell, ids: &[Id]) 
             {
                 return reject(Reject::Forbidden);
             }
-        } else if b.reason == BlockReason::DeviceRestart {
+        } else if b.reason == BlockReason::DeviceRestart || owner.device_origin.is_some() {
             // A DeviceRestart block without provenance selected by this Job is never cleared.
             let origin = job
                 .request
@@ -471,8 +473,6 @@ fn owned_clear(tx: &mut dyn Transaction, job: &q::Job, cell: &Cell, ids: &[Id]) 
             {
                 return reject(Reject::Forbidden);
             }
-        } else if owner.runtime_origin.is_some() || owner.device_origin.is_some() {
-            return reject(Reject::Forbidden);
         }
     }
     Ok(())

@@ -8,12 +8,51 @@ fn bootstrap_applied() -> (
     qsupport::Fixture,
     review_support::Fixture,
 ) {
+    bootstrap_applied_after(Stop::Crash, Executor::Local)
+}
+/// How the first runtime ends before the next one opens.
+#[derive(Clone, Copy, PartialEq)]
+enum Stop {
+    /// The process just ends.
+    Crash,
+    /// The lifecycle stop request `rx-platformd` makes on SIGTERM.
+    Graceful,
+}
+/// How the executor authenticates to the next runtime.
+#[derive(Clone, Copy, PartialEq)]
+enum Executor {
+    /// A local session, as most fixtures use.
+    Local,
+    /// The same executor peer process reconnects (same boot and authentication binding).
+    PeerContinues,
+    /// A restarted executor peer process reconnects with a new boot.
+    PeerRestarted,
+}
+fn bootstrap_applied_after(
+    stop: Stop,
+    executor: Executor,
+) -> (
+    Fixture,
+    Identity,
+    process_change::Change,
+    qsupport::Fixture,
+    review_support::Fixture,
+) {
     let mut artifacts = None;
-    let mut f = fixture_configured((1, false, false, false, None, false, false), |cfg| {
+    let peer = executor != Executor::Local;
+    let mut f = fixture_configured((1, false, false, false, None, peer, false), |cfg| {
         let (cfg, bytes) = qsupport::configure(cfg);
         artifacts = Some(bytes);
         cfg
     });
+    let peer_boot = match f.app.inspect_service_peer(&f.executor) {
+        Ok(ServicePeer::Executor(p)) => Some(p.peer_boot),
+        _ => None,
+    };
+    if stop == Stop::Graceful {
+        f.app.request_runtime_stop().unwrap();
+        f.app.commit_runtime_process_stop().unwrap();
+    }
     let installation = f.app.installation.id.clone();
     let repository = f.app.into_repository();
     f.app = Engine::open(
@@ -29,11 +68,30 @@ fn bootstrap_applied() -> (
         .authenticated_session(&f.admin.principal, id(), expiry(99_000))
         .unwrap()
         .id;
-    f.executor.session = f
-        .app
-        .authenticated_session(&f.executor.principal, id(), expiry(99_000))
-        .unwrap()
-        .id;
+    f.executor.session = match executor {
+        Executor::Local => {
+            f.app
+                .authenticated_session(&f.executor.principal, id(), expiry(99_000))
+                .unwrap()
+                .id
+        }
+        Executor::PeerContinues | Executor::PeerRestarted => {
+            let boot = if executor == Executor::PeerContinues {
+                peer_boot.clone().unwrap()
+            } else {
+                id()
+            };
+            f.app
+                .open_executor_peer(&f.executor.principal, boot, Digest::from_bytes([71; 32]))
+                .unwrap()
+                .id
+        }
+    };
+    if peer {
+        f.app
+            .negotiate_executor_cell(&f.executor, f.configuration.definition.sha256)
+            .unwrap();
+    }
     f.operator.session = f
         .app
         .authenticated_terminal_user_session(
@@ -145,6 +203,110 @@ fn initial_runtime_restriction_is_signed_into_requalification_and_cleared_only_a
             .cells
             .iter()
             .all(|c| c.runs.is_empty())
+    );
+}
+fn reasons(f: &mut Fixture, cell: &Name) -> Vec<BlockReason> {
+    let (_, cell) = f.app.inspect_cell(&f.admin, cell).unwrap();
+    cell.blocks.iter().map(|b| b.reason).collect()
+}
+/// Begin a requalification selecting `selected` and take it through report and independent
+/// decision; returns the job, version and decision ready for issuance.
+fn approved(
+    f: &mut Fixture,
+    release: &Identity,
+    c: &process_change::Change,
+    p: &qsupport::Fixture,
+    selected: BTreeMap<Id, Digest>,
+) -> (q::Job, q::Version, q::Decision) {
+    let mut input = begin_input(f, c, p);
+    input.runtime_restrictions = selected;
+    let j = f.app.begin_requalification(release, &id(), input).unwrap();
+    ack(f, &j);
+    let prepared = prepared_report(f, &j, p, &id(), None);
+    let v = f.app.commit_requalification_report(prepared).unwrap();
+    let reviewer = add_identity(&mut f.app, &f.admin, "return-reviewer", &[Role::Verifier]);
+    let q::DecisionPreflight::Verify(t) = f
+        .app
+        .prepare_requalification_decision(&reviewer, &id(), decision(&v, &j))
+        .unwrap()
+    else {
+        panic!("decision")
+    };
+    let d = f
+        .app
+        .commit_requalification_decision(t.verify(&p.policy).unwrap())
+        .unwrap();
+    (j, v, d)
+}
+#[test]
+fn restarted_cells_return_to_service_after_a_crash_a_graceful_stop_or_a_continuing_executor_peer() {
+    for (stop, executor) in [
+        (Stop::Crash, Executor::Local),
+        (Stop::Graceful, Executor::Local),
+        (Stop::Crash, Executor::PeerContinues),
+        (Stop::Graceful, Executor::PeerContinues),
+    ] {
+        let (mut f, release, c, p, source) = bootstrap_applied_after(stop, executor);
+        // A graceful stop leaves one AuthorityRevoked block with provenance; a continuing
+        // executor peer adds none, because the new runtime already restricted its cells.
+        let revoked = reasons(&mut f, &c.cell)
+            .into_iter()
+            .filter(|r| *r == BlockReason::AuthorityRevoked)
+            .count();
+        assert_eq!(revoked, usize::from(stop == Stop::Graceful));
+        let view = f.app.runtime_restrictions(&f.admin, &c.cell).unwrap();
+        assert_eq!(view.restrictions.len(), 1 + revoked);
+        let selected: BTreeMap<_, _> = view
+            .restrictions
+            .iter()
+            .map(|r| (r.block.id.clone(), r.origin_digest.unwrap()))
+            .collect();
+        let (j, v, d) = approved(&mut f, &release, &c, &p, selected);
+        let batch = issue(&mut f, &release, &j, &v, &d, &p, &source);
+        confirm(&mut f, &batch);
+        activate(&mut f, &release, &batch, &p, &source);
+        let cell = f.app.inspect_cell(&f.admin, &c.cell).unwrap().1;
+        assert!(cell.blocks.is_empty(), "{:?}", reasons(&mut f, &c.cell));
+        assert!(cell.qualification.is_some());
+    }
+}
+#[test]
+fn a_graceful_stop_restriction_is_released_only_when_a_review_selects_it() {
+    let (mut f, release, c, p, _) = bootstrap_applied_after(Stop::Graceful, Executor::Local);
+    let view = f.app.runtime_restrictions(&f.admin, &c.cell).unwrap();
+    let stop = view
+        .restrictions
+        .iter()
+        .find(|r| r.block.reason == BlockReason::AuthorityRevoked)
+        .unwrap();
+    let origin = stop.origin.as_ref().unwrap();
+    // It names the stopped runtime, which is not the current one.
+    assert!(origin.stop.is_some());
+    assert_eq!(origin.previous_runtime_boot, origin.runtime_boot);
+    assert_ne!(origin.runtime_boot, f.app.installation.runtime_boot);
+    let restart_only: BTreeMap<_, _> = view
+        .restrictions
+        .iter()
+        .filter(|r| r.block.reason == BlockReason::RuntimeRestart)
+        .map(|r| (r.block.id.clone(), r.origin_digest.unwrap()))
+        .collect();
+    let (j, v, d) = approved(&mut f, &release, &c, &p, restart_only);
+    let input = issue_input(&mut f, &j, &v, &d);
+    assert!(matches!(
+        f.app.prepare_qualification_issue(&release, &id(), input),
+        Err(StoreError::Rejected(Rejection::Forbidden))
+    ));
+}
+#[test]
+fn a_restarted_executor_peer_still_revokes_its_cells_without_provenance() {
+    let (mut f, _, c, _, _) = bootstrap_applied_after(Stop::Crash, Executor::PeerRestarted);
+    assert!(reasons(&mut f, &c.cell).contains(&BlockReason::AuthorityRevoked));
+    // Not a runtime restriction: nothing selects it, so it has no release path here.
+    let view = f.app.runtime_restrictions(&f.admin, &c.cell).unwrap();
+    assert!(
+        view.restrictions
+            .iter()
+            .all(|r| r.block.reason == BlockReason::RuntimeRestart)
     );
 }
 #[test]
