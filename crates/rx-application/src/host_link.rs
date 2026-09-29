@@ -40,6 +40,9 @@ pub struct Plan {
     pub bound: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provenance: Option<BootstrapProvenance>,
+    /// Approved re-admission this plan uses to replace a registration of an earlier boot.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub readmission: Option<Id>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Commit {

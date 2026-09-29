@@ -203,6 +203,7 @@ fn build_router(
             "/api/v1/process-change/host-binding-intents",
             post(issue_host_binding_intents),
         )
+        .route("/api/v1/hosts/readmission", post(approve_host_readmission))
         .route("/api/v1/process-change/apply", post(apply_process_change))
         .route(
             "/api/v1/process-change/configure-hosts",
@@ -505,6 +506,25 @@ async fn overview(State(s): State<ApiState>, headers: HeaderMap) -> Result<Respo
         .await?
     {
         Reply::Overview(value) => Ok(Json(value).into_response()),
+        _ => Err(mismatch()),
+    }
+}
+async fn approve_host_readmission(
+    State(s): State<ApiState>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Response, ApiError> {
+    let value: Mutation<rx_application::host_readmission::Approve> = decode(&body)?;
+    match s
+        .runtime
+        .request(Command::ApproveHostReadmission {
+            identity: identity(&s, &headers)?,
+            key: value.request_key,
+            input: value.command,
+        })
+        .await?
+    {
+        Reply::HostReadmission(v) => Ok(Json(v).into_response()),
         _ => Err(mismatch()),
     }
 }

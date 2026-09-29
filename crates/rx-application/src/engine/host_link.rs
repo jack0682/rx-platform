@@ -132,19 +132,38 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             {
                 return reject(Reject::ContinuityUnproven);
             }
+            // A different boot may replace a recorded registration only under an explicit
+            // ReleaseManager re-admission naming that generation and both kept journals.
+            let approval = super::host_readmission::current(tx, &request.host)?.map(|(_, r)| r);
+            let replaced = |h: &HostRegistration| {
+                approval.as_ref().is_some_and(|r| {
+                    super::host_readmission::covers(
+                        r,
+                        h,
+                        &snapshot.host_boot,
+                        &snapshot.delivery_journal,
+                        &snapshot.evidence_journal,
+                    )
+                })
+            };
+            let mut readmission = None;
             if let Some(row) = tx.get(&key("host", (&snapshot.cell, &request.host)))? {
                 let previous: HostRegistration = decode(&row, HOST)?;
-                if previous.boot_id != snapshot.host_boot
-                    || previous.delivery_journal != snapshot.delivery_journal
-                    || previous.session != producer.session
-                    || previous.source_sessions != source_sessions
-                {
-                    return reject(Reject::ContinuityUnproven);
-                }
-                if previous.grant.valid_until.clock_id == now.clock_id
-                    && previous.grant.valid_until.ticks_ns > now.ticks_ns
-                {
-                    return reject(Reject::Busy);
+                if previous.boot_id != snapshot.host_boot && replaced(&previous) {
+                    readmission = approval.as_ref().map(|r| r.id.clone());
+                } else {
+                    if previous.boot_id != snapshot.host_boot
+                        || previous.delivery_journal != snapshot.delivery_journal
+                        || previous.session != producer.session
+                        || previous.source_sessions != source_sessions
+                    {
+                        return reject(Reject::ContinuityUnproven);
+                    }
+                    if previous.grant.valid_until.clock_id == now.clock_id
+                        && previous.grant.valid_until.ticks_ns > now.ticks_ns
+                    {
+                        return reject(Reject::Busy);
+                    }
                 }
             }
             let resources: Vec<_> = cell
@@ -158,6 +177,13 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                 .collect();
             for row in tx.scan("host/")? {
                 let other: HostRegistration = decode(&row, HOST)?;
+                if other.id == request.host
+                    && other.boot_id != snapshot.host_boot
+                    && replaced(&other)
+                {
+                    // The replaced generation holds no live authority any more.
+                    continue;
+                }
                 if other.id == request.host
                     && (other.boot_id != snapshot.host_boot
                         || other.delivery_journal != snapshot.delivery_journal
@@ -246,6 +272,7 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                 },
                 bound: false,
                 provenance: request.provenance,
+                readmission,
             };
             save(tx, "host-link-plan", &plan.id, None, PLAN, &plan)?;
             let previous = tx.get(&current_key)?;
@@ -377,17 +404,46 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             };
             let k = key("host", (&plan.cell, &plan.host));
             let old = tx.get(&k)?;
+            let mut consumed = None;
             if let Some(row) = &old {
                 let old: HostRegistration = decode(row, HOST)?;
-                if old.boot_id != registration.boot_id
+                if let Some(approved) = &plan.readmission {
+                    let (approval_revision, r) = super::host_readmission::current(tx, &plan.host)?
+                        .ok_or(StoreError::Rejected(Reject::ContinuityUnproven))?;
+                    if &r.id != approved
+                        || !super::host_readmission::covers(
+                            &r,
+                            &old,
+                            &registration.boot_id,
+                            &registration.delivery_journal,
+                            &plan.evidence_journal,
+                        )
+                    {
+                        return reject(Reject::ContinuityUnproven);
+                    }
+                    save(
+                        tx,
+                        "hostregistrationhistory",
+                        (&plan.cell, &plan.host, &old.boot_id),
+                        None,
+                        HOST,
+                        &old,
+                    )?;
+                    consumed = Some((approval_revision, r));
+                } else if old.boot_id != registration.boot_id
                     || old.delivery_journal != registration.delivery_journal
                     || old.session != registration.session
                     || old.source_sessions != registration.source_sessions
                 {
                     return reject(Reject::ContinuityUnproven);
                 }
+            } else if plan.readmission.is_some() {
+                return reject(Reject::ContinuityUnproven);
             }
             tx.put(&k, old.map(|r| r.revision), &doc(HOST, &registration)?)?;
+            if let Some((approval_revision, r)) = consumed {
+                super::host_readmission::consume(tx, approval_revision, r, &plan.cell, &plan.id)?;
+            }
             let k = key("fenceack", (&plan.host, &ack.journal, ack.sequence));
             let doc_ = doc("rx.internal.fence-ack.v1", ack)?;
             if let Some(old) = tx.get(&k)? {

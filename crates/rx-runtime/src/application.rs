@@ -166,6 +166,11 @@ pub enum Command {
         key: Id,
         input: process_change::Transition,
     },
+    ApproveHostReadmission {
+        identity: Identity,
+        key: Id,
+        input: rx_application::host_readmission::Approve,
+    },
     ObserveHostBindingIntent {
         identity: Identity,
         request: Id,
@@ -788,6 +793,7 @@ pub enum Reply {
 
     HostConfigurationBatch(configuration_dispatch::Batch),
     HostBindingIntents(Vec<rx_application::host_binding_transition::Record>),
+    HostReadmission(Box<rx_application::host_readmission::Record>),
     HostBindingIntent(Box<rx_application::host_binding_transition::Record>),
     HostConfigurationTasks(Vec<configuration_dispatch::Task>),
     HostConfigurationTask(Box<configuration_dispatch::Task>),
@@ -1160,6 +1166,14 @@ impl<R: Repository + Send + 'static, C: Clock + 'static, A: QualificationAuthori
                 .engine
                 .host_binding_read_issue(&identity, &request, issue)
                 .map(|v| Reply::HostBindingIntent(Box::new(v))),
+            Command::ApproveHostReadmission {
+                identity,
+                key,
+                input,
+            } => self
+                .engine
+                .approve_host_readmission(&identity, &key, input)
+                .map(|v| Reply::HostReadmission(Box::new(v))),
             Command::IssueHostBindingIntents {
                 identity,
                 key,
