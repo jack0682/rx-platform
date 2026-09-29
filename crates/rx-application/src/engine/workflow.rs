@@ -60,6 +60,91 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             Ok(run)
         })
     }
+    /// Record a responsible operator's abandonment of a run after investigation. Only a run that
+    /// is not executing may be abandoned: prepared without a start request, paused, or waiting
+    /// for recovery. Nothing of it may still be in flight, authorized or starting: every
+    /// operation has a recorded outcome, no mandate is active, no permit is issued and no start
+    /// attempt is pending. Abandoning releases nothing: consumed budget, held and quarantined
+    /// resources and open cases stay as they are. It only lets the gates that wait for every run
+    /// of a cell to be completed or abandoned proceed.
+    pub fn abandon_run(
+        &mut self,
+        identity: &Identity,
+        request_key: &str,
+        command: AbandonRun,
+    ) -> Result<Run> {
+        let clock = &self.clock;
+        let meta = &self.installation;
+        self.repository.transact(|tx| {
+            let now = clock.now();
+            let (_, run): (_, Run) = load(tx, "run", &command.run, RUN)?;
+            let principal = authorize(
+                tx,
+                identity,
+                meta,
+                &now,
+                Some(&run.cell),
+                Role::Operator,
+                true,
+            )?;
+            let (scope, fingerprint) = request(
+                meta,
+                &principal,
+                "Workflow.AbandonRun",
+                request_key,
+                &command,
+            )?;
+            if let Some(run) = prior(tx, &scope, fingerprint, RUN)? {
+                return Ok(run);
+            }
+            lifecycle::require_serving(tx)?;
+            let (revision, mut run): (_, Run) = load(tx, "run", &command.run, RUN)?;
+            check_revision(revision, command.expected_run)?;
+            match run.state {
+                RunState::Prepared if run.pending_attempt.is_none() => {}
+                RunState::Paused | RunState::RecoveryRequired => {}
+                RunState::Prepared | RunState::Executing => return reject(Reject::Busy),
+                RunState::Completed | RunState::Abandoned => {
+                    return reject(Reject::StaleRevision);
+                }
+            }
+            let mut mandates = BTreeSet::new();
+            for row in tx.scan("mandate/")? {
+                let m: Mandate = decode(&row, MANDATE)?;
+                if m.run == run.id {
+                    if m.state == MandateState::Active {
+                        return reject(Reject::Busy);
+                    }
+                    mandates.insert(m.id);
+                }
+            }
+            for row in tx.scan("permit/")? {
+                let p: Permit = decode(&row, PERMIT)?;
+                if mandates.contains(&p.mandate) && p.state == PermitState::Issued {
+                    return reject(Reject::Busy);
+                }
+            }
+            for row in tx.scan("attempt/")? {
+                let a: StartAttempt = decode(&row, ATTEMPT)?;
+                if a.run == run.id && matches!(a.status, StartStatus::Pending | StartStatus::Arming)
+                {
+                    return reject(Reject::Busy);
+                }
+            }
+            for row in tx.scan("work/")? {
+                let w: Work = decode(&row, WORK)?;
+                if w.run == run.id && w.operation.outcome() == Outcome::None {
+                    return reject(Reject::Busy);
+                }
+            }
+            run.state = RunState::Abandoned;
+            run.executor_session = None;
+            save(tx, "run", &run.id, Some(revision), RUN, &run)?;
+            remember(tx, &scope, fingerprint, RUN, &run)?;
+            event(tx, "rx.event.run-abandoned.v1", &(&principal.id, &run))?;
+            Ok(run)
+        })
+    }
     pub fn start_run(
         &mut self,
         identity: &Identity,
