@@ -885,10 +885,9 @@ async fn configured_package_intake_uses_real_terminal_https_and_retains_history_
             .unwrap();
         assert_eq!(page["packages"].as_array().unwrap().len(), 1);
         assert_eq!(page["packages"][0]["activation_authorized"], false);
-        assert_eq!(
-            page["packages"][0]["review_context_current"],
-            iteration == 0
-        );
+        // The restart reuses the same Store, policy and restored policy file, so the
+        // registration generation and the receipt's review context stay current.
+        assert_eq!(page["packages"][0]["review_context_current"], true);
         if iteration == 0 {
             let policy_path = &f.config.package_intake.as_ref().unwrap().policy.path;
             fs::write(policy_path, b"changed after startup").unwrap();

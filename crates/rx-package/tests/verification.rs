@@ -485,7 +485,8 @@ fn object_survives_source_change_restart_and_repeat_import_without_trust_persist
     let object = store.put(&package).unwrap();
     std::fs::remove_dir_all(&incoming).unwrap();
     assert_eq!(store.put(&package).unwrap(), object);
-    assert_eq!(std::fs::read_dir(&root).unwrap().count(), 3);
+    // store.lock, store.json, store-owner.json and one object
+    assert_eq!(std::fs::read_dir(&root).unwrap().count(), 4);
     drop(store);
     let store = store::Store::open_existing(&root).unwrap();
     assert_eq!(
@@ -508,7 +509,8 @@ fn object_survives_source_change_restart_and_repeat_import_without_trust_persist
         store.verify(&object, &wrong_target),
         Err(Error::Incompatible)
     ));
-    assert_eq!(std::fs::read_dir(&root).unwrap().count(), 3);
+    // store.lock, store.json, store-owner.json and one object
+    assert_eq!(std::fs::read_dir(&root).unwrap().count(), 4);
 }
 #[test]
 fn object_corruption_is_not_repaired_by_repeat_import() {
@@ -882,4 +884,41 @@ fn policy_document_requires_explicit_v2_schema_for_additional_abis() {
     assert!(extra.load().is_err());
     extra.additional_package_abis.clear();
     assert!(extra.load().is_err());
+}
+#[test]
+fn store_owner_persists_per_store_and_differs_between_stores() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("store");
+    let first = store::Store::open(&root).unwrap().owner().clone();
+    assert_eq!(store::Store::open(&root).unwrap().owner(), &first);
+    assert_eq!(store::Store::open_existing(&root).unwrap().owner(), &first);
+    let other = store::Store::open(&temp.path().join("other")).unwrap();
+    assert_ne!(other.owner(), &first);
+    drop(other);
+    for tampered in [
+        &b"{\"owner\":\"not-an-id\",\"schema\":\"rx.package-store-owner.v1\"}"[..],
+        &b"{\"owner\":\"00000000-0000-4000-8000-000000000001\",\"schema\":\"x\"}"[..],
+        &b"{\"extra\":1,\"owner\":\"00000000-0000-4000-8000-000000000001\",\"schema\":\"rx.package-store-owner.v1\"}"[..],
+    ] {
+        std::fs::write(root.join("store-owner.json"), tampered).unwrap();
+        assert!(store::Store::open(&root).is_err());
+        assert!(store::Store::open_existing(&root).is_err());
+    }
+}
+#[test]
+fn legacy_store_gains_one_owner_only_on_a_writable_open() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("store");
+    drop(store::Store::open(&root).unwrap());
+    // A store initialized before owner persistence has no owner file.
+    std::fs::remove_file(root.join("store-owner.json")).unwrap();
+    let a = store::Store::open_existing(&root).unwrap().owner().clone();
+    let b = store::Store::open_existing(&root).unwrap().owner().clone();
+    assert_ne!(a, b);
+    assert!(!root.join("store-owner.json").exists());
+    // A crash may leave a pending owner; the writable open replaces it once.
+    std::fs::write(root.join("store-owner.pending"), b"partial").unwrap();
+    let owner = store::Store::open(&root).unwrap().owner().clone();
+    assert!(!root.join("store-owner.pending").exists());
+    assert_eq!(store::Store::open_existing(&root).unwrap().owner(), &owner);
 }

@@ -110,9 +110,33 @@ impl Store {
             }
             Err(e) => return Err(io(e)),
         }
+        // The owner identifies this store, not this process, so verification bound to it
+        // survives a runtime restart. It is written once under the exclusive lock and never
+        // replaced; another store root always has a different owner. A read-only open of a
+        // store initialized before owner persistence keeps the former per-open owner.
+        let owner = match read_owner(&root)? {
+            Some(owner) => owner,
+            None if initialize => {
+                let owner = new_owner();
+                match root.remove_file(OWNER_PENDING) {
+                    Ok(()) => {}
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(e) => return Err(io(e)),
+                }
+                let marker = OwnerMarker {
+                    schema: OWNER_SCHEMA.into(),
+                    owner: owner.clone(),
+                };
+                let bytes = canonical::bytes(&marker).map_err(|e| Error::Invalid(e.to_string()))?;
+                write_new(&root, OWNER_PENDING, &bytes)?;
+                publish(&root, OWNER_PENDING, OWNER_FILE)?;
+                owner
+            }
+            None => new_owner(),
+        };
         sync(&root)?;
         Ok(Self {
-            owner: Id::new(uuid::Uuid::new_v4().to_string()).expect("uuid"),
+            owner,
             root,
             _ownership: ownership,
         })
@@ -214,6 +238,40 @@ impl Store {
             return Err(Error::Content("stored object identity differs".into()));
         }
         Ok(package)
+    }
+}
+const OWNER_FILE: &str = "store-owner.json";
+const OWNER_PENDING: &str = "store-owner.pending";
+const OWNER_SCHEMA: &str = "rx.package-store-owner.v1";
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct OwnerMarker {
+    schema: String,
+    owner: Id,
+}
+fn new_owner() -> Id {
+    Id::new(uuid::Uuid::new_v4().to_string()).expect("uuid")
+}
+fn read_owner(root: &Dir) -> Result<Option<Id>> {
+    match root.symlink_metadata(OWNER_FILE) {
+        Ok(_) => {
+            let mut options = regular_options();
+            options.read(true);
+            let f = root.open_with(OWNER_FILE, &options).map_err(io)?;
+            if !f.metadata().map_err(io)?.is_file() {
+                return Err(Error::Invalid("package store owner must be regular".into()));
+            }
+            let mut bytes = Vec::new();
+            f.take(1025).read_to_end(&mut bytes).map_err(io)?;
+            let marker = (bytes.len() <= 1024)
+                .then(|| canonical::decode_json::<OwnerMarker>(&bytes).ok())
+                .flatten()
+                .filter(|m| m.schema == OWNER_SCHEMA)
+                .ok_or_else(|| Error::Invalid("package store owner differs".into()))?;
+            Ok(Some(marker.owner))
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(io(e)),
     }
 }
 fn regular_options() -> OpenOptions {
