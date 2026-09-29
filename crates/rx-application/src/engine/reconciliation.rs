@@ -126,7 +126,9 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             } else {
                 None
             };
+            let settlement = super::settlement::pending_authorization(tx, operation)?;
             Ok(ReconciliationPlan {
+                settlement,
                 request: plan,
                 work,
                 cell_revision,
