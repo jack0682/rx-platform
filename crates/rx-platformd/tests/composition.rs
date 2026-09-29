@@ -1104,3 +1104,94 @@ async fn configured_process_review_records_separate_account_approval_over_termin
     stop.send(()).unwrap();
     task.await.unwrap().unwrap();
 }
+
+#[test]
+fn offline_backup_and_restore_rotate_the_store_generation_and_refuse_foreign_stores() {
+    use rx_application::persistence as p;
+    use rx_ports::Repository;
+    use rx_storage::SqliteRepository;
+    let f = fixture();
+    initialize(&f.path).unwrap();
+    let database = f.config.data_directory.join("platform.db");
+    let generation = |path: &Path| {
+        let mut store = SqliteRepository::open(path).unwrap();
+        let installation = store
+            .transact(|tx| {
+                p::decode::<Installation>(
+                    &tx.get(&p::name("installation/current"))?.unwrap(),
+                    "rx.internal.installation.v1",
+                )
+            })
+            .unwrap();
+        drop(store);
+        installation.store_generation
+    };
+    let original = generation(&database);
+    let backup_file = f._dir.path().join("backups").join("platform-1.db");
+    assert!(backup(&f.path, &backup_file).is_err(), "parent must exist");
+    fs::create_dir_all(backup_file.parent().unwrap()).unwrap();
+    let report = backup(&f.path, &backup_file).unwrap();
+    assert_eq!(report.installation_id, f.config.installation_id);
+    assert!(
+        backup(&f.path, &backup_file).is_err(),
+        "destination must be new"
+    );
+    let bytes = fs::read(&backup_file).unwrap();
+    assert_eq!(
+        report.sha256,
+        Digest::from_bytes(Sha256::digest(&bytes).into())
+    );
+
+    // Work recorded after the backup is gone after the restore; the generation is new.
+    let mut live = SqliteRepository::open(&database).unwrap();
+    live.transact(|tx| {
+        tx.put(
+            &p::name("test/after-backup"),
+            None,
+            &p::doc("rx.test.marker.v1", &json!({"after": true}))?,
+        )
+    })
+    .unwrap();
+    // A running runtime owns the database: both commands refuse it.
+    assert!(backup(&f.path, &f._dir.path().join("backups").join("busy.db")).is_err());
+    assert!(restore(&f.path, &backup_file).is_err());
+    drop(live);
+
+    let restored = restore(&f.path, &backup_file).unwrap();
+    assert_eq!(restored.restore.previous_generation, original);
+    assert_ne!(restored.restore.generation, original);
+    assert_eq!(restored.restore.backup_sha256, report.sha256);
+    assert_eq!(generation(&database), restored.restore.generation);
+    let mut store = SqliteRepository::open(&database).unwrap();
+    assert!(
+        store
+            .transact(|tx| tx.get(&p::name("test/after-backup")))
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        rx_application::store_restore::last_store_restore(&mut store)
+            .unwrap()
+            .map(|r| r.id),
+        Some(restored.restore.id.clone())
+    );
+    drop(store);
+    assert!(!f.config.data_directory.join("platform.db-wal").exists());
+    assert!(fs::read_dir(&f.config.data_directory).unwrap().all(|e| {
+        !e.unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with(".rx-restore-")
+    }));
+    // The backup file itself is untouched by the restore.
+    assert_eq!(fs::read(&backup_file).unwrap(), bytes);
+
+    // A backup of another installation is refused before the live store is touched.
+    let other = fixture();
+    initialize(&other.path).unwrap();
+    let foreign = f._dir.path().join("backups").join("foreign.db");
+    backup(&other.path, &foreign).unwrap();
+    assert!(restore(&f.path, &foreign).is_err());
+    assert_eq!(generation(&database), restored.restore.generation);
+    assert!(restore(&f.path, &f._dir.path().join("missing.db")).is_err());
+}

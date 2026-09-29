@@ -8770,3 +8770,5 @@ mod assignment_tests;
 
 #[path = "support/settlement.rs"]
 mod settlement_tests;
+#[path = "support/store_restore.rs"]
+mod store_restore_tests;

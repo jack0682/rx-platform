@@ -380,3 +380,46 @@ fn metadata_compatibility_upgrade_preserves_record_bytes_and_rejects_future_stor
         matches!(SqliteRepository::open(&path), Err(StoreError::Unavailable(message)) if message.contains("downgrade refused"))
     );
 }
+#[test]
+fn every_prior_schema_version_upgrades_to_current_and_keeps_rows() {
+    let migrations = [
+        include_str!("../migrations/0001.sql"),
+        include_str!("../migrations/0002.sql"),
+        include_str!("../migrations/0003.sql"),
+        include_str!("../migrations/0004.sql"),
+        include_str!("../migrations/0005.sql"),
+        include_str!("../migrations/0006.sql"),
+    ];
+    for applied in 1..migrations.len() {
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join(format!("from-{applied}.db"));
+        let old = rusqlite::Connection::open(&path).unwrap();
+        for migration in &migrations[..applied] {
+            old.execute_batch(migration).unwrap();
+        }
+        let version: i64 = old
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(version as usize, applied);
+        let bytes = rx_domain::canonical::bytes(&doc(7)).unwrap();
+        old.execute(
+            "INSERT INTO entities(key,revision,document) VALUES('legacy/row',1,?1)",
+            rusqlite::params![&bytes],
+        )
+        .unwrap();
+        drop(old);
+        let mut store = SqliteRepository::open(&path).unwrap();
+        store.check_integrity().unwrap();
+        let row = store
+            .transact(|tx| tx.get(&name("legacy/row")))
+            .unwrap()
+            .unwrap();
+        assert_eq!(rx_domain::canonical::bytes(&row.document).unwrap(), bytes);
+        drop(store);
+        let upgraded = rusqlite::Connection::open(&path).unwrap();
+        let version: i64 = upgraded
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(version, 6, "from {applied}");
+    }
+}

@@ -7,7 +7,23 @@ async fn main() {
             rx_platformd::initialize(Path::new(path)).map(|()| 0)
         }
         [command, path] if command == "run" => run(Path::new(path)).await,
-        _ => Err("usage: rx-platformd init|run ABSOLUTE_CONFIG_JSON".into()),
+        [command, path, target] if command == "backup" => {
+            rx_platformd::backup(Path::new(path), Path::new(target))
+                .and_then(|r| rx_platformd::maintenance::report_json(&r))
+                .map(|json| {
+                    println!("{json}");
+                    0
+                })
+        }
+        [command, path, source] if command == "restore" => {
+            rx_platformd::restore(Path::new(path), Path::new(source))
+                .and_then(|r| rx_platformd::maintenance::report_json(&r))
+                .map(|json| {
+                    println!("{json}");
+                    0
+                })
+        }
+        _ => Err("usage: rx-platformd init|run ABSOLUTE_CONFIG_JSON | backup ABSOLUTE_CONFIG_JSON NEW_BACKUP_FILE | restore ABSOLUTE_CONFIG_JSON BACKUP_FILE".into()),
     };
     match result {
         Ok(code) => std::process::exit(code),
