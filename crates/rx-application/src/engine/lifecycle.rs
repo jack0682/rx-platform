@@ -95,8 +95,9 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                 return reject(Reject::StaleEpoch);
             }
             if current.phase == Phase::Serving {
+                let stop = id();
                 current.phase = Phase::StopRequested;
-                current.stop_id = Some(id());
+                current.stop_id = Some(stop.clone());
                 current.requested_at = Some(clock.now());
                 tx.put(
                     &name("runtime/lifecycle"),
@@ -107,11 +108,21 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                 for row in tx.scan("cell/")? {
                     let cell: Cell = decode(&row, CELL)?;
                     if !touched.contains(&cell.configuration.id) {
-                        touched.extend(invalidate_closure(
+                        for (before_revision, before) in invalidate_closure_recording(
                             tx,
                             &cell.configuration.id,
                             BlockReason::AuthorityRevoked,
-                        )?);
+                        )? {
+                            touched.insert(before.configuration.id.clone());
+                            // Provenance lets a later explicit requalification release it.
+                            crate::runtime_invalidation::record_stop(
+                                tx,
+                                meta,
+                                &stop,
+                                before_revision,
+                                &before,
+                            )?;
+                        }
                     }
                 }
                 event(tx, "rx.event.runtime-stop-requested.v1", &current)?;
