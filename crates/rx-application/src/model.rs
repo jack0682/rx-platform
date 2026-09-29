@@ -778,6 +778,7 @@ pub struct ReconciliationRequest {
 }
 #[derive(Clone, Debug)]
 pub struct ReconciliationPlan {
+    pub settlement: Option<Id>,
     pub request: ReconciliationRequest,
     pub work: Work,
     pub cell_revision: Counter,

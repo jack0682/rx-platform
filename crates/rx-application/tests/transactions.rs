@@ -8767,3 +8767,6 @@ fn device_provenance_cannot_pass_the_legacy_process_review_even_when_actions_mat
 
 #[path = "support/assignment_tests.rs"]
 mod assignment_tests;
+
+#[path = "support/settlement.rs"]
+mod settlement_tests;

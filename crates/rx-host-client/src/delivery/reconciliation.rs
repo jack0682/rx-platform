@@ -152,19 +152,26 @@ impl Dispatcher {
         .await?;
         let key = Id::new(uuid::Uuid::new_v4().to_string())
             .map_err(|_| Error::Protocol("handover request key"))?;
-        match self
-            .call(Command::ReleaseResources {
+        let command = ReleaseResources {
+            operation: request.operation.clone(),
+            expected_operation: plan.work.operation.revision(),
+            expected_cell: plan.cell_revision,
+            observations,
+        };
+        let command = if let Some(authorization) = plan.settlement {
+            Command::SettleResources {
+                identity: self.identity.clone(),
+                authorization,
+                command,
+            }
+        } else {
+            Command::ReleaseResources {
                 identity: self.identity.clone(),
                 key,
-                command: ReleaseResources {
-                    operation: request.operation.clone(),
-                    expected_operation: plan.work.operation.revision(),
-                    expected_cell: plan.cell_revision,
-                    observations,
-                },
-            })
-            .await
-        {
+                command,
+            }
+        };
+        match self.call(command).await {
             Ok(Reply::Work(work)) if work.operation.disposition() == Disposition::Released => {
                 self.query_state(request, ReconciliationState::Complete, None)
                     .await?;
@@ -186,7 +193,8 @@ impl Dispatcher {
                 .await?;
                 Ok(false)
             }
-            Err(Error::Writer(WriterError::Rejected(StoreError::Rejected(_)))) => {
+            Err(error @ Error::Writer(WriterError::Rejected(StoreError::Rejected(_)))) => {
+                self.report_error(&error);
                 self.query_state(
                     request,
                     ReconciliationState::Attention,
