@@ -504,13 +504,20 @@ impl ConnectionService {
         }
     }
     async fn producer_replaced(&self, connected: &ConnectedHost) -> bool {
-        matches!(
-            self.runtime
-                .request(Command::CurrentEvidenceProducer(self.configuration.host.clone()))
-                .await,
-            Ok(Reply::Producer(p)) if p.session != connected.identity().session
-        )
+        let reply = self
+            .runtime
+            .request(Command::CurrentEvidenceProducer(
+                self.configuration.host.clone(),
+            ))
+            .await;
+        session_replaced(reply.ok(), &connected.identity().session)
     }
+}
+/// A failed link is a Host generation replacement only when P positively reports a
+/// different current producer session. A missing producer, an unreadable ledger or the
+/// same session keep the failure a P failure, so it is never silently retried.
+fn session_replaced(reply: Option<Reply>, bound: &Id) -> bool {
+    matches!(reply, Some(Reply::Producer(p)) if &p.session != bound)
 }
 
 #[cfg(test)]
@@ -532,6 +539,36 @@ mod tests {
         fn status(&self) -> Status {
             Status::Running
         }
+    }
+    fn producer(session: &str) -> Reply {
+        Reply::Producer(rx_application::EvidenceProducer {
+            principal: Name::new("host/test").unwrap(),
+            session: Id::new(session).unwrap(),
+            peer_boot: Id::new("00000000-0000-4000-8000-000000000002").unwrap(),
+            journal: Id::new("00000000-0000-4000-8000-000000000003").unwrap(),
+            authentication_binding: Digest::from_bytes([4; 32]),
+            cells: Default::default(),
+        })
+    }
+    #[test]
+    fn only_a_reported_new_producer_session_counts_as_a_replaced_generation() {
+        let bound = Id::new("00000000-0000-4000-8000-000000000001").unwrap();
+        // A new Host boot opened a different producer session: relink, do not stop P.
+        assert!(session_replaced(
+            Some(producer("00000000-0000-4000-8000-000000000009")),
+            &bound
+        ));
+        // The same session failing is a genuine failure of this link.
+        assert!(!session_replaced(Some(producer(bound.as_str())), &bound));
+        // Missing or unreadable producer state never proves a replacement.
+        assert!(!session_replaced(None, &bound));
+        assert!(!session_replaced(
+            Some(Reply::Time(TimePoint {
+                clock_id: "test/clock".into(),
+                ticks_ns: Counter(1),
+            })),
+            &bound
+        ));
     }
     #[tokio::test]
     async fn closed_owner_while_waiting_for_producer_stops_without_connecting() {

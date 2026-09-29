@@ -196,3 +196,31 @@ fn a_binding_readmission_needs_an_existing_intent_for_the_named_generation() {
     next.snapshot.definition = Digest::from_bytes([99; 32]);
     assert!(f.app.prepare_host_link(next).is_err());
 }
+
+#[test]
+fn readmission_waits_until_the_replaced_generation_holds_no_executing_work() {
+    let (mut f, input, first) = linked();
+    f.registrations.push(first.clone());
+    let (host, configuration) = (f.hosts[0].clone(), f.configuration.clone());
+    report_ready(&mut f.app, &host, &configuration, &first);
+    let run = start(&mut f, 1);
+    assert_eq!(run.state, RunState::Executing);
+    let a = activation(&mut f, &run);
+    let work = submit(&mut f, &a, id().as_str()).unwrap();
+    assert!(matches!(
+        work.operation.outcome(),
+        rx_domain::operation::Outcome::None
+    ));
+    let journal = input.snapshot.evidence_journal.clone();
+    let release = release_identity(&mut f);
+    // A restart never proves that accepted work did not act: no approval is recorded.
+    for _ in 0..2 {
+        assert!(matches!(
+            f.app
+                .approve_host_readmission(&release, &id(), approve(&first, &journal)),
+            Err(StoreError::Rejected(Rejection::Busy))
+        ));
+    }
+    let next = restart(&mut f, &input, &journal);
+    continuity_unproven(f.app.prepare_host_link(next));
+}
