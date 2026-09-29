@@ -2,11 +2,12 @@
 """Run only the new uncommissioned platform image, using isolated disposable volumes/certificates."""
 import argparse,hashlib,json,os,shutil,socket,ssl,subprocess,sys,tempfile,time,urllib.request,uuid
 from pathlib import Path
-parser=argparse.ArgumentParser();parser.add_argument('--image',default='rx-platform:runtime-draft');parser.add_argument('--evidence',required=True,type=Path);parser.add_argument('--package',type=Path);parser.add_argument('--package-policy',type=Path);parser.add_argument('--device-review-image');parser.add_argument('--device-review-source',type=Path);parser.add_argument('--binding-host-image');parser.add_argument('--host-unreachable-at-stop',action='store_true');parser.add_argument('--binding-commit',action='store_true');parser.add_argument('--restart-platform',action='store_true');args=parser.parse_args()
+parser=argparse.ArgumentParser();parser.add_argument('--image',default='rx-platform:runtime-draft');parser.add_argument('--evidence',required=True,type=Path);parser.add_argument('--package',type=Path);parser.add_argument('--package-policy',type=Path);parser.add_argument('--device-review-image');parser.add_argument('--device-review-source',type=Path);parser.add_argument('--binding-host-image');parser.add_argument('--host-unreachable-at-stop',action='store_true');parser.add_argument('--binding-commit',action='store_true');parser.add_argument('--restart-platform',action='store_true');parser.add_argument('--host-restart-before-commit',action='store_true');args=parser.parse_args()
 assert not args.binding_host_image or args.device_review_image
 assert not args.host_unreachable_at_stop or args.binding_host_image
 assert not args.binding_commit or (args.binding_host_image and not args.host_unreachable_at_stop)
 assert not args.restart_platform or args.binding_commit
+assert not args.host_restart_before_commit or args.binding_commit
 assert bool(args.device_review_image)==bool(args.device_review_source) and (not args.device_review_image or args.package)
 assert bool(args.package)==bool(args.package_policy), 'package and policy must be supplied together'
 root=Path(__file__).resolve().parents[1]
@@ -356,11 +357,33 @@ with tempfile.TemporaryDirectory(prefix='rx-platform-image-') as temporary:
                         change_detail,kinds,listed=wait(lambda:(lambda d:d if 'HOST_FENCE_UNCONFIRMED' not in d[1] and 'PREPARATION_STALE' not in d[1] else None)(blockers()),'fence after P restart not acknowledged')
                         platform_restart={'stale_blockers':stale[2],'unadopted_refresh':unadopted_refresh,'adopted':adopted,'refreshed':refreshed_after_restart['preparation']}
                     intent=intents()[0];base=intent['baseline']['snapshot'];request_id=intent['intent']['request']
-                    readmission={'host':'host/sim','previous_boot':base['host_boot'],'delivery_journal':base['delivery_journal'],'evidence_journal':base['evidence_journal'],'binding_intent':request_id}
+                    replaced_boot=base['host_boot'];unplanned=None
+                    if args.host_restart_before_commit:
+                        # An unplanned restart before the commit: the old binding on a new boot.
+                        binding_host.stop();unplanned_ready=binding_host.serve('/config/startup.json')
+                        plain={'host':'host/sim','previous_boot':base['host_boot'],'delivery_journal':base['delivery_journal'],'evidence_journal':base['evidence_journal']}
+                        plain_approval,_=api('/api/v1/hosts/readmission',{'request_key':str(uuid.uuid4()),'command':plain},reviewer_cookie)
+                        assert plain_approval.get('binding') is None,plain_approval
+                        unconfirmed=wait(lambda:[v for v in intents() if v['issue']=='MISSING_COMMIT'],'restarted Host was not read after plain re-admission')[0]
+                        assert unconfirmed['phase']=='BASELINE_RECORDED' and unconfirmed['baseline']==intent['baseline'],unconfirmed
+                        try:api('/api/v1/process-change/prepare',{'request_key':str(uuid.uuid4()),'command':{'target':transition(change_detail['change']),'refresh':True}},reviewer_cookie)
+                        except urllib.error.HTTPError as blocked:assert blocked.code in (409,422);unplanned_refresh={'status':blocked.code,'body':json.loads(blocked.read())}
+                        else:raise AssertionError('refresh accepted a restarted Host without a confirmed commit')
+                        # The binding re-admission now names the restarted generation; the kept journals carry continuity.
+                        replaced_boot=unplanned_ready['host_boot'];assert replaced_boot!=base['host_boot']
+                        # Naming the baselined boot is refused: it is no longer the registered generation.
+                        stale_binding={'host':'host/sim','previous_boot':base['host_boot'],'delivery_journal':base['delivery_journal'],'evidence_journal':base['evidence_journal'],'binding_intent':request_id}
+                        try:api('/api/v1/hosts/readmission',{'request_key':str(uuid.uuid4()),'command':stale_binding},reviewer_cookie)
+                        except urllib.error.HTTPError as refused:
+                            stale_binding_refusal=json.loads(refused.read());assert refused.code==409 and stale_binding_refusal['code']=='CONTINUITY_UNPROVEN',stale_binding_refusal
+                        else:raise AssertionError('binding re-admission accepted a generation that is no longer registered')
+                        unplanned={'ready':unplanned_ready,'plain_approval':plain_approval,'issue':unconfirmed['issue'],'refresh':unplanned_refresh,'stale_binding_refusal':stale_binding_refusal}
+                    readmission={'host':'host/sim','previous_boot':replaced_boot,'delivery_journal':base['delivery_journal'],'evidence_journal':base['evidence_journal'],'binding_intent':request_id}
                     try:api('/api/v1/hosts/readmission',{'request_key':str(uuid.uuid4()),'command':readmission},cookie)
                     except urllib.error.HTTPError as denied:assert denied.code==403
                     else:raise AssertionError('readmission accepted without ReleaseManager role')
-                    approval,_=api('/api/v1/hosts/readmission',{'request_key':str(uuid.uuid4()),'command':readmission},reviewer_cookie)
+                    try:approval,_=api('/api/v1/hosts/readmission',{'request_key':str(uuid.uuid4()),'command':readmission},reviewer_cookie)
+                    except urllib.error.HTTPError as refused:raise AssertionError(('binding re-admission refused',refused.code,refused.read().decode(),readmission,intents(),blockers()[2]))
                     assert approval['binding']['intent']==request_id and all(v is None for v in approval['cells'].values()),approval
                     stopped_host=binding_host.stop()
                     proposed=binding_host.proposal(change_detail['change']['host_binding_plan'],args.package,args.package_policy)
@@ -408,7 +431,7 @@ with tempfile.TemporaryDirectory(prefix='rx-platform-image-') as temporary:
                     assert not applied_detail['activation_authorized'] and applied_cell['value']['qualification'] is None,(applied_detail['activation_authorized'],applied_cell['value']['qualification'])
                     assert all(not v['activation_authorized'] for v in intents())
                     change_detail=applied_detail
-                    binding_commit={'platform_restart':platform_restart,'second_approval':second_approval,'rematched':rematched,'refreshed_again':refreshed_again['preparation'],'demoted_configure':demoted_configure,'configured':configured,'applied':applied,'applied_cell':applied_cell,'approval':approval,'stopped_host':stopped_host,'proposed_backend':proposed['backend'],'host_prepared':host_prepared,'host_committed':host_committed,
+                    binding_commit={'unplanned_restart':unplanned,'platform_restart':platform_restart,'second_approval':second_approval,'rematched':rematched,'refreshed_again':refreshed_again['preparation'],'demoted_configure':demoted_configure,'configured':configured,'applied':applied,'applied_cell':applied_cell,'approval':approval,'stopped_host':stopped_host,'proposed_backend':proposed['backend'],'host_prepared':host_prepared,'host_committed':host_committed,
                                     'committed_ready':committed_ready,'matched':matched,'confirmed_blockers':confirmed_detail['blockers'],'refreshed_preparation':refreshed['preparation'],
                                     'restarted_ready':restarted_ready,'demoted_blockers':demoted[2],'demoted_refresh':demoted_refresh}
                 deployment={'binding_commit':binding_commit,'process_intake':process_intake,'process_report':process_report,'process_decision':process_decision,'change':change_detail,'guard':deployment_denial,'status':'HOST_BINDING_CHANGE_REQUIRED','binding_intents':binding_intents,'same_intents_on_retry':True}

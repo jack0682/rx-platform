@@ -23,10 +23,13 @@ separate resume/requalification. Physical state of the restarted Host is not ass
 
 ## Binding transition
 
-An approval may also name `binding_intent`, a P-issued Host binding intent whose baseline
-(before the commit is confirmed) or confirmed commit observation (a later restart) describes
-exactly the generation being replaced (same boot, delivery journal and evidence journal), whose change is still staged and prepared, and whose cohort is the Host's full
-registered cell set. The re-admitted boot may then present the staged change's after
+An approval may also name `binding_intent`, a P-issued Host binding intent whose change is
+still staged and prepared and whose cohort is the Host's full registered cell set. Before the
+commit is confirmed, the generation being replaced must keep the baseline's delivery and
+evidence journals; it may be the baselined boot or a later boot that an earlier plain
+re-admission registered after an unplanned restart (the commit read still has to name the
+baseline installation identity). After a confirmed commit, it must be exactly the confirmed
+generation (same boot and both journals). The re-admitted boot may then present the staged change's after
 configuration for that intent's cell instead of the current one: evidence-cell negotiation,
 link preparation, link commit and grant renewal all compare against it while the change
 stays staged. If the change leaves the staged state without being applied, the current
@@ -43,7 +46,10 @@ prepares and commits the Host binding with the P-issued request, restarts the Ho
 proposed startup, and requires METADATA_MATCHED, a refreshed preparation fenced on the new
 boot, demotion with refused refresh and configure-hosts when the Host restarts again without a
 new approval, re-admission of the committed generation, configure-hosts acknowledged by the
-Host, and apply to APPLIED_UNQUALIFIED.
+Host, and apply to APPLIED_UNQUALIFIED. With `--host-restart-before-commit` the Host is first
+restarted without a commit: a plain re-admission registers it, the read reports
+MISSING_COMMIT, refresh is refused, a binding re-admission naming the baselined boot is refused,
+and the binding re-admission naming the restarted generation completes the same flow.
 
 When the Host's producer session is replaced by a new boot, the P-side link now drops its
 workers and returns to linking (which needs a re-admission) instead of failing the runtime.

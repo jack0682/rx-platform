@@ -235,19 +235,23 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                     {
                         return reject(Reject::StaleRevision);
                     }
-                    // The replaced generation is either the baselined one (before the commit)
-                    // or the one whose commit P already confirmed (a later restart).
-                    let replaced = match b.phase {
+                    // The replaced generation is either one of the baselined Host's storage
+                    // (before the commit) or the one whose commit P already confirmed (a later
+                    // restart). Before the commit, the registered generation may be a later
+                    // boot that an earlier plain re-admission linked after an unplanned
+                    // restart: the kept journals carry the continuity, and the commit read
+                    // still has to name the baseline installation identity.
+                    let (replaced, same_boot_required) = match b.phase {
                         crate::host_binding_transition::Phase::BaselineRecorded => {
-                            Some(&baseline.snapshot)
+                            (Some(&baseline.snapshot), false)
                         }
                         crate::host_binding_transition::Phase::MetadataMatched => {
-                            b.observation.as_ref().map(|o| &o.snapshot)
+                            (b.observation.as_ref().map(|o| &o.snapshot), true)
                         }
-                        crate::host_binding_transition::Phase::AwaitingBaseline => None,
+                        crate::host_binding_transition::Phase::AwaitingBaseline => (None, true),
                     };
                     if !replaced.is_some_and(|s| {
-                        s.host_boot == input.previous_boot
+                        (!same_boot_required || s.host_boot == input.previous_boot)
                             && s.delivery_journal == input.delivery_journal
                             && s.evidence_journal.as_ref() == Some(&input.evidence_journal)
                     }) {
