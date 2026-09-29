@@ -62,6 +62,7 @@ python3 .github/test_repository.py
 python3 .github/test_commit_policy.py
 python3 tools/check_repository.py
 python3 tools/check_invariant_traceability.py
+python3 tools/check_engine_boundaries.py
 python3 tools/check_contract_baselines.py
 python3 tools/test_export_host_sdk.py
 for checker in tools/update_*_binding.py; do python3 "$checker" --check; done
@@ -101,3 +102,7 @@ Contributions use the [Apache License 2.0](LICENSE). Submit only material you ha
 ## Invariant traceability
 
 The required repository job checks the [local invariant map](docs/invariant-traceability.md) against vendored definition IDs and named test declarations. It checks structure and references, not whether the tests semantically establish the invariants; uncovered entries remain explicit.
+
+## Engine boundaries
+
+The required repository job also checks the [engine boundary map](docs/engine-boundaries.md). Every module under `crates/rx-application/src/engine` belongs to one of three groups (generic core, cell domain, change control), and a reference from a file to a module its group may not depend on fails the check unless the map already lists it as a known seam with its current count. The seam list may only shrink. A new engine module must be assigned to a group in the same change. The check counts textual module paths outside test items; it does not type-check or judge the design.
