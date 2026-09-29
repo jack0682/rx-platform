@@ -207,4 +207,7 @@ pub struct Record {
     pub issue: Option<Rejection>,
     pub created_by: Name,
     pub activation_authorized: bool,
+    /// Earlier P runtimes this original request was explicitly adopted from.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub adopted_from: Vec<Id>,
 }

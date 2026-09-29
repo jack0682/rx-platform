@@ -2,10 +2,11 @@
 """Run only the new uncommissioned platform image, using isolated disposable volumes/certificates."""
 import argparse,hashlib,json,os,shutil,socket,ssl,subprocess,sys,tempfile,time,urllib.request,uuid
 from pathlib import Path
-parser=argparse.ArgumentParser();parser.add_argument('--image',default='rx-platform:runtime-draft');parser.add_argument('--evidence',required=True,type=Path);parser.add_argument('--package',type=Path);parser.add_argument('--package-policy',type=Path);parser.add_argument('--device-review-image');parser.add_argument('--device-review-source',type=Path);parser.add_argument('--binding-host-image');parser.add_argument('--host-unreachable-at-stop',action='store_true');parser.add_argument('--binding-commit',action='store_true');args=parser.parse_args()
+parser=argparse.ArgumentParser();parser.add_argument('--image',default='rx-platform:runtime-draft');parser.add_argument('--evidence',required=True,type=Path);parser.add_argument('--package',type=Path);parser.add_argument('--package-policy',type=Path);parser.add_argument('--device-review-image');parser.add_argument('--device-review-source',type=Path);parser.add_argument('--binding-host-image');parser.add_argument('--host-unreachable-at-stop',action='store_true');parser.add_argument('--binding-commit',action='store_true');parser.add_argument('--restart-platform',action='store_true');args=parser.parse_args()
 assert not args.binding_host_image or args.device_review_image
 assert not args.host_unreachable_at_stop or args.binding_host_image
 assert not args.binding_commit or (args.binding_host_image and not args.host_unreachable_at_stop)
+assert not args.restart_platform or args.binding_commit
 assert bool(args.device_review_image)==bool(args.device_review_source) and (not args.device_review_image or args.package)
 assert bool(args.package)==bool(args.package_policy), 'package and policy must be supplied together'
 root=Path(__file__).resolve().parents[1]
@@ -310,6 +311,50 @@ with tempfile.TemporaryDirectory(prefix='rx-platform-image-') as temporary:
                                 args.evidence.with_suffix('.failure.json').write_text(json.dumps(failure,indent=2)+'\n')
                                 raise AssertionError(label+'; inspect '+str(args.evidence.with_suffix('.failure.json')))
                             time.sleep(.2)
+                    platform_restart=None
+                    if args.restart_platform:
+                        # P restarts after fencing: its binding requests belong to the old runtime until adopted.
+                        before_restart=intents()[0]
+                        run('docker','restart','--time','15',service)
+                        until=time.monotonic()+30
+                        while True:
+                            try:
+                                with opener.open(f'https://127.0.0.1:{port}/api/v1/health',timeout=2) as response:restarted_health=json.load(response)
+                                if restarted_health.get('admission_open'):break
+                            except (OSError,urllib.error.URLError):pass
+                            assert time.monotonic()<until;time.sleep(.2)
+                        _,headers=api('/api/v1/session',{'principal':'admin','password':'composition-test-password'});cookie=headers['set-cookie'].split(';')[0]
+                        _,reviewer_headers=api('/api/v1/session',{'principal':'reviewer','password':'composition-test-password'});reviewer_cookie=reviewer_headers['set-cookie'].split(';')[0]
+                        stale=wait(lambda:(lambda d:d if {'kind':'HOST_BINDING_BASELINE_REQUIRED','host':'host/sim'} in d[2] else None)(blockers()),'old-runtime requests were not reported')
+                        try:api('/api/v1/process-change/prepare',{'request_key':str(uuid.uuid4()),'command':{'target':transition(stale[0]['change']),'refresh':True}},reviewer_cookie)
+                        except urllib.error.HTTPError as blocked:assert blocked.code in (409,422);unadopted_refresh={'status':blocked.code,'body':json.loads(blocked.read())}
+                        else:raise AssertionError('refresh accepted requests of a previous runtime')
+                        adopt={'request_key':str(uuid.uuid4()),'command':transition(stale[0]['change'])}
+                        try:api('/api/v1/process-change/host-binding-intents/adopt',adopt,cookie)
+                        except urllib.error.HTTPError as denied:assert denied.code==403
+                        else:raise AssertionError('adoption accepted without ReleaseManager role')
+                        try:adopted,_=api('/api/v1/process-change/host-binding-intents/adopt',adopt,reviewer_cookie)
+                        except urllib.error.HTTPError as refused:
+                            def probe(path):
+                                try:
+                                    v,_=api(path,cookie=cookie);return {k:v.get(k) for k in ('context_current','review_context_current') if k in v} or list(v)[:12]
+                                except urllib.error.HTTPError as e:return (e.code,e.read().decode()[:200])
+                            raise AssertionError(('adoption refused',refused.code,refused.read().decode(),stale[2],
+                                {'process_review':probe('/api/v1/process-review?cell=cell%2Fa&id='+process_job['request']['id']),
+                                 'device_review':probe('/api/v1/device-review?cell=cell%2Fa&id='+job['request']['id']),
+                                 'device_binding_plan':probe('/api/v1/device-binding-plan?cell=cell%2Fa&id='+reviewed_plan['id'])}))
+                        assert [a['intent']['request'] for a in adopted]==[before_restart['intent']['request']] and adopted[0]['adopted_from'],adopted
+                        assert adopted[0]['baseline']==before_restart['baseline'],'adoption must keep the original baseline'
+                        until=time.monotonic()+30
+                        while True:
+                            registered,_=api('/api/v1/overview',cookie=cookie)
+                            contexts={h['host']:h['context'] for c in registered['cells'] for h in c['diagnostics']['hosts']}
+                            if contexts.get('host/sim')=='CURRENT':break
+                            assert time.monotonic()<until,contexts;time.sleep(.2)
+                        current=wait(lambda:(lambda d:d if 'HOST_BINDING_BASELINE_REQUIRED' not in d[1] and 'HOST_BINDING_COMMIT_UNCONFIRMED' in d[1] else None)(blockers()),'adopted baseline did not become current')
+                        refreshed_after_restart,_=api('/api/v1/process-change/prepare',{'request_key':str(uuid.uuid4()),'command':{'target':transition(current[0]['change']),'refresh':True}},reviewer_cookie)
+                        change_detail,kinds,listed=wait(lambda:(lambda d:d if 'HOST_FENCE_UNCONFIRMED' not in d[1] and 'PREPARATION_STALE' not in d[1] else None)(blockers()),'fence after P restart not acknowledged')
+                        platform_restart={'stale_blockers':stale[2],'unadopted_refresh':unadopted_refresh,'adopted':adopted,'refreshed':refreshed_after_restart['preparation']}
                     intent=intents()[0];base=intent['baseline']['snapshot'];request_id=intent['intent']['request']
                     readmission={'host':'host/sim','previous_boot':base['host_boot'],'delivery_journal':base['delivery_journal'],'evidence_journal':base['evidence_journal'],'binding_intent':request_id}
                     try:api('/api/v1/hosts/readmission',{'request_key':str(uuid.uuid4()),'command':readmission},cookie)
@@ -363,7 +408,7 @@ with tempfile.TemporaryDirectory(prefix='rx-platform-image-') as temporary:
                     assert not applied_detail['activation_authorized'] and applied_cell['value']['qualification'] is None,(applied_detail['activation_authorized'],applied_cell['value']['qualification'])
                     assert all(not v['activation_authorized'] for v in intents())
                     change_detail=applied_detail
-                    binding_commit={'second_approval':second_approval,'rematched':rematched,'refreshed_again':refreshed_again['preparation'],'demoted_configure':demoted_configure,'configured':configured,'applied':applied,'applied_cell':applied_cell,'approval':approval,'stopped_host':stopped_host,'proposed_backend':proposed['backend'],'host_prepared':host_prepared,'host_committed':host_committed,
+                    binding_commit={'platform_restart':platform_restart,'second_approval':second_approval,'rematched':rematched,'refreshed_again':refreshed_again['preparation'],'demoted_configure':demoted_configure,'configured':configured,'applied':applied,'applied_cell':applied_cell,'approval':approval,'stopped_host':stopped_host,'proposed_backend':proposed['backend'],'host_prepared':host_prepared,'host_committed':host_committed,
                                     'committed_ready':committed_ready,'matched':matched,'confirmed_blockers':confirmed_detail['blockers'],'refreshed_preparation':refreshed['preparation'],
                                     'restarted_ready':restarted_ready,'demoted_blockers':demoted[2],'demoted_refresh':demoted_refresh}
                 deployment={'binding_commit':binding_commit,'process_intake':process_intake,'process_report':process_report,'process_decision':process_decision,'change':change_detail,'guard':deployment_denial,'status':'HOST_BINDING_CHANGE_REQUIRED','binding_intents':binding_intents,'same_intents_on_retry':True}

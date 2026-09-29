@@ -29,5 +29,16 @@ Host is COMMIT_CURRENT: its confirmed commit was read from the Host generation r
 now, under the Host's active producer session, and no later read contradicted it. A Host
 restart after confirmation demotes it until an explicit re-admission
 (`/api/v1/hosts/readmission`) and a new confirmation. Application still leaves the change
-APPLIED_UNQUALIFIED; qualification is separate. Adoption of intents after a P restart is
-not implemented: a P restart makes them RUNTIME_CHANGED.
+APPLIED_UNQUALIFIED; qualification is separate. 
+After a P restart the requests of the previous runtime report `HOST_BINDING_BASELINE_REQUIRED`.
+`POST /api/v1/process-change/host-binding-intents/adopt` (same Transition wrapper,
+registered-terminal ReleaseManager) carries them into the current runtime without changing
+their request IDs, baselines or confirmed commit, provided the change is still staged and
+current and the clock of the original request is the current clock. The previous record is
+kept as history and the confirmation session is cleared, so the Host must be read again in
+this runtime before it counts.
+
+Current limit: a P restart re-registers the package intake service with a new generation,
+which makes every device review, and with it the process review of the change, no longer
+current. Adoption is therefore refused (`QUALIFICATION_REQUIRED`) until that review
+currency question is resolved.

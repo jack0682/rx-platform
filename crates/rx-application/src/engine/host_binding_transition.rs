@@ -348,6 +348,7 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                     issue: None,
                     created_by: actor.id.clone(),
                     activation_authorized: false,
+                    adopted_from: vec![],
                 };
                 save(
                     tx,
@@ -359,6 +360,110 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                 )?;
                 tx.put(&slot, None, &doc(REF, &record.intent.request)?)?;
                 event(tx, "rx.event.host-binding-intent-issued.v1", &record)?;
+                result.push(record);
+            }
+            remember(
+                tx,
+                &scope,
+                fingerprint,
+                BATCH,
+                &result
+                    .iter()
+                    .map(|r| r.intent.request.clone())
+                    .collect::<Vec<_>>(),
+            )?;
+            Ok(result)
+        })
+    }
+    /// Explicitly carry the original P-issued requests of a staged change into this P
+    /// runtime. The request IDs, baselines and any confirmed commit are kept; the confirmation
+    /// session is cleared, so the Host must be read again in this runtime before it counts.
+    pub fn adopt_host_binding_intents(
+        &mut self,
+        identity_: &Identity,
+        key_: &Id,
+        input: Transition,
+    ) -> Result<Vec<binding::Record>> {
+        let meta = &self.installation;
+        let clock = &self.clock;
+        self.repository.transact(|tx| {
+            let now = clock.now();
+            lifecycle::require_serving(tx)?;
+            let actor = authorize(
+                tx,
+                identity_,
+                meta,
+                &now,
+                Some(&input.cell),
+                Role::ReleaseManager,
+                true,
+            )?;
+            let change = process_change::change(tx, &input.change, &input.cell)?;
+            process_change::access(&actor, &change.impact)?;
+            let (scope, fingerprint) = request(
+                meta,
+                &actor,
+                "ProcessChange.AdoptHostBindingIntents",
+                key_.as_str(),
+                &input,
+            )?;
+            if let Some(ids) = prior::<Vec<Id>>(tx, &scope, fingerprint, BATCH)? {
+                return ids.iter().map(|id| read(tx, id).map(|(_, r)| r)).collect();
+            }
+            if change.state != State::Staged
+                || change.revision != input.expected
+                || change.plan_digest != input.plan_digest
+            {
+                return reject(Reject::StaleRevision);
+            }
+            process_change::current(tx, meta, &change)?;
+            let plan = change
+                .host_binding_plan
+                .as_ref()
+                .ok_or(StoreError::Rejected(Reject::InvalidInput))?;
+            let plan_digest = plan.digest().map_err(StoreError::Invalid)?;
+            let mut result = vec![];
+            for host in plan.hosts.keys() {
+                let row = tx
+                    .get(&key("hostbindingintentslot", (&change.id, host)))?
+                    .ok_or(StoreError::Rejected(Reject::NotFound))?;
+                let id: Id = decode(&row, REF)?;
+                let (revision, mut record) = read(tx, &id)?;
+                if record.intent.host_plan_digest != plan_digest {
+                    return reject(Reject::StaleRevision);
+                }
+                if record.intent.runtime_boot != meta.runtime_boot {
+                    // Time comparisons against the original request need the same clock.
+                    if record.intent.created_at.clock_id != now.clock_id
+                        || now.age_ns(&record.intent.created_at).is_none()
+                    {
+                        return reject(Reject::CapabilityMissing);
+                    }
+                    save(
+                        tx,
+                        "hostbindingintenthistory",
+                        (&id, &record.intent.runtime_boot),
+                        None,
+                        RECORD,
+                        &record,
+                    )?;
+                    let previous = std::mem::replace(
+                        &mut record.intent.runtime_boot,
+                        meta.runtime_boot.clone(),
+                    );
+                    record.adopted_from.push(previous);
+                    record.observed_session = None;
+                    record.issue = None;
+                    save(
+                        tx,
+                        "hostbindingintent",
+                        &id,
+                        Some(revision),
+                        RECORD,
+                        &record,
+                    )?;
+                    event(tx, "rx.event.host-binding-intent-adopted.v1", &record)?;
+                }
                 result.push(record);
             }
             remember(
@@ -557,6 +662,7 @@ mod standing_tests {
             issue: None,
             created_by: n("release"),
             activation_authorized: false,
+            adopted_from: vec![],
         }
     }
     /// Commit confirmed from Host boot 4 (session 34).

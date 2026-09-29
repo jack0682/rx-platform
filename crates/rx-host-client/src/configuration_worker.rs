@@ -485,6 +485,7 @@ mod binding_reader_tests {
             issue: None,
             created_by: n("release"),
             activation_authorized: false,
+            adopted_from: vec![],
         }
     }
     struct Port {

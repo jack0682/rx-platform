@@ -166,6 +166,11 @@ pub enum Command {
         key: Id,
         input: process_change::Transition,
     },
+    AdoptHostBindingIntents {
+        identity: Identity,
+        key: Id,
+        input: process_change::Transition,
+    },
     ApproveHostReadmission {
         identity: Identity,
         key: Id,
@@ -1166,6 +1171,14 @@ impl<R: Repository + Send + 'static, C: Clock + 'static, A: QualificationAuthori
                 .engine
                 .host_binding_read_issue(&identity, &request, issue)
                 .map(|v| Reply::HostBindingIntent(Box::new(v))),
+            Command::AdoptHostBindingIntents {
+                identity,
+                key,
+                input,
+            } => self
+                .engine
+                .adopt_host_binding_intents(&identity, &key, input)
+                .map(Reply::HostBindingIntents),
             Command::ApproveHostReadmission {
                 identity,
                 key,
