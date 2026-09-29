@@ -643,6 +643,44 @@ pub(super) fn suspend(
     }
     Ok(changed)
 }
+pub(super) fn suspend_for_executor_replacement(
+    tx: &mut dyn Transaction,
+    meta: &Installation,
+    cells: &BTreeSet<Name>,
+    before: &BTreeMap<Name, BTreeSet<Id>>,
+) -> Result<()> {
+    // Complete the known invalidation in the peer-opening transaction. Otherwise
+    // a later Host poll can advance the epoch again after recovery was approved.
+    for row in tx.scan("qualificationbatch/")? {
+        let b: a::Batch = decode(&row, BATCH)?;
+        if matches!(b.state, a::State::Pending | a::State::Active)
+            && b.cells.iter().any(|c| cells.contains(&c.cell))
+        {
+            if b.state == a::State::Active && b.runtime_boot == meta.runtime_boot {
+                for target in b.cells.iter().filter(|c| cells.contains(&c.cell)) {
+                    let (_, cell): (_, Cell) = load(tx, "cell", &target.cell, CELL)?;
+                    if cell.qualification.as_ref().is_some_and(|q| {
+                        q.id == target.qualification.id
+                            && q.revision == target.qualification.revision
+                    }) && process_change::config_ref(&cell.configuration)?
+                        == target.configuration
+                    {
+                        let previous = before.get(&target.cell).ok_or(StoreError::Integrity(
+                            "executor invalidation baseline missing".into(),
+                        ))?;
+                        // Only restrictions created by this authenticated replacement
+                        // inherit the exact active qualification's Change ownership.
+                        // Existing holds or unrelated authority restrictions remain owned
+                        // by their original procedures, or unowned when no proof exists.
+                        record_blocks(tx, &b.change, &cell, previous)?;
+                    }
+                }
+            }
+            suspend(tx, &b, Some(meta), name("EXECUTOR_INCARNATION_CHANGED"))?;
+        }
+    }
+    Ok(())
+}
 pub(super) fn suspend_changed_roots(tx: &mut dyn Transaction, meta: &Installation) -> Result<()> {
     let policy = match requalification::policy(tx, meta) {
         Ok(p) => Some(p.digest().map_err(StoreError::Integrity)?),

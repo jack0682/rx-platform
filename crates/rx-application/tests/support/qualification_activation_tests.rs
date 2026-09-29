@@ -456,6 +456,53 @@ fn qualification_disappearing_receipt_suspends_active_cohort_without_overwriting
     );
 }
 #[test]
+fn executor_replacement_retires_qualification_before_returning_new_session() {
+    let (mut f, r, _, p, source, j, v, d) = approved_setup();
+    let b = issue(&mut f, &r, &j, &v, &d, &p, &source);
+    let (t, mut observed) = confirm(&mut f, &b);
+    activate(&mut f, &r, &b, &p, &source);
+    let boot = id();
+    let session = f
+        .app
+        .open_executor_peer(
+            &name("executor"),
+            boot.clone(),
+            Digest::from_bytes([41; 32]),
+        )
+        .unwrap();
+    let before = f.app.inspect_cell(&f.admin, &b.origin).unwrap().1;
+    assert!(before.qualification.is_none());
+    assert_eq!(
+        f.app
+            .qualification_batch(&f.admin, &b.origin, &b.id)
+            .unwrap()
+            .batch
+            .state,
+        a::State::Suspended
+    );
+    assert!(!before.blocks.is_empty());
+    assert_eq!(
+        f.app
+            .open_executor_peer(&name("executor"), boot, Digest::from_bytes([41; 32]))
+            .unwrap()
+            .id,
+        session.id
+    );
+    // A later Host poll sees the fence caused by the same replacement. It must
+    // not revoke a recovery approval by invalidating that context a second time.
+    observed.snapshot.cells[0].epoch = before.epoch;
+    observed.snapshot.cells[0].scopes = before.scope_epochs.clone();
+    observed.receipt_matches_current_host = false;
+    f.app
+        .record_qualification_observation(&f.hosts[0], &t.id, observed, f.clock.now())
+        .unwrap();
+    let after = f.app.inspect_cell(&f.admin, &b.origin).unwrap().1;
+    assert_eq!(
+        rx_domain::canonical::bytes(&before).unwrap(),
+        rx_domain::canonical::bytes(&after).unwrap()
+    );
+}
+#[test]
 fn qualification_policy_replacement_revokes_active_grade_but_preserves_history() {
     let (mut f, r, _, p, source, j, v, d) = approved_setup();
     let b = issue(&mut f, &r, &j, &v, &d, &p, &source);
@@ -601,6 +648,83 @@ fn qualification_never_clears_a_manual_hold_without_owned_provenance() {
     assert!(cell.qualification.is_some());
     assert_eq!(cell.blocks.len(), 1);
     assert_eq!(cell.blocks[0].reason, BlockReason::OperatorHold);
+}
+#[test]
+fn executor_replacement_requalification_owns_only_its_new_restrictions() {
+    for unrelated in 0..3 {
+        let (mut f, r, _, p, source, j, v, d) = approved_setup();
+        let b = issue(&mut f, &r, &j, &v, &d, &p, &source);
+        confirm(&mut f, &b);
+        activate(&mut f, &r, &b, &p, &source);
+        if unrelated == 1 {
+            f.app.hold(&f.operator, id().as_str(), &b.origin).unwrap();
+        } else if unrelated == 2 {
+            let mut other = principal("unrelated-operator", &[Role::Operator]);
+            let revision = f.app.put_principal(&f.admin, other.clone(), None).unwrap();
+            other.active = false;
+            f.app
+                .put_principal(&f.admin, other, Some(revision))
+                .unwrap();
+        }
+        f.app
+            .open_executor_peer(&name("executor"), id(), Digest::from_bytes([41; 32]))
+            .unwrap();
+        let change = f
+            .app
+            .process_change(&f.admin, &b.origin, &b.change)
+            .unwrap()
+            .change;
+        let input = begin_input(&mut f, &change, &p);
+        let j = f.app.begin_requalification(&r, &id(), input).unwrap();
+        confirm_case_fences_from(&mut f, 1000);
+        let prepared = prepared_report(&mut f, &j, &p, &id(), None);
+        let v = f.app.commit_requalification_report(prepared).unwrap();
+        let reviewer = add_identity(
+            &mut f.app,
+            &f.admin,
+            "replacement-reviewer",
+            &[Role::Verifier],
+        );
+        let q::DecisionPreflight::Verify(t) = f
+            .app
+            .prepare_requalification_decision(&reviewer, &id(), decision(&v, &j))
+            .unwrap()
+        else {
+            panic!("decision")
+        };
+        let d = f
+            .app
+            .commit_requalification_decision(t.verify(&p.policy).unwrap())
+            .unwrap();
+        let input = issue_input(&mut f, &j, &v, &d);
+        let result = f.app.prepare_qualification_issue(&r, &id(), input);
+        if unrelated != 0 {
+            assert!(matches!(
+                result,
+                Err(StoreError::Rejected(Rejection::Forbidden))
+            ));
+            continue;
+        }
+        let a::Preflight::Verify(t) =
+            result.expect("replacement restriction must have exact provenance")
+        else {
+            panic!("issue")
+        };
+        let issued = f
+            .app
+            .commit_qualification_issue(verify(*t, &p, &source))
+            .unwrap();
+        confirm(&mut f, &issued);
+        activate(&mut f, &r, &issued, &p, &source);
+        assert!(
+            f.app
+                .inspect_cell(&f.admin, &b.origin)
+                .unwrap()
+                .1
+                .blocks
+                .is_empty()
+        );
+    }
 }
 #[test]
 fn qualification_restart_retires_active_authority_and_preserves_completed_batch() {
