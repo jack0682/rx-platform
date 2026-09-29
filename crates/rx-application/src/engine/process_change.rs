@@ -725,8 +725,19 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                 return reject(Reject::StaleRevision);
             }
             current(tx, meta, &c)?;
-            if c.host_binding_plan.is_some() {
-                return reject(Reject::CapabilityMissing);
+            // A binding change may fence only the Host generation whose baseline was captured,
+            // or, after replacement, the generation whose commit is confirmed now.
+            for standing in super::host_binding_transition::standings(tx, meta, &c)?.values() {
+                match standing {
+                    super::host_binding_transition::Standing::BaselineCurrent
+                    | super::host_binding_transition::Standing::CommitCurrent => {}
+                    super::host_binding_transition::Standing::BaselineRequired => {
+                        return reject(Reject::CapabilityMissing);
+                    }
+                    super::host_binding_transition::Standing::CommitUnconfirmed => {
+                        return reject(Reject::ContinuityUnproven);
+                    }
+                }
             }
             let affected: BTreeSet<_> = c.impact.cells.iter().map(|v| v.id.clone()).collect();
             for row in tx.scan("processchange/")? {
@@ -822,7 +833,27 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                 return process_apply::detail(tx, meta, c, before, after);
             }
             if c.host_binding_plan.is_some() {
-                add(Blocker::HostBindingChangeRequired);
+                // A binding change proceeds like any other change once every plan Host runs
+                // the committed replacement; until then each Host names its missing evidence.
+                let standings = super::host_binding_transition::standings(tx, meta, &c)?;
+                if standings
+                    .values()
+                    .any(|s| *s != super::host_binding_transition::Standing::CommitCurrent)
+                {
+                    add(Blocker::HostBindingChangeRequired);
+                }
+                for (host, standing) in standings {
+                    match standing {
+                        super::host_binding_transition::Standing::BaselineRequired => {
+                            add(Blocker::HostBindingBaselineRequired { host })
+                        }
+                        super::host_binding_transition::Standing::BaselineCurrent
+                        | super::host_binding_transition::Standing::CommitUnconfirmed => {
+                            add(Blocker::HostBindingCommitUnconfirmed { host })
+                        }
+                        super::host_binding_transition::Standing::CommitCurrent => {}
+                    }
+                }
             }
             if fingerprint(&change_impact(tx, &c)?)? != fingerprint(&c.impact)?
                 || c.builder_digest != builder_digest()

@@ -217,3 +217,7 @@ fn missing_as(error: StoreError, fallback: Reject) -> StoreError {
 }
 
 mod host_recovery;
+
+mod host_readmission;
+
+mod host_binding_transition;

@@ -120,6 +120,9 @@ fn inspect(f: &mut Fixture, b: &a::Batch, t: &a::Task) -> h::Observation {
     h::Observation {
         schema: name("rx.host-qualification-observation.v1"),
         snapshot: cfg::Snapshot {
+            evidence_journal: None,
+            installation_identity: None,
+            binding_commit: None,
             schema: name("rx.host-process-configuration-snapshot.v1"),
             host: t.host.clone(),
             host_boot: t.host_boot.clone(),

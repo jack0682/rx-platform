@@ -152,6 +152,36 @@ pub enum Command {
         reference: ArtifactRef,
     },
 
+    HostBindingIntents {
+        identity: Identity,
+        after: Option<Id>,
+    },
+    HostBindingReadIssue {
+        identity: Identity,
+        request: Id,
+        issue: rx_application::host_binding_transition::Rejection,
+    },
+    IssueHostBindingIntents {
+        identity: Identity,
+        key: Id,
+        input: process_change::Transition,
+    },
+    AdoptHostBindingIntents {
+        identity: Identity,
+        key: Id,
+        input: process_change::Transition,
+    },
+    ApproveHostReadmission {
+        identity: Identity,
+        key: Id,
+        input: rx_application::host_readmission::Approve,
+    },
+    ObserveHostBindingIntent {
+        identity: Identity,
+        request: Id,
+        observation: Box<rx_domain::host_configuration::Observation>,
+        read_started: TimePoint,
+    },
     AuthorizeHostConfiguration {
         identity: Identity,
         key: Id,
@@ -767,6 +797,9 @@ pub enum Reply {
     RequalificationDetail(Box<rx_application::requalification::Detail>),
 
     HostConfigurationBatch(configuration_dispatch::Batch),
+    HostBindingIntents(Vec<rx_application::host_binding_transition::Record>),
+    HostReadmission(Box<rx_application::host_readmission::Record>),
+    HostBindingIntent(Box<rx_application::host_binding_transition::Record>),
     HostConfigurationTasks(Vec<configuration_dispatch::Task>),
     HostConfigurationTask(Box<configuration_dispatch::Task>),
     HostConfigurationEmission(configuration_dispatch::Emission),
@@ -1126,6 +1159,51 @@ impl<R: Repository + Send + 'static, C: Clock + 'static, A: QualificationAuthori
                 .requalification_artifact(&identity, &cell, &id, &reference)
                 .map(Reply::ArtifactBytes),
 
+            Command::HostBindingIntents { identity, after } => self
+                .engine
+                .host_binding_intents(&identity, after.as_ref())
+                .map(Reply::HostBindingIntents),
+            Command::HostBindingReadIssue {
+                identity,
+                request,
+                issue,
+            } => self
+                .engine
+                .host_binding_read_issue(&identity, &request, issue)
+                .map(|v| Reply::HostBindingIntent(Box::new(v))),
+            Command::AdoptHostBindingIntents {
+                identity,
+                key,
+                input,
+            } => self
+                .engine
+                .adopt_host_binding_intents(&identity, &key, input)
+                .map(Reply::HostBindingIntents),
+            Command::ApproveHostReadmission {
+                identity,
+                key,
+                input,
+            } => self
+                .engine
+                .approve_host_readmission(&identity, &key, input)
+                .map(|v| Reply::HostReadmission(Box::new(v))),
+            Command::IssueHostBindingIntents {
+                identity,
+                key,
+                input,
+            } => self
+                .engine
+                .issue_host_binding_intents(&identity, &key, input)
+                .map(Reply::HostBindingIntents),
+            Command::ObserveHostBindingIntent {
+                identity,
+                request,
+                observation,
+                read_started,
+            } => self
+                .engine
+                .observe_host_binding_intent(&identity, &request, *observation, read_started)
+                .map(|v| Reply::HostBindingIntent(Box::new(v))),
             Command::AuthorizeHostConfiguration {
                 identity,
                 key,

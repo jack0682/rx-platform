@@ -324,171 +324,200 @@ impl ConnectionService {
         self.delivery_status.subscribe()
     }
     pub async fn run(self, mut stopped: tokio::sync::watch::Receiver<bool>) -> Result<(), Error> {
-        let mut delay = 100u64;
-        let mut diagnostic = diagnostic::Changes::default();
-        let mut connected = loop {
-            if *stopped.borrow() || stopped.has_changed().is_err() {
-                self.status.send_replace(ConnectionStatus::Stopped);
-                self.observation_status
-                    .send_replace(crate::observation::ObservationStatus::Stopped);
-                return Ok(());
-            }
-            let attempt = async {
-                let producer = match self
-                    .runtime
-                    .request(Command::CurrentEvidenceProducer(
-                        self.configuration.host.clone(),
-                    ))
-                    .await
-                {
-                    Ok(Reply::Producer(producer)) => producer,
-                    Err(rx_runtime::writer::WriterError::Rejected(
-                        rx_ports::StoreError::Rejected(rx_domain::fault::Rejection::NotFound),
-                    )) => return Ok(None),
-                    Err(error) => return Err::<Option<ConnectedHost>, Error>(error.into()),
-                    _ => return Err("producer reply".into()),
-                };
-                let identity = Identity {
-                    principal: producer.principal.clone(),
-                    session: producer.session.clone(),
-                    terminal: None,
-                };
-                let Reply::Cell(_, cell) = self
-                    .runtime
-                    .request(Command::InspectCell {
-                        identity,
-                        cell: self.configuration.cell.clone(),
-                    })
-                    .await?
-                else {
-                    return Err("cell reply".into());
-                };
-                let Reply::Installation(installation) =
-                    self.runtime.request(Command::Installation).await?
-                else {
-                    return Err("installation reply".into());
-                };
-                self.status.send_replace(ConnectionStatus::Connecting);
-                ConnectedHost::establish(
-                    self.runtime.clone(),
-                    self.configuration.endpoint.clone(),
-                    self.configuration.server_pin,
-                    Hello {
-                        peer_id: Name::new(installation.id.as_str())?,
-                        boot_id: installation.runtime_boot,
-                        installation: installation.id,
-                        store_generation: installation.store_generation,
-                        release_digest: self.configuration.release,
-                        clock_id: installation.clock_id,
-                    },
-                    self.configuration.host.clone(),
-                    &cell.configuration,
-                    self.configuration.ttl_ms,
-                )
-                .await
-                .map(Some)
-            };
-            let result = tokio::select! {result=attempt=>result,_=stopped.changed()=>{continue;}};
-            match result {
-                Ok(Some(connected)) => break connected,
-                Ok(None) => {
-                    self.status
-                        .send_replace(ConnectionStatus::WaitingForProducer);
-                }
-                Err(error) => {
-                    if let Some(line) =
-                        diagnostic.next(&self.configuration.host, &self.configuration.cell, &error)
-                    {
-                        eprintln!("{line}");
-                    }
-                    self.status.send_replace(ConnectionStatus::Attention);
-                }
-            }
-            tokio::select! {_=tokio::time::sleep(std::time::Duration::from_millis(delay))=>{},_=stopped.changed()=>{}}
-            delay = (delay * 2).min(2000);
-        };
-        self.status.send_replace(ConnectionStatus::Bound {
-            host_boot: connected.plan.host_boot.clone(),
-            valid_until: connected.registration.grant.valid_until.clone(),
-        });
-        let dispatcher = crate::delivery::Dispatcher::new(
-            self.runtime.clone(),
-            connected.client.clone(),
-            connected.identity(),
-        )?
-        .with_report(self.delivery_status.clone());
-        let reader = crate::observation::ObservationReader::new(
-            self.runtime.clone(),
-            connected.client.clone(),
-            connected.plan.id.clone(),
-            connected.plan.source_sessions.keys().cloned().collect(),
-            connected.observation_interval,
-        )?
-        .with_status(self.observation_status.clone());
-        let configuration_worker = crate::configuration_worker::Coordinator::new(
-            self.runtime.clone(),
-            connected.client.clone(),
-            connected.identity(),
-        )?;
-        let qualification_worker = crate::qualification_worker::Coordinator::new(
-            self.runtime.clone(),
-            connected.client.clone(),
-            connected.identity(),
-        )?;
-        let (stop_children, children_stopped) = tokio::sync::watch::channel(false);
-        let mut children = tokio::task::JoinSet::<Result<(), Error>>::new();
-        let dispatch_stopped = children_stopped.clone();
-        children.spawn(async move {
-            dispatcher
-                .run(dispatch_stopped)
-                .await
-                .map_err(|e| Box::new(e) as Error)
-        });
-        children.spawn(configuration_worker.run(children_stopped.clone()));
-        children.spawn(qualification_worker.run(children_stopped.clone()));
-        children.spawn(reader.run(children_stopped));
-        let mut failure: Option<Error> = None;
-        let mut tick = tokio::time::interval(std::time::Duration::from_millis(
-            (self.configuration.ttl_ms.0 / 3).clamp(100, 1000),
-        ));
         loop {
-            tokio::select! {
-                changed=stopped.changed()=>{if changed.is_err() || *stopped.borrow(){break;}},
-                result=children.join_next()=>{
-                    failure=Some(match result {Some(Ok(Err(e)))=>e,Some(Err(e))=>Box::new(e),_=>"Host worker stopped unexpectedly".into()});break;
-                },
-                _=tick.tick()=>{
-                    let current=match now(&self.runtime).await {Ok(time)=>time,Err(_)=>{self.status.send_replace(ConnectionStatus::Attention);continue;}};
-                    let remaining=connected.registration.grant.valid_until.ticks_ns.0.saturating_sub(current.ticks_ns.0);
-                    if current.clock_id!=connected.registration.grant.valid_until.clock_id || remaining<=self.configuration.ttl_ms.0*500_000 {
-                        // Retain the sender for fencing/evidence if lease renewal is no longer permitted.
-                        // Do not acquire a replacement grant or adopt a new Host boot automatically.
-                        if connected.renew().await.is_err() {self.status.send_replace(ConnectionStatus::Attention);}
-                        else {self.status.send_replace(ConnectionStatus::Bound {host_boot:connected.plan.host_boot.clone(),valid_until:connected.registration.grant.valid_until.clone()});}
+            let mut delay = 100u64;
+            let mut diagnostic = diagnostic::Changes::default();
+            let mut connected = loop {
+                if *stopped.borrow() || stopped.has_changed().is_err() {
+                    self.status.send_replace(ConnectionStatus::Stopped);
+                    self.observation_status
+                        .send_replace(crate::observation::ObservationStatus::Stopped);
+                    return Ok(());
+                }
+                let attempt = async {
+                    let producer = match self
+                        .runtime
+                        .request(Command::CurrentEvidenceProducer(
+                            self.configuration.host.clone(),
+                        ))
+                        .await
+                    {
+                        Ok(Reply::Producer(producer)) => producer,
+                        Err(rx_runtime::writer::WriterError::Rejected(
+                            rx_ports::StoreError::Rejected(rx_domain::fault::Rejection::NotFound),
+                        )) => return Ok(None),
+                        Err(error) => return Err::<Option<ConnectedHost>, Error>(error.into()),
+                        _ => return Err("producer reply".into()),
+                    };
+                    let identity = Identity {
+                        principal: producer.principal.clone(),
+                        session: producer.session.clone(),
+                        terminal: None,
+                    };
+                    let Reply::Cell(_, cell) = self
+                        .runtime
+                        .request(Command::InspectCell {
+                            identity,
+                            cell: self.configuration.cell.clone(),
+                        })
+                        .await?
+                    else {
+                        return Err("cell reply".into());
+                    };
+                    let Reply::Installation(installation) =
+                        self.runtime.request(Command::Installation).await?
+                    else {
+                        return Err("installation reply".into());
+                    };
+                    self.status.send_replace(ConnectionStatus::Connecting);
+                    ConnectedHost::establish(
+                        self.runtime.clone(),
+                        self.configuration.endpoint.clone(),
+                        self.configuration.server_pin,
+                        Hello {
+                            peer_id: Name::new(installation.id.as_str())?,
+                            boot_id: installation.runtime_boot,
+                            installation: installation.id,
+                            store_generation: installation.store_generation,
+                            release_digest: self.configuration.release,
+                            clock_id: installation.clock_id,
+                        },
+                        self.configuration.host.clone(),
+                        &cell.configuration,
+                        self.configuration.ttl_ms,
+                    )
+                    .await
+                    .map(Some)
+                };
+                let result =
+                    tokio::select! {result=attempt=>result,_=stopped.changed()=>{continue;}};
+                match result {
+                    Ok(Some(connected)) => break connected,
+                    Ok(None) => {
+                        self.status
+                            .send_replace(ConnectionStatus::WaitingForProducer);
+                    }
+                    Err(error) => {
+                        if let Some(line) = diagnostic.next(
+                            &self.configuration.host,
+                            &self.configuration.cell,
+                            &error,
+                        ) {
+                            eprintln!("{line}");
+                        }
+                        self.status.send_replace(ConnectionStatus::Attention);
+                    }
+                }
+                tokio::select! {_=tokio::time::sleep(std::time::Duration::from_millis(delay))=>{},_=stopped.changed()=>{}}
+                delay = (delay * 2).min(2000);
+            };
+            self.status.send_replace(ConnectionStatus::Bound {
+                host_boot: connected.plan.host_boot.clone(),
+                valid_until: connected.registration.grant.valid_until.clone(),
+            });
+            let dispatcher = crate::delivery::Dispatcher::new(
+                self.runtime.clone(),
+                connected.client.clone(),
+                connected.identity(),
+            )?
+            .with_report(self.delivery_status.clone());
+            let reader = crate::observation::ObservationReader::new(
+                self.runtime.clone(),
+                connected.client.clone(),
+                connected.plan.id.clone(),
+                connected.plan.source_sessions.keys().cloned().collect(),
+                connected.observation_interval,
+            )?
+            .with_status(self.observation_status.clone());
+            let configuration_worker = crate::configuration_worker::Coordinator::new(
+                self.runtime.clone(),
+                connected.client.clone(),
+                connected.identity(),
+            )?;
+            let qualification_worker = crate::qualification_worker::Coordinator::new(
+                self.runtime.clone(),
+                connected.client.clone(),
+                connected.identity(),
+            )?;
+            let (stop_children, children_stopped) = tokio::sync::watch::channel(false);
+            let mut children = tokio::task::JoinSet::<Result<(), Error>>::new();
+            let dispatch_stopped = children_stopped.clone();
+            children.spawn(async move {
+                dispatcher
+                    .run(dispatch_stopped)
+                    .await
+                    .map_err(|e| Box::new(e) as Error)
+            });
+            children.spawn(configuration_worker.run(children_stopped.clone()));
+            children.spawn(qualification_worker.run(children_stopped.clone()));
+            children.spawn(reader.run(children_stopped));
+            let mut failure: Option<Error> = None;
+            let mut tick = tokio::time::interval(std::time::Duration::from_millis(
+                (self.configuration.ttl_ms.0 / 3).clamp(100, 1000),
+            ));
+            loop {
+                tokio::select! {
+                    changed=stopped.changed()=>{if changed.is_err() || *stopped.borrow(){break;}},
+                    result=children.join_next()=>{
+                        failure=Some(match result {Some(Ok(Err(e)))=>e,Some(Err(e))=>Box::new(e),_=>"Host worker stopped unexpectedly".into()});break;
+                    },
+                    _=tick.tick()=>{
+                        let current=match now(&self.runtime).await {Ok(time)=>time,Err(_)=>{self.status.send_replace(ConnectionStatus::Attention);continue;}};
+                        let remaining=connected.registration.grant.valid_until.ticks_ns.0.saturating_sub(current.ticks_ns.0);
+                        if current.clock_id!=connected.registration.grant.valid_until.clock_id || remaining<=self.configuration.ttl_ms.0*500_000 {
+                            // Retain the sender for fencing/evidence if lease renewal is no longer permitted.
+                            // Do not acquire a replacement grant or adopt a new Host boot automatically.
+                            if connected.renew().await.is_err() {self.status.send_replace(ConnectionStatus::Attention);}
+                            else {self.status.send_replace(ConnectionStatus::Bound {host_boot:connected.plan.host_boot.clone(),valid_until:connected.registration.grant.valid_until.clone()});}
+                        }
                     }
                 }
             }
-        }
-        let _ = stop_children.send(true);
-        while let Some(result) = children.join_next().await {
-            match result {
-                Ok(Ok(())) => {}
-                Ok(Err(e)) => {
-                    failure.get_or_insert(e);
-                }
-                Err(e) => {
-                    failure.get_or_insert(Box::new(e));
+            let _ = stop_children.send(true);
+            while let Some(result) = children.join_next().await {
+                match result {
+                    Ok(Ok(())) => {}
+                    Ok(Err(e)) => {
+                        failure.get_or_insert(e);
+                    }
+                    Err(e) => {
+                        failure.get_or_insert(Box::new(e));
+                    }
                 }
             }
-        }
-        if let Some(error) = failure {
-            self.status.send_replace(ConnectionStatus::Attention);
-            Err(error)
-        } else {
+            if let Some(error) = failure {
+                self.status.send_replace(ConnectionStatus::Attention);
+                // A new Host boot replaces the producer session this link was bound to. That
+                // is not a P failure: drop the stale workers and wait for an explicit
+                // re-admission instead of stopping the whole runtime.
+                if self.producer_replaced(&connected).await {
+                    eprintln!(
+                        "{}",
+                        serde_json::json!({"event":"rx.host-link-generation-replaced.v1","host":self.configuration.host,"cell":self.configuration.cell,"bound_boot":connected.plan.host_boot,"error":error.to_string()})
+                    );
+                    continue;
+                }
+                return Err(error);
+            }
             self.status.send_replace(ConnectionStatus::Stopped);
-            Ok(())
+            return Ok(());
         }
     }
+    async fn producer_replaced(&self, connected: &ConnectedHost) -> bool {
+        let reply = self
+            .runtime
+            .request(Command::CurrentEvidenceProducer(
+                self.configuration.host.clone(),
+            ))
+            .await;
+        session_replaced(reply.ok(), &connected.identity().session)
+    }
+}
+/// A failed link is a Host generation replacement only when P positively reports a
+/// different current producer session. A missing producer, an unreadable ledger or the
+/// same session keep the failure a P failure, so it is never silently retried.
+fn session_replaced(reply: Option<Reply>, bound: &Id) -> bool {
+    matches!(reply, Some(Reply::Producer(p)) if &p.session != bound)
 }
 
 #[cfg(test)]
@@ -510,6 +539,36 @@ mod tests {
         fn status(&self) -> Status {
             Status::Running
         }
+    }
+    fn producer(session: &str) -> Reply {
+        Reply::Producer(rx_application::EvidenceProducer {
+            principal: Name::new("host/test").unwrap(),
+            session: Id::new(session).unwrap(),
+            peer_boot: Id::new("00000000-0000-4000-8000-000000000002").unwrap(),
+            journal: Id::new("00000000-0000-4000-8000-000000000003").unwrap(),
+            authentication_binding: Digest::from_bytes([4; 32]),
+            cells: Default::default(),
+        })
+    }
+    #[test]
+    fn only_a_reported_new_producer_session_counts_as_a_replaced_generation() {
+        let bound = Id::new("00000000-0000-4000-8000-000000000001").unwrap();
+        // A new Host boot opened a different producer session: relink, do not stop P.
+        assert!(session_replaced(
+            Some(producer("00000000-0000-4000-8000-000000000009")),
+            &bound
+        ));
+        // The same session failing is a genuine failure of this link.
+        assert!(!session_replaced(Some(producer(bound.as_str())), &bound));
+        // Missing or unreadable producer state never proves a replacement.
+        assert!(!session_replaced(None, &bound));
+        assert!(!session_replaced(
+            Some(Reply::Time(TimePoint {
+                clock_id: "test/clock".into(),
+                ticks_ns: Counter(1),
+            })),
+            &bound
+        ));
     }
     #[tokio::test]
     async fn closed_owner_while_waiting_for_producer_stops_without_connecting() {
