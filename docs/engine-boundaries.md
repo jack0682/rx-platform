@@ -8,7 +8,7 @@ No source file moves and no behavior changes with this map. It names where the s
 
 | Group | Contents | May reference |
 |---|---|---|
-| `core` | Generic runtime: admission, identity and access, lifecycle, evidence and delivery, dispatch, reconciliation and settlement, invalidation, observation, host link, recovery and re-admission, executor and operator peers, requests, queries, diagnostics, pause, runtime restrictions, store restore, and `mod.rs` itself | `core` |
+| `core` | Generic runtime: admission, identity and access, lifecycle, evidence and delivery, dispatch, reconciliation and settlement, invalidation, observation, host link, recovery and re-admission, executor and operator peers, requests, queries, diagnostics, pause, runtime and device restriction reads, store restore, and `mod.rs` itself | `core` |
 | `cell` | Cell and production domain: workflow, production, handover, operator start, assignment, run configuration, closure, intervention, procedure, process execution and its transitions, checkpoint change, execution read, executor requests, runtime skills, cell configuration | `cell`, `core` |
 | `change_control` | Change control and qualification: package intake, process drafts and draft bindings, device binding plans, device and process review, process change and apply, host configuration dispatch, host binding intents, requalification, qualification activation | `change_control`, `core` |
 
