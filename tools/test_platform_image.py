@@ -307,7 +307,7 @@ with tempfile.TemporaryDirectory(prefix='rx-platform-image-') as temporary:
                                 raise
                             if value:return value
                             if time.monotonic()>=until:
-                                failure={'label':label,'intents':intents(),'blockers':blockers()[2],'platform_log':run('docker','logs',service)[-8000:],
+                                failure={'label':label,'intents':intents(),'blockers':blockers()[2],'platform_log':subprocess.run(['docker','logs',service],stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True).stdout[-8000:],
                                          'host_log':subprocess.run(['docker','logs',binding_host.service],stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True).stdout[-8000:]}
                                 args.evidence.with_suffix('.failure.json').write_text(json.dumps(failure,indent=2)+'\n')
                                 raise AssertionError(label+'; inspect '+str(args.evidence.with_suffix('.failure.json')))

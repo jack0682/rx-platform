@@ -267,6 +267,83 @@ fn restarted_host_needs_explicit_readmission_and_its_cell_stays_blocked() {
 }
 
 #[test]
+fn a_rebound_host_can_restart_later_and_be_readmitted_again() {
+    let (f, input, first) = linked();
+    let journal = input.snapshot.evidence_journal.clone();
+    let mut f = restart_platform(f);
+    let producer = f
+        .app
+        .open_evidence_producer(
+            &name("host/0"),
+            input.snapshot.host_boot.clone(),
+            journal.clone(),
+            Digest::from_bytes([81; 32]),
+        )
+        .unwrap();
+    f.hosts[0].session = producer.id.clone();
+    f.app
+        .negotiate_evidence_cell(&f.hosts[0], f.configuration.definition.sha256)
+        .unwrap();
+    let release = release_identity(&mut f);
+    f.app
+        .approve_host_readmission(&release, &id(), approve(&first, &journal))
+        .unwrap();
+    f.clock
+        .0
+        .store(first.grant.valid_until.ticks_ns.0 + 1, Ordering::SeqCst);
+    f.admin.session = f
+        .app
+        .authenticated_session(&f.admin.principal, id(), expiry(u64::MAX))
+        .unwrap()
+        .id;
+    let (_, cell) = f.app.inspect_cell(&f.admin, &f.configuration.id).unwrap();
+    let mut same = input.clone();
+    same.platform_session = id();
+    same.snapshot.epoch = cell.epoch;
+    same.snapshot.scopes = cell.scope_epochs.clone();
+    same.snapshot.block_ids = cell
+        .blocks
+        .iter()
+        .filter(|b| b.latched)
+        .map(|b| b.id.clone())
+        .collect();
+    same.snapshot.captured_at = f.clock.now();
+    same.read_started = f.clock.now();
+    let plan = f.app.prepare_host_link(same.clone()).unwrap();
+    let mut commit = relink(&f, &plan, 2);
+    commit.grant.valid_until.ticks_ns =
+        Counter(plan.prepared_at.ticks_ns.0 + plan.ttl_ms.0 * 1_000_000);
+    let rebound = f.app.commit_host_link(commit).unwrap();
+    assert_eq!(rebound.session, producer.id);
+
+    // The Host now restarts on the same storage: a plain re-admission of the rebound
+    // generation must still work, and the old grant of the rebound generation is live.
+    let session = f
+        .app
+        .authenticated_terminal_user_session(
+            &release.principal,
+            id(),
+            Counter(99_000),
+            Digest::from_bytes([77; 32]),
+        )
+        .unwrap();
+    let release = Identity {
+        session: session.id,
+        ..release
+    };
+    f.app
+        .approve_host_readmission(&release, &id(), approve(&rebound, &journal))
+        .unwrap();
+    let next = restart(&mut f, &same, &journal);
+    let plan = f.app.prepare_host_link(next.clone()).unwrap();
+    let mut commit = relink(&f, &plan, 3);
+    commit.grant.valid_until.ticks_ns =
+        Counter(plan.prepared_at.ticks_ns.0 + plan.ttl_ms.0 * 1_000_000);
+    let third = f.app.commit_host_link(commit).unwrap();
+    assert_eq!(third.boot_id, next.snapshot.host_boot);
+    assert_ne!(third.session, rebound.session);
+}
+#[test]
 fn readmission_requires_the_named_generation_and_both_kept_journals() {
     let (mut f, input, first) = linked();
     let journal = input.snapshot.evidence_journal.clone();

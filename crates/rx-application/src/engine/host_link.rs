@@ -478,10 +478,12 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                     {
                         return reject(Reject::ContinuityUnproven);
                     }
+                    // A boot can be registered more than once (a retained Host rebound after
+                    // a P restart), so the session identifies the replaced registration.
                     save(
                         tx,
                         "hostregistrationhistory",
-                        (&plan.cell, &plan.host, &old.boot_id),
+                        (&plan.cell, &plan.host, &old.boot_id, &old.session),
                         None,
                         HOST,
                         &old,

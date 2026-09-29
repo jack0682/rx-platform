@@ -87,8 +87,8 @@ pub(super) fn expected_configuration(
 }
 /// True when `previous` is the registration an approval replaces and the linking Host keeps
 /// both journals of that storage: either a different boot (the Host restarted), or the same
-/// boot whose registered session belongs to an earlier P runtime (only P restarted). A live
-/// session of the current runtime is never replaceable this way.
+/// boot whose registered session is retired (P restarted, or the producer session was
+/// replaced). A live session of the current runtime is never replaceable this way.
 pub(super) fn covers(
     r: &ra::Record,
     previous: &HostRegistration,
@@ -106,7 +106,7 @@ pub(super) fn covers(
         && delivery_journal == &r.delivery_journal
         && evidence_journal == &r.evidence_journal
 }
-/// A registration's session is retired once it no longer belongs to the current runtime.
+/// A registration's session is retired once it is gone, inactive, or of an earlier runtime.
 pub(super) fn session_retired(
     tx: &mut dyn Transaction,
     meta: &Installation,

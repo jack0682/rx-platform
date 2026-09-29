@@ -1,5 +1,5 @@
 //! Explicit re-admission of a replaced Host generation: a restarted Host (new boot) or a
-//! retained Host after a P restart (same boot, session of an earlier runtime). Approval only
+//! retained Host whose registered session is retired (same boot; P restarted). Approval only
 //! permits the next host link to replace the recorded registration; it restores no grant, Arm, qualification,
 //! permit or Run, and the cell blocks raised by the restart stay latched.
 use rx_domain::types::*;

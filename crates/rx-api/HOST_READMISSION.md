@@ -13,8 +13,9 @@ second one is refused as busy until every cell has been re-linked.
 The approval does not change a registration by itself. The next authenticated Host
 link may replace a registration of the named generation when it keeps both journals and
 either has a new boot (the Host restarted) or has the same boot with a registered session
-that belongs to an earlier P runtime (only P restarted, the Host was retained). A live
-session of the current runtime is never replaced this way. A retained Host may still hold the
+that is retired: of an earlier P runtime (only P restarted, the Host was retained) or
+deactivated by a producer replacement. A live session of the current runtime is never
+replaced this way. A retained Host may still hold the
 earlier runtime's grant, so its link is refused as busy until that grant has lapsed (grants
 are at most 30 s and are not renewed while P is down).
 
