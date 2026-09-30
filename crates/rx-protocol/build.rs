@@ -10,6 +10,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "spec/host-read/v1/binding.json",
         "spec/host-configuration/v1/binding.json",
         "spec/host-qualification/v1/binding.json",
+        "spec/resident-reporting/v1/binding.json",
     ] {
         let binding = workspace.join(relative_binding);
         let manifest: serde_json::Value = serde_json::from_slice(&std::fs::read(&binding)?)?;
@@ -48,6 +49,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 root.join("rx/host/read/v1/read.proto"),
                 root.join("rx/host/configuration/v1/configuration.proto"),
                 root.join("rx/host/qualification/v1/qualification.proto"),
+                root.join("rx/resident/reporting/v1/reporting.proto"),
             ],
             std::slice::from_ref(&root),
         )?;

@@ -5,7 +5,7 @@ use rx_domain::component::{Declaration, Registration, RegistrationState};
 const COMPONENT: &str = "rx.internal.resident-component.v1";
 const SNAPSHOT: &str = "rx.resident-component-view.v1";
 
-fn author(
+pub(super) fn author(
     tx: &mut dyn Transaction,
     identity: &Identity,
     meta: &Installation,
@@ -19,7 +19,7 @@ fn author(
     Ok(principal)
 }
 
-fn owned(
+pub(super) fn owned(
     tx: &mut dyn Transaction,
     principal: &Principal,
     meta: &Installation,

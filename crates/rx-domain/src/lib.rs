@@ -7,6 +7,7 @@ pub mod epoch;
 pub mod fault;
 pub mod intent;
 pub mod operation;
+pub mod resident_reporting;
 pub mod types;
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]

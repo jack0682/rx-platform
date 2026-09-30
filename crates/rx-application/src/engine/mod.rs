@@ -86,6 +86,7 @@ mod reconciliation;
 mod requalification;
 mod requests;
 mod resident_component;
+mod resident_reporting;
 mod run_configuration;
 mod runtime_restrictions;
 mod runtime_skill;
