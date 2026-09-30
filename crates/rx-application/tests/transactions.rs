@@ -129,6 +129,8 @@ impl Repository for FaultRepository {
     }
 }
 type App = Engine<FaultRepository, ManualClock, SimulationAuthority>;
+#[path = "support/resident_component_tests.rs"]
+mod resident_component_tests;
 struct Fixture {
     _directory: tempfile::TempDir,
     app: App,

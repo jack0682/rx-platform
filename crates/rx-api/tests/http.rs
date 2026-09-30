@@ -13,6 +13,8 @@ use rx_application::*;
 use rx_domain::types::*;
 #[path = "support/operator_start_http.rs"]
 mod operator_start_http;
+#[path = "support/resident_component_http.rs"]
+mod resident_component_http;
 mod support;
 use rx_runtime::{
     application::{Application, Command, Handle, Reply},
