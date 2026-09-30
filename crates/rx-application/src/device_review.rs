@@ -71,10 +71,34 @@ pub struct Version {
     pub recorded_at: TimePoint,
 }
 impl Version {
+    /// Identity of what was reviewed and who recorded it. The recording time stays in the record
+    /// but not in the digest, so a binding plan prepared from an offline review can name the
+    /// review before P records it.
     pub fn digest(&self) -> Result<Digest, String> {
-        let mut v = self.clone();
-        v.review_digest = Digest::from_bytes([0; 32]);
-        canonical::digest("RX-DEVICE-REVIEW-VERSION-v1", &v).map_err(|e| e.to_string())
+        #[derive(Serialize)]
+        struct Reviewed<'a> {
+            review: &'a Id,
+            cell: &'a Name,
+            revision: Counter,
+            checker_digest: Digest,
+            report_digest: Digest,
+            report: &'a Report,
+            signature: &'a SignatureEnvelope,
+            ready_for_software_approval: bool,
+            recorded_by: &'a Name,
+        }
+        let reviewed = Reviewed {
+            review: &self.review,
+            cell: &self.cell,
+            revision: self.revision,
+            checker_digest: self.checker_digest,
+            report_digest: self.report_digest,
+            report: &self.report,
+            signature: &self.signature,
+            ready_for_software_approval: self.ready_for_software_approval,
+            recorded_by: &self.recorded_by,
+        };
+        canonical::digest("RX-DEVICE-REVIEW-VERSION-v2", &reviewed).map_err(|e| e.to_string())
     }
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]

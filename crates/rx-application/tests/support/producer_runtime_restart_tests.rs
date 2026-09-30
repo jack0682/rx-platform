@@ -1,5 +1,7 @@
 use super::*;
-use rx_application::{persistence as p, runtime_invalidation as origin};
+use rx_application::{
+    device_invalidation as device, persistence as p, runtime_invalidation as origin,
+};
 use std::sync::Mutex;
 
 // Test-only shared access to the same repository lets assertions inspect or inject
@@ -95,6 +97,20 @@ impl Restarted {
                 }
                 records.sort_by(|a, b| a.key.cmp(&b.key));
                 Ok(records)
+            })
+            .unwrap()
+    }
+    fn device_origins(&mut self) -> Vec<device::DeviceInvalidationOrigin> {
+        self.repository
+            .transact(|tx| {
+                let mut out = Vec::new();
+                for row in tx.scan("deviceinvalidationorigin/")? {
+                    out.push(p::decode::<device::DeviceInvalidationOrigin>(
+                        &row,
+                        device::SCHEMA,
+                    )?);
+                }
+                Ok(out)
             })
             .unwrap()
     }
@@ -263,6 +279,7 @@ fn p_only_restart_replaces_only_evidence_session_and_preserves_all_authority_rec
             assert_eq!(f.authorities(), before);
             assert_eq!(f.repository.pending_outbox(128).unwrap(), outbox);
             assert_eq!(f.device_restarts(), 0);
+            assert!(f.device_origins().is_empty());
             let producer = f.app.current_evidence_producer(&f.principal).unwrap();
             assert_eq!(producer.session, next.id);
             assert_eq!(producer.peer_boot, f.pin.boot);
@@ -359,6 +376,22 @@ fn changed_host_journal_authentication_or_session_validity_still_adds_device_res
         let before = f.device_restarts();
         f.reopen(&pin).unwrap();
         assert_eq!(f.device_restarts(), before + 1, "{change}");
+        // Exactly one ProducerReplaced origin is recorded for the one affected cell, naming the
+        // superseded registration generation and the new producer boot/session.
+        let origins = f.device_origins();
+        assert_eq!(origins.len(), 1, "{change}");
+        let device::DeviceInvalidationCause::ProducerReplaced {
+            previous_boot,
+            previous_session,
+            ..
+        } = &origins[0].cause
+        else {
+            panic!("expected ProducerReplaced for {change}");
+        };
+        assert_eq!(*previous_boot, f.pin.boot, "{change}");
+        assert_eq!(*previous_session, f.old_session.id, "{change}");
+        assert_eq!(origins[0].cell, name("cell/a"), "{change}");
+        assert!(origins[0].digest().is_ok(), "{change}");
     }
 }
 
@@ -431,6 +464,13 @@ fn absent_or_wrong_boot_configuration_and_scope_coverage_cannot_suppress_invalid
         change_coverage(&mut f, &name("cell/a"), kind);
         f.reopen(&f.pin.clone()).unwrap();
         assert_eq!(f.device_restarts(), 1, "{kind}");
+        // A scope vector that disagrees with the configured scopes still gets the block, but no
+        // provenance, so the block has no release path.
+        assert_eq!(
+            f.device_origins().len(),
+            usize::from(kind != "scopes"),
+            "{kind}"
+        );
     }
 }
 
@@ -481,6 +521,7 @@ fn runtime_only_session_replacement_recovers_commit_loss_without_repeated_invali
         assert_ne!(next.id, f.old_session.id);
         assert_eq!(f.authorities(), before);
         assert_eq!(f.device_restarts(), 0);
+        assert!(f.device_origins().is_empty());
         let mut after = Counter(0);
         let mut opened = 0;
         loop {
@@ -549,6 +590,15 @@ fn prior_source_generation_loss_remains_restricted_after_p_runtime_evidence_reco
     let outbox = f.repository.pending_outbox(128).unwrap();
     let prior_losses = f.device_restarts();
     assert_eq!(prior_losses, 1);
+    // The source-generation loss recorded exactly one SourceGenerationChanged origin naming the
+    // superseded source generation, and a later P-only reconnect never fabricates another.
+    let losses = f.device_origins();
+    assert_eq!(losses.len(), 1);
+    assert!(matches!(
+        &losses[0].cause,
+        device::DeviceInvalidationCause::SourceGenerationChanged { source, generation, .. }
+            if *source == name("ready") && *generation == changed_source
+    ));
     let fact = before
         .iter()
         .find(|record| record.document.schema.as_str() == "rx.internal.fact.v1")
@@ -569,6 +619,7 @@ fn prior_source_generation_loss_remains_restricted_after_p_runtime_evidence_reco
     assert_eq!(f.authorities(), before);
     assert_eq!(f.repository.pending_outbox(128).unwrap(), outbox);
     assert_eq!(f.device_restarts(), prior_losses);
+    assert_eq!(f.device_origins().len(), 1);
 }
 
 #[test]

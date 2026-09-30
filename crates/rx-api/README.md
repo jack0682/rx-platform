@@ -54,6 +54,7 @@ The following is an **initial browser BFF binding**. Do not treat it as the comp
 | GET `/api/v1/run/checkpoint/artifact` | run, sha256, schema_id, size_bytes, cookie | Exact canonical bytes of a run-owned reference; recheck current cell access/hash/size |
 | POST `/api/v1/runs` | request_key, command: CreateRun | Operator + cell scope; persist run preparation and request result |
 | POST `/api/v1/runs/start` | request_key, command: StartRun | All existing application start checks; this listener has terminal=None and cannot pass start authorization |
+| POST `/api/v1/runs/abandon` | request_key, command: `{run, expected_run}` | Terminal-bound Operator + cell scope. Records abandonment after investigation of a PREPARED (never started), PAUSED or RECOVERY_REQUIRED run with nothing in flight: every operation concluded, no active mandate, issued permit or pending start attempt, else `BUSY`. Releases no resource, budget, block or case |
 | POST `/api/v1/cells/hold` | request_key, command: `{cell}` | Operator; revoke related authority and record blocks/outbox, separately from physical-stop confirmation |
 
 Mutation keys are canonical UUIDs. Login bodies are limited to 4 KiB; ordinary requests to 1 MiB. Duplicate/unknown JSON fields are rejected before/during typed decoding. Changed content under the same key produces `KEY_CONFLICT`. The UI distinguishes known rejection from response loss.

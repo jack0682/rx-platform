@@ -1,4 +1,6 @@
-//! Immutable origin of a RuntimeRestart restriction. Provenance is not permission to clear it.
+//! Immutable origin of a restriction the platform runtime itself raised: the RuntimeRestart block
+//! a new runtime adds to every cell, or the AuthorityRevoked block a runtime stop request adds.
+//! Provenance is not permission to clear it.
 use crate::{Block, BlockReason, Cell, CellConfiguration, Installation, persistence};
 use rx_domain::{canonical, types::*};
 use rx_ports::{Result, StoreError, Transaction};
@@ -31,6 +33,10 @@ pub struct RuntimeInvalidationOrigin {
     pub runtime_boot: Id,
     pub before: CellBoundary,
     pub after: CellBoundary,
+    /// Set when the stop request `stop` of the runtime raised this AuthorityRevoked block; both
+    /// boots then name that runtime. Absent for RuntimeRestart, whose bytes stay unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stop: Option<Id>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -50,7 +56,17 @@ pub struct RuntimeRestrictions {
 }
 impl RuntimeInvalidationOrigin {
     pub fn validate(&self) -> std::result::Result<(), String> {
-        if self.previous_runtime_boot == self.runtime_boot
+        let cause_matches = match self.stop {
+            None => {
+                self.previous_runtime_boot != self.runtime_boot
+                    && self.block.reason == BlockReason::RuntimeRestart
+            }
+            Some(_) => {
+                self.previous_runtime_boot == self.runtime_boot
+                    && self.block.reason == BlockReason::AuthorityRevoked
+            }
+        };
+        if !cause_matches
             || self.before.revision.0 == 0
             || self.before.epoch.0 == 0
             || self.before.revision.0.checked_add(1) != Some(self.after.revision.0)
@@ -63,7 +79,6 @@ impl RuntimeInvalidationOrigin {
                 epoch.0 == 0
                     || epoch.0.checked_add(1) != self.after.scope_epochs.get(scope).map(|v| v.0)
             })
-            || self.block.reason != BlockReason::RuntimeRestart
             || !self.block.latched
             || self.block.case_id.is_some()
             || self.block.created_revision != Some(self.after.revision)
@@ -87,7 +102,7 @@ pub fn configuration_digest(
     let bytes = canonical::bytes(configuration).map_err(|e| e.to_string())?;
     Ok(rx_package::content_digest(&bytes))
 }
-fn boundary(revision: Counter, cell: &Cell) -> Result<CellBoundary> {
+pub(crate) fn boundary(revision: Counter, cell: &Cell) -> Result<CellBoundary> {
     Ok(CellBoundary {
         revision,
         epoch: cell.epoch,
@@ -96,7 +111,7 @@ fn boundary(revision: Counter, cell: &Cell) -> Result<CellBoundary> {
             .map_err(StoreError::Integrity)?,
     })
 }
-fn same<T: Serialize>(left: &T, right: &T) -> Result<bool> {
+pub(crate) fn same<T: Serialize>(left: &T, right: &T) -> Result<bool> {
     Ok(
         canonical::bytes(left).map_err(|e| StoreError::Integrity(e.to_string()))?
             == canonical::bytes(right).map_err(|e| StoreError::Integrity(e.to_string()))?,
@@ -112,10 +127,63 @@ pub(crate) fn record_restart(
     before: &Cell,
     after: &Cell,
 ) -> Result<()> {
-    if previous.id != current.id
-        || previous.store_generation != current.store_generation
-        || before.configuration.id != after.configuration.id
-    {
+    if previous.id != current.id || previous.store_generation != current.store_generation {
+        return Err(StoreError::Integrity(
+            "runtime invalidation installation or cell changed".into(),
+        ));
+    }
+    let origin = origin(
+        tx,
+        current,
+        &previous.runtime_boot,
+        None,
+        before_revision,
+        before,
+        after,
+    )?;
+    origin.validate().map_err(StoreError::Integrity)?;
+    persistence::save(tx, PREFIX, &origin.block.id, None, SCHEMA, &origin)?;
+    Ok(())
+}
+
+/// Record the AuthorityRevoked block the stop request `stop` just added to `before`'s cell.
+/// A cell whose epochs or scopes disagree with its configuration cannot carry well-formed
+/// provenance; its block still stands, keeps no origin and so has no release path. Recording
+/// never keeps the runtime from stopping.
+pub(crate) fn record_stop(
+    tx: &mut dyn Transaction,
+    current: &Installation,
+    stop: &Id,
+    before_revision: Counter,
+    before: &Cell,
+) -> Result<()> {
+    let (_, after): (_, Cell) = persistence::load(tx, "cell", &before.configuration.id, CELL)?;
+    let origin = origin(
+        tx,
+        current,
+        &current.runtime_boot,
+        Some(stop.clone()),
+        before_revision,
+        before,
+        &after,
+    )?;
+    if origin.validate().is_ok() {
+        persistence::save(tx, PREFIX, &origin.block.id, None, SCHEMA, &origin)?;
+    }
+    Ok(())
+}
+
+/// The origin of the one block `after` adds to `before`, as stored in this transaction.
+fn origin(
+    tx: &mut dyn Transaction,
+    current: &Installation,
+    previous_runtime_boot: &Id,
+    stop: Option<Id>,
+    before_revision: Counter,
+    before: &Cell,
+    after: &Cell,
+) -> Result<RuntimeInvalidationOrigin> {
+    if before.configuration.id != after.configuration.id {
         return Err(StoreError::Integrity(
             "runtime invalidation installation or cell changed".into(),
         ));
@@ -153,19 +221,59 @@ pub(crate) fn record_restart(
             "runtime invalidation cell was not stored at this boundary".into(),
         ));
     }
-    let origin = RuntimeInvalidationOrigin {
+    Ok(RuntimeInvalidationOrigin {
         installation: current.id.clone(),
         store_generation: current.store_generation.clone(),
         cell: after.configuration.id.clone(),
         block: block.clone(),
-        previous_runtime_boot: previous.runtime_boot.clone(),
+        previous_runtime_boot: previous_runtime_boot.clone(),
         runtime_boot: current.runtime_boot.clone(),
         before: boundary(before_revision, before)?,
         after: boundary(after_revision, after)?,
-    };
-    origin.validate().map_err(StoreError::Integrity)?;
-    persistence::save(tx, PREFIX, &origin.block.id, None, SCHEMA, &origin)?;
-    Ok(())
+        stop,
+    })
+}
+
+/// Whether the current runtime already restricts every cell in `cells` with a RuntimeRestart
+/// block whose origin ends exactly `previous_boot`, for the current configuration and the whole
+/// scope vector. A peer whose last session belonged to `previous_boot` then reconnects after a
+/// P-only restart: its authority was already revoked, with provenance, by that restriction. A
+/// reason string, an older boot's origin or a changed configuration is insufficient.
+pub(crate) fn restart_covers<'a>(
+    tx: &mut dyn Transaction,
+    meta: &Installation,
+    previous_boot: &Id,
+    cells: impl IntoIterator<Item = &'a Name>,
+) -> Result<bool> {
+    let mut any = false;
+    for cell_id in cells {
+        any = true;
+        let (_, cell): (_, Cell) = persistence::load(tx, "cell", cell_id, CELL)?;
+        let configuration =
+            configuration_digest(&cell.configuration).map_err(StoreError::Integrity)?;
+        let mut covered = false;
+        for block in cell
+            .blocks
+            .iter()
+            .filter(|block| block.latched && block.reason == BlockReason::RuntimeRestart)
+        {
+            let Some(origin) = read_for_cell(tx, meta, cell_id, &block.id)? else {
+                continue;
+            };
+            if origin.runtime_boot == meta.runtime_boot
+                && &origin.previous_runtime_boot == previous_boot
+                && origin.after.configuration_digest == configuration
+                && origin.after.scope_epochs.keys().collect::<BTreeSet<_>>()
+                    == cell.scope_epochs.keys().collect()
+            {
+                covered = true;
+            }
+        }
+        if !covered {
+            return Ok(false);
+        }
+    }
+    Ok(any)
 }
 
 /// Read a historical origin. Absence stays absence; a reason string never synthesizes provenance.
@@ -200,9 +308,12 @@ pub fn read_for_cell(
         .get(&persistence::name("installation/current"))?
         .ok_or_else(|| StoreError::Integrity("runtime installation absent".into()))?;
     let live: Installation = persistence::decode(&record, INSTALLATION)?;
+    // An origin recorded before a restore, in the generation the restored cut was written
+    // under, is still this ledger's history; any other generation is not.
     if !same(&live, installation)?
         || origin.installation != installation.id
-        || origin.store_generation != installation.store_generation
+        || !crate::engine::store_restore::lineage(tx, &installation.store_generation)?
+            .contains(&origin.store_generation)
         || origin.cell != *cell_id
     {
         return Err(StoreError::Integrity(

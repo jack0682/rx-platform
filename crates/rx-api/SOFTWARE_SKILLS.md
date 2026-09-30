@@ -1,5 +1,9 @@
 # Local simulation skill service
 
+The unreleased [skill process draft](SKILL_PROCESSES.md) adds server-owned
+composition, child execution lineage and versioned metric projections. It is a
+continuation toward the full framework goal, not proof of device integration.
+
 The `rx-skill-server` executable is a developer preview for registering versioned
 Python computations and recording their execution. It uses `rx-application` policy,
 the existing bounded `rx-runtime::writer`, `rx-storage::SqliteRepository`, and

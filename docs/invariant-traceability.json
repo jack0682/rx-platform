@@ -5,15 +5,21 @@
   "source_limit": "IDs come from local vendored documents. cell_operations/v1.0/05_validation_audit.md is outside the four normative-document hashes and can drift independently between repositories.",
   "summary": {
     "total": 30,
-    "declared": 10,
-    "uncovered": 20
+    "declared": 21,
+    "uncovered": 9
   },
   "invariants": [
     {
       "id": "I01",
-      "status": "uncovered",
-      "reason": "No end-to-end binding is declared that jointly observes the preceding platform intent commit and Host SEND_ENTERED for a normal native effect.",
-      "tests": []
+      "status": "declared",
+      "reason": "Platform half only: P's committed intent precedes its Prepare and Authorize emission. The Host SEND_ENTERED journal commit before the native write belongs to the Host in rx-solutions and is not observed here.",
+      "tests": [
+        {
+          "file": "crates/rx-application/tests/support/invariant_evidence_tests.rs",
+          "name": "intent_commit_precedes_every_emission_and_an_unentered_send_is_refused",
+          "reason": "After an injected T1 rollback no Prepare or Authorize is pending; the retry queues exactly one Prepare naming the committed operation and its Issued permit. SEND_ENTERED for the not-yet-entered Prepare is refused and the work stays NotSent. An Authorize appears only after the Prepared receipt, and SEND_ENTERED on it consumes the permit."
+        }
+      ]
     },
     {
       "id": "I02",
@@ -46,9 +52,20 @@
     },
     {
       "id": "I04",
-      "status": "uncovered",
-      "reason": "No binding is declared for the full completion-evidence rule versus timeout, idle and BT-only success; reviewed domain/native-result tests are narrower.",
-      "tests": []
+      "status": "declared",
+      "reason": "Platform conclusion under a native completion rule in a simulated cell. Driver-side timeout handling and BT internals are not exercised.",
+      "tests": [
+        {
+          "file": "crates/rx-application/tests/support/invariant_evidence_tests.rs",
+          "name": "succeeded_comes_only_from_rule_evidence_not_timeout_idle_or_executor_claims",
+          "reason": "A ResultCaptured receipt, the executor's part-completion claim (ConditionUnknown), a GOOD idle fact, the clock passing the execution timeout with its watchdog invalidation, and a native return with a status schema the rule does not name each leave outcome None with no evidence. Only the rule's status record settles Succeeded, with exactly that evidence."
+        },
+        {
+          "file": "crates/rx-application/tests/transactions.rs",
+          "name": "native_receipt_capture_does_not_stand_in_for_completion_policy",
+          "reason": "Under an Unobservable completion rule, a receipt plus correlated native evidence leave outcome None and phase Reconciling."
+        }
+      ]
     },
     {
       "id": "I05",
@@ -65,14 +82,20 @@
     {
       "id": "I06",
       "status": "uncovered",
-      "reason": "No reviewed binding is declared for rejection of samples from restarted or expired control-stream sessions.",
+      "reason": "Not platform-local. Control samples are never relayed through platform RPC (contracts 02 section 6); session_id/source_seq replay rejection and session closure after restart or expiry are enforced by the Host in rx-solutions. P refuses CONTROL_SESSION admission (engine/executor_requests.rs, engine/reconciliation.rs), so no platform test can observe sample replay.",
       "tests": []
     },
     {
       "id": "I07",
-      "status": "uncovered",
-      "reason": "No binding is declared for the complete atomic bundle of decision inputs, outcome, events and revisions. Reviewed T2 replay tests alone are not that complete assertion.",
-      "tests": []
+      "status": "declared",
+      "reason": "One native-evidence T2 commit under an injected pre-commit rollback and a committed-but-lost reply. Other decision commits (checkpoint, release, observation batch) are not asserted by this binding.",
+      "tests": [
+        {
+          "file": "crates/rx-application/tests/support/invariant_evidence_tests.rs",
+          "name": "t2_fault_leaves_no_partial_decision_and_the_retry_records_the_bundle_once",
+          "reason": "A rolled-back commit leaves the operation, including its revision, unchanged and the native evidence unreadable. After the retry, for both faults, the revision rose by exactly one, Succeeded names exactly the native and condition evidence, and the store holds one evidence, slot and cursor row, one outcome-bearing control change equal to the stored work, and one applied audit event."
+        }
+      ]
     },
     {
       "id": "I08",
@@ -93,9 +116,35 @@
     },
     {
       "id": "I09",
-      "status": "uncovered",
-      "reason": "No binding is declared for combined gap, reboot and time-uncertainty reporting; evaluator freshness cases alone do not establish that reporting boundary.",
-      "tests": []
+      "status": "declared",
+      "reason": "Platform Host-read ingestion, diagnostics and evidence-journal continuity. Host boot detection and silent device reboots are Host/device-side. Observation facts carry no sample sequence, so observation gaps are bounded by age expiry. The in-process direct fact-report path, which no ingress reaches, is not covered.",
+      "tests": [
+        {
+          "file": "crates/rx-application/tests/support/invariant_session_tests.rs",
+          "name": "host_read_delay_unorderable_time_and_excess_uncertainty_never_present_a_fresh_sample",
+          "reason": "Freshness is measured from acquisition: a read delivered at the age limit passes, and one tick later is AgeExceeded, Unknown and refused at start. A foreign clock, a capture after P's now or excess uncertainty is refused with no fact stored and diagnostics reporting a missing, unusable source."
+        },
+        {
+          "file": "crates/rx-application/tests/transactions.rs",
+          "name": "observation_generation_loss_is_latched_once_and_does_not_adopt_the_new_source",
+          "reason": "A changed source generation is reported GenerationChanged, the stored fact is not GOOD and the run is RecoveryRequired; a repeat report does not latch again."
+        },
+        {
+          "file": "crates/rx-application/tests/transactions.rs",
+          "name": "host_read_ingestion_checks_context_and_preserves_the_native_source_fields",
+          "reason": "A Host read carrying a different Host boot, or a future acquisition, is refused and no fact is stored; a delayed read keeps its native acquisition time."
+        },
+        {
+          "file": "crates/rx-application/tests/transactions.rs",
+          "name": "operator_diagnostics_share_the_condition_evaluator_and_do_not_change_authority",
+          "reason": "Past the maximum age with no new sample, diagnostics report AgeExceeded, an unusable source and Unknown while retaining the last value."
+        },
+        {
+          "file": "crates/rx-application/tests/transactions.rs",
+          "name": "evidence_gap_is_not_skipped_and_conflicting_sequence_is_quarantined",
+          "reason": "A native-evidence batch starting after a sequence gap is refused and the contiguous batch is accepted; a conflicting body for an accepted sequence leaves the operation Disputed and Quarantined."
+        }
+      ]
     },
     {
       "id": "I10",
@@ -111,21 +160,33 @@
     },
     {
       "id": "I11",
-      "status": "uncovered",
-      "reason": "No reviewed binding jointly connects UI, BT and native-return paths to the authoritative platform conclusion ledger.",
-      "tests": []
+      "status": "declared",
+      "reason": "Part completion is the consumer tested. The UI path is represented only by an operator identity refused at the engine API; HTTP routes and BT internals are not exercised.",
+      "tests": [
+        {
+          "file": "crates/rx-application/tests/support/invariant_evidence_tests.rs",
+          "name": "part_completion_follows_the_conclusion_ledger_not_receipts_executor_or_operator",
+          "reason": "After a ResultCaptured native-return receipt the outcome is None. Executor part completion is refused ConditionUnknown and the operator's attempt Forbidden, with the run still Executing. After the ledger concludes Succeeded from evidence, completion still waits for release, then confirms the part and completes the run."
+        }
+      ]
     },
     {
       "id": "I12",
       "status": "uncovered",
-      "reason": "No platform-local binding is declared for persistence-independent local protection. The reviewed Host callback example belongs to solutions and does not inject failed persistence.",
+      "reason": "Not platform-local. Predetermined protective reactions run in the Host and device-control path (rx-solutions profiles, controller or PLC protective functions). P has no protective-reaction path; its injected commit failures only roll back platform authority writes, which bears only on the clause that the exception authorizes no normal command.",
       "tests": []
     },
     {
       "id": "OI01",
-      "status": "uncovered",
-      "reason": "No reviewed binding is declared for all admitted-operation envelope, qualification, dependency and current-scope identities together.",
-      "tests": []
+      "status": "declared",
+      "reason": "Platform admission (T1) only. Dependency coverage is verified when qualification is registered and at restart, and configuration apply clears qualification; admission does not re-verify dependencies itself. The Host final gate is rx-solutions.",
+      "tests": [
+        {
+          "file": "crates/rx-application/tests/support/invariant_admission_tests.rs",
+          "name": "admitted_permit_binds_current_qualification_envelope_and_scope_vector",
+          "reason": "Intents whose site, profile or calibration digests differ from the qualified step are refused CapabilityMissing and write no work. The admitted permit binds the current qualification ID and revision, an envelope equal to the qualification's and the run's, and the cell's epoch vector. A hold voids it and revokes the mandate bound to the same vector."
+        }
+      ]
     },
     {
       "id": "OI02",
@@ -151,9 +212,15 @@
     },
     {
       "id": "OI03",
-      "status": "uncovered",
-      "reason": "No binding is declared for production, setup and recovery writes with all corresponding cell-aware purpose/parent checks.",
-      "tests": []
+      "status": "declared",
+      "reason": "Platform admission for PRODUCTION and SETUP. The platform has no RECOVERY purpose, so no recovery write can be admitted; the Host final gate is rx-solutions.",
+      "tests": [
+        {
+          "file": "crates/rx-application/tests/support/invariant_admission_tests.rs",
+          "name": "admission_binds_permit_purpose_and_rejects_a_parent_of_the_other_purpose",
+          "reason": "SETUP refuses parts and a part-bearing submit, and admits a partless operation with a Setup permit that consumes one operation unit. PRODUCTION refuses an activation without a part and a submit with no part or a foreign part, and admits only one naming the run's own part with a Production permit. Refused requests write no work."
+        }
+      ]
     },
     {
       "id": "OI04",
@@ -181,56 +248,100 @@
     },
     {
       "id": "OI06",
-      "status": "uncovered",
-      "reason": "No platform binding is declared for the complete permit field, consumption and expiry boundary; the Host map records limited gate scenarios.",
-      "tests": []
+      "status": "declared",
+      "reason": "P's permit record and emission gate. The Host's native gate and its own consumption journal are rx-solutions. P never assigns the Expired state, so expiry is enforced by time at emission.",
+      "tests": [
+        {
+          "file": "crates/rx-application/tests/support/invariant_authority_tests.rs",
+          "name": "permit_binds_operation_content_host_epoch_and_purpose_and_is_not_emitted_after_consumption_or_expiry",
+          "reason": "The permit names the operation, intent digest, Host and boot, cell epoch vector, mandate and Production purpose. Another Host cannot plan its delivery, and a foreign or altered-digest receipt is refused. Once SEND_ENTERED consumes it, its queued Authorize is refused StaleEpoch and stays New. Another operation's Authorize is refused after its permit expires. A hold voids the unconsumed permit and its Authorize."
+        }
+      ]
     },
     {
       "id": "OI07",
-      "status": "uncovered",
-      "reason": "The reviewed generic controller-reservation test does not stage two support-reducing operations on one material with reciprocal support PASS. No material-support conflict binding is declared.",
-      "tests": []
+      "status": "declared",
+      "reason": "P's T1 resource check (CO13 steps 1-4) when both intents name the common support resource. The platform has no MaterialState or alias model, so undeclared aliases are not detected (cell operations 01 section 6); maintained-support validation belongs to mechanics, profiles and local protection.",
+      "tests": [
+        {
+          "file": "crates/rx-application/tests/support/invariant_admission_tests.rs",
+          "name": "reciprocal_support_pass_does_not_admit_two_releases_of_one_common_support_resource",
+          "reason": "Each release requires the other device's support PASS. A second release naming the same support resource on another Host is refused Busy after its conditions are evaluated, leaving one work, one permit and no partial reservation; with distinct support resources both are admitted."
+        }
+      ]
     },
     {
       "id": "OI08",
       "status": "uncovered",
-      "reason": "No reviewed binding is declared for production restart while retaining every related case, person and external restriction.",
+      "reason": "P's half holds only in part. Admission (engine/admission.rs ready) now recomputes the cell's current closure and refuses while any related cell has an open case, including a cell installed after the case opened; transactions.rs a_cell_installed_later_on_a_shared_resource_cannot_start_while_a_related_case_is_open establishes that, but is not declared because the restart the invariant is about is not implemented: the case restart path never assigns READY_FOR_RESTART. Host restart gating is rx-solutions; personnel and external restrictions are site procedures.",
       "tests": []
     },
     {
       "id": "OI09",
-      "status": "uncovered",
-      "reason": "No reviewed binding spans acknowledgement, reset observation, work completion, revalidation and explicit new start as distinct actions.",
-      "tests": []
+      "status": "declared",
+      "reason": "P's records for case acknowledgement, procedure reports, requalification and start. Physical reset, HMI acknowledgement and Host restart behavior are outside. The case restart path is not implemented, so no case leads to a start.",
+      "tests": [
+        {
+          "file": "crates/rx-application/tests/support/invariant_change_tests.rs",
+          "name": "acknowledgement_work_completion_and_reset_observation_never_become_a_start",
+          "reason": "Acknowledging a case leaves it CONTAINMENT_PENDING and the cell byte-identical. Finished work leaves it PROCEDURE_ACTIVE, and personnel and handover only reach REVALIDATING with the cell restricted. The old run is refused MandateRevoked and a new one QualificationRequired. A reset observation returns the case to containment, clears the personnel and handover records and latches a new epoch."
+        },
+        {
+          "file": "crates/rx-application/tests/support/qualification_activation_tests.rs",
+          "name": "qualification_activation_is_atomic_clears_only_owned_blocks_and_requires_separate_start",
+          "reason": "Activation clears the owned blocks without creating a run in any cell; a separate CreateRun and StartRun only reaches Arming."
+        }
+      ]
     },
     {
       "id": "OI10",
-      "status": "uncovered",
-      "reason": "No reviewed binding is declared for the complete change-to-condition/qualification/clearance invalidation and new-epoch synchronization chain.",
-      "tests": []
+      "status": "declared",
+      "reason": "Reviewed process-change preparation and apply, configuration dispatch, and non-operating-close clearance. Reported device or tool changes are not asserted; Host fence application belongs to rx-solutions.",
+      "tests": [
+        {
+          "file": "crates/rx-application/tests/support/invariant_change_tests.rs",
+          "name": "a_prepared_change_voids_prior_authority_and_waits_for_the_new_epoch_fence",
+          "reason": "Preparation advances the cell and every scope epoch, sets RevalidationRequired and latches a ConfigurationChange block. The run loses its executor, the unsent permit is Voided, its work NotExecuted and the mandate Revoked. Every Host gets a fence with the new vector, and HostFenceUnconfirmed persists until the exact acknowledgement, refusing one labelled with the old epoch."
+        },
+        {
+          "file": "crates/rx-application/tests/support/configuration_dispatch_tests.rs",
+          "name": "configuration_apply_is_atomic_and_lost_reply_recovers_selection_epoch_and_history",
+          "reason": "Apply records and clears the previous qualification, sets RevalidationRequired, advances the epoch by one and adds a ConfigurationChange block; the change is applied but not activation-authorized and lists RequalificationRequired."
+        },
+        {
+          "file": "crates/rx-application/tests/support/configuration_dispatch_tests.rs",
+          "name": "configuration_dispatch_requires_fences_terminal_and_retains_one_task_after_commit_loss",
+          "reason": "Host configuration dispatch is refused HostNotPrepared until the preparation fences are acknowledged."
+        },
+        {
+          "file": "crates/rx-application/tests/transactions.rs",
+          "name": "non_operating_close_rechecks_time_case_epoch_evidence_and_current_actor",
+          "reason": "After a clearance is prepared, a hold, new condition evidence, a false or new-generation fact, or a new shared-scope cell each makes the close fail, leaving the case open with no out-of-service block."
+        }
+      ]
     },
     {
       "id": "OI11",
       "status": "uncovered",
-      "reason": "No platform binding is declared for executing old tokens after rollback; a reviewed restart-state test is narrower than replay prevention.",
+      "reason": "The backup-rollback clause does not meet its specification. Restore rotates the store generation, and the next start raises each epoch by one (engine/invalidation.rs) without comparing Host maxima; cell operations 04 section 6 and CO22 require a new epoch above P and related Host maxima. invariant_authority_tests.rs p_restart_and_backup_rollback_leave_no_old_mandate_or_permit_executable shows that P restart and restore revoke P's own mandates, permits and sessions. Host, executor and controller restarts are not bound here.",
       "tests": []
     },
     {
       "id": "OI12",
       "status": "uncovered",
-      "reason": "No reviewed binding establishes the prohibition on inferring actual safety-function performance from epistemic consistency, GOOD data or UI display.",
+      "reason": "Not platform-local. Actual safety-function performance is established only by OEM, functional-safety and site validation. P makes no such claim: its stop report sets physical_shutdown_assessed to false (engine/lifecycle.rs). The absence of such a claim in UI or other consumers is not testable here.",
       "tests": []
     },
     {
       "id": "OI13",
       "status": "uncovered",
-      "reason": "No reviewed binding is declared for control-stream session/epoch/sequence checks together with actual native-application ordering.",
+      "reason": "Not platform-local. Control-stream sessions, epochs, sequences and native application order are enforced by the Host's single consumer and command gate in rx-solutions (contracts 02 section 6). P carries no control stream and refuses CONTROL_SESSION admission; its own sequence checks cover evidence journals and receipts only.",
       "tests": []
     },
     {
       "id": "OI14",
       "status": "uncovered",
-      "reason": "No platform-local binding is declared for the local-protection obligation under DB or communication failure; callback independence alone is not this complete boundary.",
+      "reason": "Not platform-local. Protective reactions under DB, communication or condition failure belong to Host and device local protection and site validation. A platform storage failure only blocks new admission and dispatch and exercises no protective reaction.",
       "tests": []
     },
     {
@@ -270,13 +381,13 @@
     {
       "id": "OI17",
       "status": "uncovered",
-      "reason": "Pure ScopeEpochs tests are adjacent; no platform binding is declared for the Host old-Arm/Fence application behavior.",
+      "reason": "P's half does not hold under backup rollback: after a restore P fences at its restored epoch plus one (engine/invalidation.rs) instead of above the Host maxima that cell operations 04 section 6 and CO22 (tagged OI11 and OI17) require. Without a restore, invariant_change_tests.rs platform_epochs_only_advance_and_stale_arm_or_fence_replies_clear_nothing shows P's epochs only advance and stale Arm or Fence acknowledgements clear nothing. The Host's own epoch map is rx-solutions.",
       "tests": []
     },
     {
       "id": "OI18",
       "status": "uncovered",
-      "reason": "No reviewed binding exposes the whole P-invalidation-to-H-application interval and establishes the allocation of required physical reactions.",
+      "reason": "Not platform-local as a whole. P queues a fence per Host at invalidation and reports HostFenceUnconfirmed until an acknowledgement matches the current epoch vector (engine/lifecycle.rs, engine/process_change.rs). That exposes part of the interval but neither bounds it nor allocates physical reactions, which belong to Host application in rx-solutions and validated local protective functions.",
       "tests": []
     }
   ]

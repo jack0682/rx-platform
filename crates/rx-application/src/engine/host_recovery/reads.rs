@@ -140,7 +140,9 @@ pub(super) fn validate(
             .cells
             .iter()
             .find(|o| &o.cell == cell)
-            .unwrap();
+            .ok_or(StoreError::Integrity(
+                "configuration cell missing after cohort check".into(),
+            ))?;
         let expected_environment = match cut.configuration.environment {
             Environment::Simulation => "SIMULATION",
             Environment::Physical => "PHYSICAL",

@@ -59,11 +59,7 @@ fn invalidate_cell_for_pause(
         latched: true,
         scopes: cell.configuration.scopes.clone(),
     });
-    for record in tx.scan("run/")? {
-        let mut run: Run = decode(&record, RUN)?;
-        if run.cell != cell.configuration.id {
-            continue;
-        }
+    for (revision, mut run) in crate::run_index::live_runs(tx, &cell.configuration.id)? {
         if matches!(
             run.state,
             RunState::Executing | RunState::Prepared | RunState::Paused
@@ -75,7 +71,7 @@ fn invalidate_cell_for_pause(
             };
             run.executor_session = None;
             run.pending_attempt = None;
-            tx.put(&record.key, Some(record.revision), &doc(RUN, &run)?)?;
+            tx.put(&key("run", &run.id), Some(revision), &doc(RUN, &run)?)?;
         }
     }
     for record in tx.scan("attempt/")? {
@@ -245,6 +241,58 @@ fn invalidate_closure_for_pause(
     Ok(selected)
 }
 
+/// Same selection and mutation as `invalidate_closure`, but returns each invalidated cell's
+/// pre-invalidation (revision, cell) so the caller can record exactly the block it added. Used
+/// only where provenance is recorded in the same transaction; behavior is otherwise identical.
+pub(super) fn invalidate_closure_recording(
+    tx: &mut dyn Transaction,
+    origin: &Name,
+    reason: BlockReason,
+) -> Result<Vec<(Counter, Cell)>> {
+    let cells = tx
+        .scan("cell/")?
+        .into_iter()
+        .map(|r| Ok((r.revision, decode::<Cell>(&r, CELL)?)))
+        .collect::<Result<Vec<_>>>()?;
+    let selected = affected_cells_from(&cells, origin)?;
+    let mut before = Vec::new();
+    for (revision, cell) in cells {
+        if selected.contains(&cell.configuration.id) {
+            let mut mutated = cell.clone();
+            invalidate_cell_for_pause(tx, &mut mutated, revision, reason, None, None)?;
+            before.push((revision, cell));
+        }
+    }
+    Ok(before)
+}
+
+/// Device-restart invalidation of every cell that depends on this fact's source, recording an
+/// immutable `SourceGenerationChanged` origin for each block added. `host` is the registration
+/// whose source generation the fact superseded.
+pub(super) fn invalidate_fact_dependents_device(
+    tx: &mut dyn Transaction,
+    fact: &FactRecord,
+    host: &HostRegistration,
+) -> Result<()> {
+    let cause = crate::device_invalidation::DeviceInvalidationCause::SourceGenerationChanged {
+        source: fact.id.clone(),
+        previous_generation: host.source_sessions.get(&fact.id).cloned(),
+        generation: fact.source_generation.clone(),
+    };
+    for (before_revision, before) in invalidate_fact_closures(tx, fact, BlockReason::DeviceRestart)?
+    {
+        crate::device_invalidation::record(
+            tx,
+            &fact.source_host,
+            &host.cell,
+            cause.clone(),
+            before_revision,
+            &before,
+        )?;
+    }
+    Ok(())
+}
+
 pub(super) fn affected_cells(tx: &mut dyn Transaction, origin: &Name) -> Result<BTreeSet<Name>> {
     let cells = tx
         .scan("cell/")?
@@ -299,12 +347,22 @@ pub(super) fn invalidate_fact_dependents(
     fact: &FactRecord,
     reason: BlockReason,
 ) -> Result<()> {
+    invalidate_fact_closures(tx, fact, reason).map(drop)
+}
+/// Invalidate each closure that depends on this fact's source exactly once and return every
+/// invalidated cell's pre-invalidation (revision, cell).
+fn invalidate_fact_closures(
+    tx: &mut dyn Transaction,
+    fact: &FactRecord,
+    reason: BlockReason,
+) -> Result<Vec<(Counter, Cell)>> {
     let cells = tx
         .scan("cell/")?
         .iter()
         .map(|r| decode::<Cell>(r, CELL))
         .collect::<Result<Vec<_>>>()?;
     let mut visited = BTreeSet::new();
+    let mut invalidated = Vec::new();
     for cell in cells {
         if !visited.contains(&cell.configuration.id)
             && cell
@@ -313,10 +371,15 @@ pub(super) fn invalidate_fact_dependents(
                 .iter()
                 .any(|s| s.id == fact.id && s.host == fact.source_host)
         {
-            visited.extend(invalidate_closure(tx, &cell.configuration.id, reason)?);
+            for (revision, before) in
+                invalidate_closure_recording(tx, &cell.configuration.id, reason)?
+            {
+                visited.insert(before.configuration.id.clone());
+                invalidated.push((revision, before));
+            }
         }
     }
-    Ok(())
+    Ok(invalidated)
 }
 
 pub(super) fn invalidate_for_change(

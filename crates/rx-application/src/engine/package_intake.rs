@@ -45,10 +45,25 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             lifecycle::require_serving(tx)?;
             let k = name("packageintake/service");
             let old = tx.get(&k)?;
+            let previous = match &old {
+                Some(row) => decode::<Service>(row, SERVICE)?.registration,
+                None => None,
+            };
             let registration =
                 configuration.map(|(store_owner, policy_fingerprint, policy_file_digest)| {
+                    // An unchanged store, policy and policy file keep the last generation, so
+                    // reviews bound to it survive a runtime restart once this boot reconfirms
+                    // it. Any change or disablement in between issues a new generation.
+                    let generation = previous
+                        .as_ref()
+                        .filter(|r| {
+                            r.store_owner == store_owner
+                                && r.policy_fingerprint == policy_fingerprint
+                                && r.policy_file_digest == policy_file_digest
+                        })
+                        .map_or_else(id, |r| r.generation.clone());
                     Registration {
-                        generation: id(),
+                        generation,
                         store_owner,
                         policy_fingerprint,
                         policy_file_digest,
@@ -141,7 +156,7 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                     ticks_ns: Counter(
                         now.ticks_ns
                             .0
-                            .checked_add(30_000_000_000)
+                            .checked_add(TICKET_TTL_NS)
                             .ok_or(StoreError::Rejected(Reject::InvalidInput))?,
                     ),
                 },

@@ -32,6 +32,7 @@ pub(super) fn select(
         {
             return reject(Reject::StaleRevision);
         }
+        ended(meta, &actual)?;
         selected.push(actual);
     }
     Ok(selected)
@@ -46,6 +47,16 @@ pub(super) fn current(tx: &mut dyn Transaction, meta: &Installation, job: &q::Jo
         {
             return reject(Reject::StaleRevision);
         }
+        ended(meta, &actual)?;
+    }
+    Ok(())
+}
+
+/// A stop restriction is releasable only once the runtime that stopped is over; a RuntimeRestart
+/// origin always names a runtime that already ended.
+fn ended(meta: &Installation, origin: &RuntimeInvalidationOrigin) -> Result<()> {
+    if origin.stop.is_some() && origin.runtime_boot == meta.runtime_boot {
+        return reject(Reject::ContinuityUnproven);
     }
     Ok(())
 }

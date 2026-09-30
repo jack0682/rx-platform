@@ -100,8 +100,14 @@ pub(super) fn current_change(
     }
     Ok(c)
 }
-pub(super) fn barrier(tx: &mut dyn Transaction, c: &Change) -> Result<()> {
-    if c.host_binding_plan.is_some() {
+pub(super) fn barrier(tx: &mut dyn Transaction, meta: &Installation, c: &Change) -> Result<()> {
+    // A Host binding replacement may be configured and applied only while every plan Host
+    // runs the committed replacement as its currently registered generation.
+    if c.host_binding_plan.is_some()
+        && super::host_binding_transition::standings(tx, meta, c)?
+            .values()
+            .any(|s| *s != super::host_binding_transition::Standing::CommitCurrent)
+    {
         return reject(Reject::CapabilityMissing);
     }
     let ids: BTreeSet<_> = c.impact.cells.iter().map(|c| c.id.clone()).collect();
@@ -191,7 +197,7 @@ fn send_authorized(
     if !generation_matches(tx, t)? {
         return reject(Reject::ContinuityUnproven);
     }
-    barrier(tx, &c)
+    barrier(tx, meta, &c)
 }
 pub(super) fn summary(
     tx: &mut dyn Transaction,
@@ -343,7 +349,7 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             if prep.runtime_boot != meta.runtime_boot {
                 return reject(Reject::StaleRevision);
             }
-            barrier(tx, &c)?;
+            barrier(tx, meta, &c)?;
             for row in tx.scan("hostconfigtask/")? {
                 let t: Task = decode(&row, TASK)?;
                 if t.change == c.id

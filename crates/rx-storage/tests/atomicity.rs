@@ -30,6 +30,50 @@ fn scope() -> RequestScope {
 }
 
 #[test]
+fn prefix_scan_returns_exactly_the_keys_under_the_prefix_in_key_order() {
+    let (_temp, mut store) = open();
+    let keys = [
+        "cell/b",
+        "cell/a",
+        "cell",
+        "cell0/x",
+        "cellx/y",
+        "Cell/c",
+        "cel/d",
+        "cell/a/nested",
+        "run_1/a",
+        "run-1/a",
+    ];
+    store
+        .transact(|tx| {
+            for key in keys {
+                tx.put(&name(key), None, &doc(1))?;
+            }
+            Ok(())
+        })
+        .unwrap();
+    let scanned = |store: &mut SqliteRepository, prefix: &str| -> Vec<String> {
+        store
+            .transact(|tx| tx.scan(prefix))
+            .unwrap()
+            .into_iter()
+            .map(|r| r.key.as_str().to_owned())
+            .collect()
+    };
+    assert_eq!(
+        scanned(&mut store, "cell/"),
+        ["cell/a", "cell/a/nested", "cell/b"]
+    );
+    // Case is part of the key: another case is another key, as with any exact lookup.
+    assert_eq!(scanned(&mut store, "Cell/"), ["Cell/c"]);
+    // `_` is an ordinary key character, not a wildcard.
+    assert_eq!(scanned(&mut store, "run_"), ["run_1/a"]);
+    assert!(scanned(&mut store, "absent/").is_empty());
+    assert!(store.transact(|tx| tx.scan("")).is_err());
+    assert!(store.transact(|tx| tx.scan("cell%")).is_err());
+}
+
+#[test]
 fn one_transaction_commits_state_key_event_and_outbox() {
     let (_temp, mut store) = open();
     let key = name("run/example");
@@ -379,4 +423,47 @@ fn metadata_compatibility_upgrade_preserves_record_bytes_and_rejects_future_stor
     assert!(
         matches!(SqliteRepository::open(&path), Err(StoreError::Unavailable(message)) if message.contains("downgrade refused"))
     );
+}
+#[test]
+fn every_prior_schema_version_upgrades_to_current_and_keeps_rows() {
+    let migrations = [
+        include_str!("../migrations/0001.sql"),
+        include_str!("../migrations/0002.sql"),
+        include_str!("../migrations/0003.sql"),
+        include_str!("../migrations/0004.sql"),
+        include_str!("../migrations/0005.sql"),
+        include_str!("../migrations/0006.sql"),
+    ];
+    for applied in 1..migrations.len() {
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join(format!("from-{applied}.db"));
+        let old = rusqlite::Connection::open(&path).unwrap();
+        for migration in &migrations[..applied] {
+            old.execute_batch(migration).unwrap();
+        }
+        let version: i64 = old
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(version as usize, applied);
+        let bytes = rx_domain::canonical::bytes(&doc(7)).unwrap();
+        old.execute(
+            "INSERT INTO entities(key,revision,document) VALUES('legacy/row',1,?1)",
+            rusqlite::params![&bytes],
+        )
+        .unwrap();
+        drop(old);
+        let mut store = SqliteRepository::open(&path).unwrap();
+        store.check_integrity().unwrap();
+        let row = store
+            .transact(|tx| tx.get(&name("legacy/row")))
+            .unwrap()
+            .unwrap();
+        assert_eq!(rx_domain::canonical::bytes(&row.document).unwrap(), bytes);
+        drop(store);
+        let upgraded = rusqlite::Connection::open(&path).unwrap();
+        let version: i64 = upgraded
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(version, 6, "from {applied}");
+    }
 }

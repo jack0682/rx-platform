@@ -1,0 +1,189 @@
+{
+  "schema": "rx.engine-boundaries.v1",
+  "scope": "Module-level reference boundaries inside crates/rx-application/src/engine. Every module declared from engine/mod.rs belongs to one group; submodule files count for their top-level module.",
+  "rule": "A file may reference engine modules only from the groups that its own group lists in may_reference. Every other reference must be listed in allowed_violations with its current count. That list records seams to remove, not permissions: entries and counts may only decrease.",
+  "analysis_limit": "Textual resolution of super::, crate::engine:: and bare module paths that reach an engine module through the use super::* chain, outside #[cfg(test)] items. The checker does not type-check, follow re-exports, or see macro-generated paths, and it does not judge whether a reference is appropriate.",
+  "groups": {
+    "core": {
+      "description": "Generic runtime: admission, identity and access, lifecycle, evidence and delivery, dispatch, reconciliation and settlement, invalidation, observation, host link and recovery, peers, requests, queries, diagnostics, runtime and device restriction reads, store restore.",
+      "may_reference": ["core"],
+      "modules": [
+        "mod",
+        "access",
+        "admission",
+        "delivery",
+        "device_restrictions",
+        "diagnostics",
+        "dispatch",
+        "evidence",
+        "executor_peer",
+        "host_link",
+        "host_readmission",
+        "host_recovery",
+        "identity",
+        "invalidation",
+        "lifecycle",
+        "observation",
+        "operator_peer",
+        "pause",
+        "producer",
+        "queries",
+        "reconciliation",
+        "requests",
+        "runtime_restrictions",
+        "settlement",
+        "store_restore"
+      ]
+    },
+    "cell": {
+      "description": "Cell and production domain: workflow, production, handover, operator start, assignment, run configuration, closure, intervention, procedure, process execution and checkpoints, executor requests, runtime skills, cell configuration.",
+      "may_reference": ["cell", "core"],
+      "modules": [
+        "assignment",
+        "checkpoint_change",
+        "closure",
+        "configuration",
+        "execution_read",
+        "executor_requests",
+        "handover",
+        "intervention",
+        "operator_start",
+        "procedure",
+        "process",
+        "process_transition",
+        "production",
+        "run_configuration",
+        "runtime_skill",
+        "workflow"
+      ]
+    },
+    "change_control": {
+      "description": "Change control and qualification: package intake, drafts and their bindings, reviews, process change, apply, host configuration dispatch, host binding intents, requalification, qualification activation.",
+      "may_reference": ["change_control", "core"],
+      "modules": [
+        "configuration_dispatch",
+        "device_binding",
+        "device_review",
+        "draft_bindings",
+        "host_binding_transition",
+        "package_intake",
+        "process_apply",
+        "process_change",
+        "process_draft",
+        "process_review",
+        "qualification_activation",
+        "requalification"
+      ]
+    }
+  },
+  "allowed_violations": [
+    {
+      "file": "crates/rx-application/src/engine/admission.rs",
+      "module": "qualification_activation",
+      "references": 2,
+      "reason": "Cell readiness consults qualification activation state (check_ready) and the run purpose (purpose)."
+    },
+    {
+      "file": "crates/rx-application/src/engine/admission.rs",
+      "module": "run_configuration",
+      "references": 1,
+      "reason": "Run admission requires the run's bound configuration to be current (require_current)."
+    },
+    {
+      "file": "crates/rx-application/src/engine/assignment.rs",
+      "module": "process_change",
+      "references": 2,
+      "reason": "Assignment candidates compare configuration references through process_change::config_ref."
+    },
+    {
+      "file": "crates/rx-application/src/engine/delivery.rs",
+      "module": "qualification_activation",
+      "references": 1,
+      "reason": "Delivery compares the cleared block set with the armed qualification blocks (arm_clear)."
+    },
+    {
+      "file": "crates/rx-application/src/engine/dispatch.rs",
+      "module": "process",
+      "references": 1,
+      "reason": "Dispatch checks node eligibility when the cell configuration carries a process (eligible_node)."
+    },
+    {
+      "file": "crates/rx-application/src/engine/executor_peer.rs",
+      "module": "qualification_activation",
+      "references": 1,
+      "reason": "Executor replacement suspends qualification activation for the touched cells (suspend_for_executor_replacement)."
+    },
+    {
+      "file": "crates/rx-application/src/engine/host_readmission.rs",
+      "module": "host_binding_transition",
+      "references": 1,
+      "reason": "Re-admission reads the host binding intent named by the Host (read)."
+    },
+    {
+      "file": "crates/rx-application/src/engine/host_readmission.rs",
+      "module": "process_change",
+      "references": 3,
+      "reason": "The expected configuration and the binding baseline derive from a staged process change (change)."
+    },
+    {
+      "file": "crates/rx-application/src/engine/host_recovery/context.rs",
+      "module": "process_change",
+      "references": 2,
+      "reason": "Recovery context computes the prospective impact of a change on the host (prospective_impact)."
+    },
+    {
+      "file": "crates/rx-application/src/engine/host_recovery/reads.rs",
+      "module": "configuration_dispatch",
+      "references": 1,
+      "reason": "A continuity proof reads the host configuration task it names (read)."
+    },
+    {
+      "file": "crates/rx-application/src/engine/host_recovery/reads.rs",
+      "module": "process_change",
+      "references": 1,
+      "reason": "A continuity proof checks the state of the applied process change (change)."
+    },
+    {
+      "file": "crates/rx-application/src/engine/mod.rs",
+      "module": "qualification_activation",
+      "references": 3,
+      "reason": "Engine::open records qualification changes and suspends changed roots on restart (cell_change, record_blocks, suspend_changed_roots)."
+    },
+    {
+      "file": "crates/rx-application/src/engine/operator_start.rs",
+      "module": "qualification_activation",
+      "references": 2,
+      "reason": "Operator start checks the run purpose against the activated qualification and records the armed clear blocks (purpose, arm_clear)."
+    },
+    {
+      "file": "crates/rx-application/src/engine/process_apply.rs",
+      "module": "run_configuration",
+      "references": 1,
+      "reason": "Applying a change binds the new configuration to the affected runs (bind)."
+    },
+    {
+      "file": "crates/rx-application/src/engine/run_configuration.rs",
+      "module": "process_change",
+      "references": 5,
+      "reason": "Run bindings store and read configurations through process_change (read_config, store_config, config_ref)."
+    },
+    {
+      "file": "crates/rx-application/src/engine/runtime_skill.rs",
+      "module": "process_change",
+      "references": 1,
+      "reason": "The installed process skill digest uses process_change::config_ref."
+    },
+    {
+      "file": "crates/rx-application/src/engine/settlement.rs",
+      "module": "handover",
+      "references": 2,
+      "reason": "Settlement releases confirmed work and completes part transitions through handover (release_confirmed, complete_part_transition)."
+    },
+    {
+      "file": "crates/rx-application/src/engine/settlement.rs",
+      "module": "run_configuration",
+      "references": 1,
+      "reason": "Settlement compares the run's bound configuration with the cell configuration (read)."
+    }
+  ]
+}

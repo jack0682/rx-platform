@@ -19,7 +19,7 @@ fn proofs(
     reads: &BTreeMap<Id, (TimePoint, Digest)>,
 ) -> Result<Vec<HostProof>> {
     process_change::current(tx, meta, c)?;
-    configuration_dispatch::barrier(tx, c)?;
+    configuration_dispatch::barrier(tx, meta, c)?;
     let prep = c
         .preparation
         .as_ref()
@@ -275,10 +275,26 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                 });
             }
             let application = ApplicationRecord {
-                preparation: c.preparation.as_ref().unwrap().attempt,
+                preparation: c
+                    .preparation
+                    .as_ref()
+                    .ok_or_else(|| {
+                        StoreError::Integrity("preparation missing after the apply check".into())
+                    })?
+                    .attempt,
                 runtime_boot: meta.runtime_boot.clone(),
                 actor: principal.id,
-                terminal: t.identity.terminal.as_ref().unwrap().0.clone(),
+                terminal: t
+                    .identity
+                    .terminal
+                    .as_ref()
+                    .ok_or_else(|| {
+                        StoreError::Integrity(
+                            "terminal missing after terminal authorization".into(),
+                        )
+                    })?
+                    .0
+                    .clone(),
                 applied_at: now,
                 cells,
                 host_proofs,

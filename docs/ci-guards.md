@@ -16,6 +16,10 @@ The repository evidence supports a deliberate separation of contract identities 
 
 The three mechanisms remain distinct: normative document identity, optional source bindings, and SDK inventory. There is **no platform byte freeze for these two protobuf files**. The descriptor tests are not an exhaustive proof of wire conformance: for example, their document loop skips unmatched message names. Stronger conformance or a separate base-source inventory would require its own requirement and validation, not a silent extension of an optional binding.
 
+## Engine boundary guard
+
+The repository job runs `tools/check_engine_boundaries.py` against [the engine boundary map](engine-boundaries.md). It fails on an engine module that no group claims, on a cross-group reference that the map does not list, and on a listed seam whose count differs from the code. It resolves module paths textually outside `#[cfg(test)]` items; it does not type-check, so a reference reaching a module through a re-export, an alias or a macro is not counted, and a green check does not prove the engine is layered. The seam list records debt and may only shrink.
+
 ## Manual audit boundary
 
 The two manual jobs in [ci.yml](../.github/workflows/ci.yml) run on `workflow_dispatch` and are absent from the required aggregate's `needs`. They compare SDK freshness and audit GitHub settings with a read-only token. Audit failure remains visible independently of the aggregate. See [the contribution workflow](../CONTRIBUTING.md#changes-across-repositories) for commands and the inactive cron boundary.

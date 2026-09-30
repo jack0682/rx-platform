@@ -152,6 +152,36 @@ pub enum Command {
         reference: ArtifactRef,
     },
 
+    HostBindingIntents {
+        identity: Identity,
+        after: Option<Id>,
+    },
+    HostBindingReadIssue {
+        identity: Identity,
+        request: Id,
+        issue: rx_application::host_binding_transition::Rejection,
+    },
+    IssueHostBindingIntents {
+        identity: Identity,
+        key: Id,
+        input: process_change::Transition,
+    },
+    AdoptHostBindingIntents {
+        identity: Identity,
+        key: Id,
+        input: process_change::Transition,
+    },
+    ApproveHostReadmission {
+        identity: Identity,
+        key: Id,
+        input: rx_application::host_readmission::Approve,
+    },
+    ObserveHostBindingIntent {
+        identity: Identity,
+        request: Id,
+        observation: Box<rx_domain::host_configuration::Observation>,
+        read_started: TimePoint,
+    },
     AuthorizeHostConfiguration {
         identity: Identity,
         key: Id,
@@ -638,6 +668,10 @@ pub enum Command {
         identity: Identity,
         cell: Name,
     },
+    DeviceRestrictions {
+        identity: Identity,
+        cell: Name,
+    },
     GetOperatorStartContext {
         identity: Identity,
         input: rx_application::operator_start::ContextRequest,
@@ -663,6 +697,16 @@ pub enum Command {
         identity: Identity,
         key: Id,
         command: Box<SubmitWork>,
+    },
+    ApproveSettlement {
+        identity: Identity,
+        key: Id,
+        command: rx_application::settlement::Approve,
+    },
+    SettleResources {
+        identity: Identity,
+        authorization: Id,
+        command: ReleaseResources,
     },
     ReleaseResources {
         identity: Identity,
@@ -708,6 +752,11 @@ pub enum Command {
     UserProfile(Identity),
     EndUserSession(Identity),
     Overview(Identity),
+    RuntimeSkillCatalog(Identity),
+    RuntimeSkillResult {
+        identity: Identity,
+        run: Id,
+    },
     InspectCell {
         identity: Identity,
         cell: Name,
@@ -732,6 +781,11 @@ pub enum Command {
         key: Id,
         command: StartRun,
     },
+    AbandonRun {
+        identity: Identity,
+        key: Id,
+        command: rx_application::AbandonRun,
+    },
     Hold {
         identity: Identity,
         key: Id,
@@ -739,6 +793,7 @@ pub enum Command {
     },
 }
 pub enum Reply {
+    Settlement(Box<rx_application::settlement::Authorization>),
     HostRecoveryContext(Box<rx_application::host_recovery::Context>),
     HostRecoveryBinding(Box<rx_application::host_recovery::Binding>),
     OptionalHostRecoveryBinding(Option<Box<rx_application::host_recovery::Binding>>),
@@ -762,6 +817,9 @@ pub enum Reply {
     RequalificationDetail(Box<rx_application::requalification::Detail>),
 
     HostConfigurationBatch(configuration_dispatch::Batch),
+    HostBindingIntents(Vec<rx_application::host_binding_transition::Record>),
+    HostReadmission(Box<rx_application::host_readmission::Record>),
+    HostBindingIntent(Box<rx_application::host_binding_transition::Record>),
     HostConfigurationTasks(Vec<configuration_dispatch::Task>),
     HostConfigurationTask(Box<configuration_dispatch::Task>),
     HostConfigurationEmission(configuration_dispatch::Emission),
@@ -839,6 +897,7 @@ pub enum Reply {
     ReconciliationWork(Vec<Work>),
     VersionedRun(Counter, Run),
     RuntimeRestrictions(Box<rx_application::runtime_invalidation::RuntimeRestrictions>),
+    DeviceRestrictions(Box<rx_application::device_invalidation::DeviceRestrictions>),
     OperatorStartContext(Box<rx_application::operator_start::StartContext>),
     OperatorStartAttempt(Box<rx_application::operator_start::AttemptContext>),
     Part(PartAttempt),
@@ -851,6 +910,8 @@ pub enum Reply {
     Session(Session),
     Profile(UserProfile),
     Overview(Box<Overview>),
+    RuntimeSkillCatalog(Box<rx_application::runtime_skill::Catalog>),
+    RuntimeSkillResult(Box<rx_application::runtime_skill::ResultView>),
     Cell(Counter, Box<Cell>),
     Run(Run),
     Attempt(StartAttempt),
@@ -1119,6 +1180,51 @@ impl<R: Repository + Send + 'static, C: Clock + 'static, A: QualificationAuthori
                 .requalification_artifact(&identity, &cell, &id, &reference)
                 .map(Reply::ArtifactBytes),
 
+            Command::HostBindingIntents { identity, after } => self
+                .engine
+                .host_binding_intents(&identity, after.as_ref())
+                .map(Reply::HostBindingIntents),
+            Command::HostBindingReadIssue {
+                identity,
+                request,
+                issue,
+            } => self
+                .engine
+                .host_binding_read_issue(&identity, &request, issue)
+                .map(|v| Reply::HostBindingIntent(Box::new(v))),
+            Command::AdoptHostBindingIntents {
+                identity,
+                key,
+                input,
+            } => self
+                .engine
+                .adopt_host_binding_intents(&identity, &key, input)
+                .map(Reply::HostBindingIntents),
+            Command::ApproveHostReadmission {
+                identity,
+                key,
+                input,
+            } => self
+                .engine
+                .approve_host_readmission(&identity, &key, input)
+                .map(|v| Reply::HostReadmission(Box::new(v))),
+            Command::IssueHostBindingIntents {
+                identity,
+                key,
+                input,
+            } => self
+                .engine
+                .issue_host_binding_intents(&identity, &key, input)
+                .map(Reply::HostBindingIntents),
+            Command::ObserveHostBindingIntent {
+                identity,
+                request,
+                observation,
+                read_started,
+            } => self
+                .engine
+                .observe_host_binding_intent(&identity, &request, *observation, read_started)
+                .map(|v| Reply::HostBindingIntent(Box::new(v))),
             Command::AuthorizeHostConfiguration {
                 identity,
                 key,
@@ -1907,6 +2013,10 @@ impl<R: Repository + Send + 'static, C: Clock + 'static, A: QualificationAuthori
                 .engine
                 .runtime_restrictions(&identity, &cell)
                 .map(|v| Reply::RuntimeRestrictions(Box::new(v))),
+            Command::DeviceRestrictions { identity, cell } => self
+                .engine
+                .device_restrictions(&identity, &cell)
+                .map(|v| Reply::DeviceRestrictions(Box::new(v))),
             Command::GetOperatorStartContext { identity, input } => self
                 .engine
                 .operator_start_context(&identity, input)
@@ -1942,6 +2052,22 @@ impl<R: Repository + Send + 'static, C: Clock + 'static, A: QualificationAuthori
                 .engine
                 .submit(&identity, key.as_str(), *command)
                 .map(|w| Reply::Work(Box::new(w))),
+            Command::ApproveSettlement {
+                identity,
+                key,
+                command,
+            } => self
+                .engine
+                .approve_settlement(&identity, key.as_str(), command)
+                .map(|value| Reply::Settlement(Box::new(value))),
+            Command::SettleResources {
+                identity,
+                authorization,
+                command,
+            } => self
+                .engine
+                .settle_resources(&identity, &authorization, command)
+                .map(|work| Reply::Work(Box::new(work))),
             Command::ReleaseResources {
                 identity,
                 key,
@@ -2016,6 +2142,14 @@ impl<R: Repository + Send + 'static, C: Clock + 'static, A: QualificationAuthori
                 self.service_health.decorate(&mut view);
                 Ok(Reply::Overview(Box::new(view)))
             }
+            Command::RuntimeSkillCatalog(identity) => self
+                .engine
+                .runtime_skill_catalog(&identity)
+                .map(|v| Reply::RuntimeSkillCatalog(Box::new(v))),
+            Command::RuntimeSkillResult { identity, run } => self
+                .engine
+                .runtime_skill_result(&identity, &run)
+                .map(|v| Reply::RuntimeSkillResult(Box::new(v))),
             Command::InspectCell { identity, cell } => self
                 .engine
                 .inspect_cell(&identity, &cell)
@@ -2043,6 +2177,14 @@ impl<R: Repository + Send + 'static, C: Clock + 'static, A: QualificationAuthori
             } => self
                 .engine
                 .create_run(&identity, key.as_str(), command)
+                .map(Reply::Run),
+            Command::AbandonRun {
+                identity,
+                key,
+                command,
+            } => self
+                .engine
+                .abandon_run(&identity, key.as_str(), command)
                 .map(Reply::Run),
             Command::StartRun {
                 identity,

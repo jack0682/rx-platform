@@ -203,8 +203,11 @@ fn fixture() -> Fixture {
         terminal_key: terminal_key.serialize_pem(),
     }
 }
-async fn wait_ready(f: &Fixture) -> Value {
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(8);
+/// Wait until the platform reports READY or has stopped. How long startup takes is not what these
+/// tests check and varies with host load, so a platform that stopped fails at once and only a
+/// hang guard bounds a platform that does neither.
+async fn wait_ready(f: &Fixture, mut stopped: impl FnMut() -> bool) -> Value {
+    let hang_guard = tokio::time::Instant::now() + Duration::from_secs(120);
     loop {
         if let Ok(bytes) = fs::read(f.config.runtime_directory.join("platform-status.json")) {
             let value: Value = serde_json::from_slice(&bytes).unwrap();
@@ -212,7 +215,14 @@ async fn wait_ready(f: &Fixture) -> Value {
                 return value;
             }
         }
-        assert!(tokio::time::Instant::now() < deadline, "startup timeout");
+        assert!(
+            !stopped(),
+            "platform stopped before SOFTWARE_READY_UNCOMMISSIONED"
+        );
+        assert!(
+            tokio::time::Instant::now() < hang_guard,
+            "platform neither ready nor stopped within the hang guard"
+        );
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
 }
@@ -349,7 +359,7 @@ async fn configured_operator_ui_serves_over_terminal_https_without_creating_runs
         })
         .await
     });
-    wait_ready(&f).await;
+    wait_ready(&f, || task.is_finished()).await;
     let response = f
         .client
         .get(format!("{}/", f.config.https.origin))
@@ -423,7 +433,7 @@ async fn composed_startup_restart_and_stop_preserve_store_and_never_start_a_run(
             })
             .await
         });
-        let status = wait_ready(&f).await;
+        let status = wait_ready(&f, || task.is_finished()).await;
         let duplicate = serve(&f.path, TestClock, std::future::pending()).await;
         assert!(duplicate.is_err());
         let preserved: Value = serde_json::from_slice(
@@ -664,7 +674,7 @@ async fn linux_executable_uses_shared_clock_and_sigterm_commits_process_stop() {
             .spawn()
             .unwrap(),
     );
-    let ready = wait_ready(&f).await;
+    let ready = wait_ready(&f, || !matches!(child.0.try_wait(), Ok(None))).await;
     assert!(child.0.try_wait().unwrap().is_none());
     let login = f
         .client
@@ -720,6 +730,9 @@ fn export_container_fixture() {
     fs::create_dir(&output).unwrap();
     let f = fixture();
     let mut c = f.config.clone();
+    if let Ok(installation) = std::env::var("RX_PLATFORM_IMAGE_INSTALLATION") {
+        c.installation_id = Id::new(installation).expect("explicit isolated package installation");
+    }
     let relocate = |file: &mut PinnedFile| {
         let name = file.path.file_name().unwrap();
         fs::copy(&file.path, output.join(name)).unwrap();
@@ -811,7 +824,7 @@ async fn configured_package_intake_uses_real_terminal_https_and_retains_history_
             })
             .await
         });
-        wait_ready(&f).await;
+        wait_ready(&f, || task.is_finished()).await;
         let response = f
             .client
             .post(format!("{}/api/v1/session", f.config.https.origin))
@@ -882,10 +895,9 @@ async fn configured_package_intake_uses_real_terminal_https_and_retains_history_
             .unwrap();
         assert_eq!(page["packages"].as_array().unwrap().len(), 1);
         assert_eq!(page["packages"][0]["activation_authorized"], false);
-        assert_eq!(
-            page["packages"][0]["review_context_current"],
-            iteration == 0
-        );
+        // The restart reuses the same Store, policy and restored policy file, so the
+        // registration generation and the receipt's review context stay current.
+        assert_eq!(page["packages"][0]["review_context_current"], true);
         if iteration == 0 {
             let policy_path = &f.config.package_intake.as_ref().unwrap().policy.path;
             fs::write(policy_path, b"changed after startup").unwrap();
@@ -973,7 +985,7 @@ async fn configured_process_review_records_separate_account_approval_over_termin
         })
         .await
     });
-    wait_ready(&f).await;
+    wait_ready(&f, || task.is_finished()).await;
     let mut cookies = Vec::new();
     for principal in ["admin", "reviewer"] {
         let response = f
@@ -1101,4 +1113,95 @@ async fn configured_process_review_records_separate_account_approval_over_termin
     );
     stop.send(()).unwrap();
     task.await.unwrap().unwrap();
+}
+
+#[test]
+fn offline_backup_and_restore_rotate_the_store_generation_and_refuse_foreign_stores() {
+    use rx_application::persistence as p;
+    use rx_ports::Repository;
+    use rx_storage::SqliteRepository;
+    let f = fixture();
+    initialize(&f.path).unwrap();
+    let database = f.config.data_directory.join("platform.db");
+    let generation = |path: &Path| {
+        let mut store = SqliteRepository::open(path).unwrap();
+        let installation = store
+            .transact(|tx| {
+                p::decode::<Installation>(
+                    &tx.get(&p::name("installation/current"))?.unwrap(),
+                    "rx.internal.installation.v1",
+                )
+            })
+            .unwrap();
+        drop(store);
+        installation.store_generation
+    };
+    let original = generation(&database);
+    let backup_file = f._dir.path().join("backups").join("platform-1.db");
+    assert!(backup(&f.path, &backup_file).is_err(), "parent must exist");
+    fs::create_dir_all(backup_file.parent().unwrap()).unwrap();
+    let report = backup(&f.path, &backup_file).unwrap();
+    assert_eq!(report.installation_id, f.config.installation_id);
+    assert!(
+        backup(&f.path, &backup_file).is_err(),
+        "destination must be new"
+    );
+    let bytes = fs::read(&backup_file).unwrap();
+    assert_eq!(
+        report.sha256,
+        Digest::from_bytes(Sha256::digest(&bytes).into())
+    );
+
+    // Work recorded after the backup is gone after the restore; the generation is new.
+    let mut live = SqliteRepository::open(&database).unwrap();
+    live.transact(|tx| {
+        tx.put(
+            &p::name("test/after-backup"),
+            None,
+            &p::doc("rx.test.marker.v1", &json!({"after": true}))?,
+        )
+    })
+    .unwrap();
+    // A running runtime owns the database: both commands refuse it.
+    assert!(backup(&f.path, &f._dir.path().join("backups").join("busy.db")).is_err());
+    assert!(restore(&f.path, &backup_file).is_err());
+    drop(live);
+
+    let restored = restore(&f.path, &backup_file).unwrap();
+    assert_eq!(restored.restore.previous_generation, original);
+    assert_ne!(restored.restore.generation, original);
+    assert_eq!(restored.restore.backup_sha256, report.sha256);
+    assert_eq!(generation(&database), restored.restore.generation);
+    let mut store = SqliteRepository::open(&database).unwrap();
+    assert!(
+        store
+            .transact(|tx| tx.get(&p::name("test/after-backup")))
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        rx_application::store_restore::last_store_restore(&mut store)
+            .unwrap()
+            .map(|r| r.id),
+        Some(restored.restore.id.clone())
+    );
+    drop(store);
+    assert!(!f.config.data_directory.join("platform.db-wal").exists());
+    assert!(fs::read_dir(&f.config.data_directory).unwrap().all(|e| {
+        !e.unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with(".rx-restore-")
+    }));
+    // The backup file itself is untouched by the restore.
+    assert_eq!(fs::read(&backup_file).unwrap(), bytes);
+
+    // A backup of another installation is refused before the live store is touched.
+    let other = fixture();
+    initialize(&other.path).unwrap();
+    let foreign = f._dir.path().join("backups").join("foreign.db");
+    backup(&other.path, &foreign).unwrap();
+    assert!(restore(&f.path, &foreign).is_err());
+    assert_eq!(generation(&database), restored.restore.generation);
+    assert!(restore(&f.path, &f._dir.path().join("missing.db")).is_err());
 }

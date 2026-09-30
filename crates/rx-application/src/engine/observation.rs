@@ -267,16 +267,9 @@ fn maintained_lost(tx: &mut dyn Transaction, cell: &Cell, now: &TimePoint) -> Re
     if cell.configuration.maintained_conditions.is_empty() {
         return Ok(false);
     }
-    let active = tx
-        .scan("run/")?
+    let active = crate::run_index::live_runs(tx, &cell.configuration.id)?
         .iter()
-        .map(|r| decode::<Run>(r, RUN))
-        .collect::<Result<Vec<_>>>()?
-        .iter()
-        .any(|r| {
-            r.cell == cell.configuration.id
-                && (r.state == RunState::Executing || r.pending_attempt.is_some())
-        });
+        .any(|(_, r)| r.state == RunState::Executing || r.pending_attempt.is_some());
     if !active {
         return Ok(false);
     }
@@ -373,7 +366,7 @@ fn record_fact(
                 None,
                 &doc("rx.internal.source-generation-loss.v1", &fact.evidence())?,
             )?;
-            invalidate_fact_dependents(tx, &fact, BlockReason::DeviceRestart)?;
+            invalidate_fact_dependents_device(tx, &fact, host)?;
             event(tx, "rx.event.source-generation-changed.v1", &fact)?;
         }
     } else {

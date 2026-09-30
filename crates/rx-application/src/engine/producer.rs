@@ -99,21 +99,48 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             // A proven P-only session replacement already has exact durable RuntimeRestart
             // restrictions. Preserve them; this classification restores no Host registration,
             // grant, qualification, permit, mandate or Run. Unknown changes still revoke.
+            let new_session = id();
             if !runtime_only {
                 let mut touched = BTreeSet::new();
-                for host in registrations {
-                    if &host.id == principal && !touched.contains(&host.cell) {
-                        touched.extend(invalidate_closure(
-                            tx,
-                            &host.cell,
-                            BlockReason::DeviceRestart,
-                        )?);
+                let mut invalidated = Vec::new();
+                for reg in &registrations {
+                    if &reg.id != principal || touched.contains(&reg.cell) {
+                        continue;
                     }
+                    for (before_revision, before) in
+                        invalidate_closure_recording(tx, &reg.cell, BlockReason::DeviceRestart)?
+                    {
+                        touched.insert(before.configuration.id.clone());
+                        // The Host's own registration on this cell, else the one whose closure
+                        // reached it: that is the generation this revocation supersedes.
+                        let superseded = registrations
+                            .iter()
+                            .find(|h| h.id == *principal && h.cell == before.configuration.id)
+                            .unwrap_or(reg);
+                        invalidated.push((before_revision, before, superseded));
+                    }
+                }
+                // One immutable origin per affected cell for exactly the block this revocation
+                // added, recorded once every closure carries its new epoch.
+                for (before_revision, before, superseded) in invalidated {
+                    crate::device_invalidation::record(
+                        tx,
+                        principal,
+                        &superseded.cell,
+                        crate::device_invalidation::DeviceInvalidationCause::ProducerReplaced {
+                            previous_boot: superseded.boot_id.clone(),
+                            previous_session: superseded.session.clone(),
+                            boot: peer_boot.clone(),
+                            session: new_session.clone(),
+                        },
+                        before_revision,
+                        &before,
+                    )?;
                 }
             }
             let session = Session {
                 terminal: None,
-                id: id(),
+                id: new_session,
                 principal: principal.clone(),
                 runtime_boot: meta.runtime_boot.clone(),
                 expires_at: TimePoint {
@@ -163,14 +190,26 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                 .iter()
                 .map(|r| decode::<Cell>(r, CELL))
                 .collect::<Result<Vec<_>>>()?;
-            let matching: Vec<_> = cells
-                .iter()
-                .filter(|c| {
-                    c.configuration.definition.sha256 == definition
-                        && c.configuration.hosts.contains(&p.id)
-                        && p.cells.contains(&c.configuration.id)
-                })
-                .collect();
+            // A new boot under a binding re-admission may present the staged change's after
+            // definition for that one cell; link admission still checks the full generation.
+            let mut matching = vec![];
+            for c in &cells {
+                if !c.configuration.hosts.contains(&p.id) || !p.cells.contains(&c.configuration.id)
+                {
+                    continue;
+                }
+                let transition = super::host_readmission::governing_binding(
+                    tx,
+                    &p.id,
+                    &c.configuration.id,
+                    &producer.peer_boot,
+                )?;
+                if c.configuration.definition.sha256 == definition
+                    || transition.is_some_and(|t| t.after_definition == definition)
+                {
+                    matching.push(c);
+                }
+            }
             if matching.len() != 1 {
                 return reject(Reject::CapabilityMissing);
             }

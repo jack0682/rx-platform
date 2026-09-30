@@ -24,6 +24,8 @@ pub(super) struct ProcessingContext<'a> {
     pub meta: &'a Installation,
     pub now: &'a TimePoint,
 }
+/// Lifetime of a preflight ticket between file/key work and its commit.
+const TICKET_TTL_NS: u64 = 30_000_000_000;
 const PRINCIPAL: &str = "rx.internal.principal.v1";
 const SESSION: &str = "rx.internal.session.v1";
 const TERMINAL: &str = "rx.internal.terminal.v1";
@@ -49,6 +51,7 @@ mod configuration;
 mod configuration_dispatch;
 mod delivery;
 mod device_binding;
+mod device_restrictions;
 mod device_review;
 mod diagnostics;
 mod dispatch;
@@ -84,6 +87,7 @@ mod requalification;
 mod requests;
 mod run_configuration;
 mod runtime_restrictions;
+mod runtime_skill;
 mod workflow;
 
 use access::*;
@@ -157,6 +161,7 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                     }
                 }
                 qualification_activation::suspend_changed_roots(tx, &old)?;
+                crate::run_index::rebuild(tx)?;
                 old
             } else {
                 if !bootstrap.roles.contains(&Role::AccountAdmin) || !bootstrap.active {
@@ -216,3 +221,10 @@ fn missing_as(error: StoreError, fallback: Reject) -> StoreError {
 }
 
 mod host_recovery;
+
+mod settlement;
+
+mod host_readmission;
+pub mod store_restore;
+
+mod host_binding_transition;

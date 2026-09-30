@@ -169,18 +169,41 @@ pub fn export() -> Result<()> {
             },
         }],
     };
-    let source = json!({"schema":"rx.process-source.v1","process":"delivery/cycle","entry":"main","conditions":{},"flows":[{"id":"main","root":"cycle","nodes":[{"id":"cycle","body":{"kind":"OPERATION","binding":ALIAS}}]}]});
-    let bindings = BTreeMap::from([(
-        name(ALIAS),
-        ActionBinding {
-            host: name(HOST),
-            intent: configuration.steps[0].intent.normalized()?,
-        },
-    )]);
+    // Optional offline expectation for the separately exercised public CLI authoring path.
+    let composition_draft = std::env::var("RX_CELL_DELIVERY_COMPOSE_DRAFT")
+        .ok()
+        .map(Id::new)
+        .transpose()?;
+    let aliases = if composition_draft.is_some() {
+        vec![name("skill/1"), name("skill/2")]
+    } else {
+        vec![name(ALIAS)]
+    };
+    let source = if composition_draft.is_some() {
+        json!({"schema":"rx.process-source.v1","process":"delivery/composed","entry":"main","conditions":{},"flows":[{"id":"main","root":"sequence","nodes":[
+            {"id":"sequence","body":{"kind":"SEQUENCE","children":["skill/1","skill/2"]}},
+            {"id":"skill/1","body":{"kind":"OPERATION","binding":"skill/1"}},
+            {"id":"skill/2","body":{"kind":"OPERATION","binding":"skill/2"}}
+        ]}]})
+    } else {
+        json!({"schema":"rx.process-source.v1","process":"delivery/cycle","entry":"main","conditions":{},"flows":[{"id":"main","root":"cycle","nodes":[{"id":"cycle","body":{"kind":"OPERATION","binding":ALIAS}}]}]})
+    };
+    let bindings = aliases
+        .iter()
+        .map(|alias| {
+            Ok((
+                alias.clone(),
+                ActionBinding {
+                    host: name(HOST),
+                    intent: configuration.steps[0].intent.normalized()?,
+                },
+            ))
+        })
+        .collect::<Result<BTreeMap<_, _>>>()?;
     let input = CompileInput {
         device_sources: BTreeMap::new(),
         schema: name("rx.process-compile-input.v1"),
-        draft: id(),
+        draft: composition_draft.unwrap_or_else(id),
         cell: name(CELL),
         source_revision: Counter(1),
         binding_revision: Counter(1),
@@ -219,12 +242,13 @@ pub fn export() -> Result<()> {
             publisher: name("delivery-test-only"),
             verifying_key: public_signers[&name(PACKAGE_KEY)],
             kinds: BTreeSet::from([PackageKind::Process]),
-            permissions: BTreeSet::from([
-                Permission::ArtifactRead,
-                Permission::OperationSubmit {
-                    operation: name(ALIAS),
-                },
-            ]),
+            permissions: std::iter::once(Permission::ArtifactRead)
+                .chain(
+                    aliases
+                        .into_iter()
+                        .map(|operation| Permission::OperationSubmit { operation }),
+                )
+                .collect(),
         }],
         assets: [program, parameters]
             .into_iter()

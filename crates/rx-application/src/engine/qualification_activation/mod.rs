@@ -10,6 +10,8 @@ const TASK: &str = "rx.qualification-host-task.v1";
 struct Owner {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     runtime_origin: Option<Digest>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    device_origin: Option<Digest>,
     block: Id,
     cell: Name,
     change: Id,
@@ -37,6 +39,26 @@ pub(super) fn record_blocks(
         } else {
             None
         };
+        // A DeviceRestart block cannot be added inside a change today; if a stored origin exists
+        // it is carried, but its absence is legacy and never fails ownership recording.
+        let device_origin = if b.reason == BlockReason::DeviceRestart {
+            match crate::device_invalidation::load(tx, &b.id)? {
+                Some(origin) => {
+                    if origin.cell != cell.configuration.id
+                        || canonical::bytes(&origin.block).map_err(domain_error)?
+                            != canonical::bytes(b).map_err(domain_error)?
+                    {
+                        return Err(StoreError::Integrity(
+                            "device block owner origin differs".into(),
+                        ));
+                    }
+                    Some(origin.digest().map_err(StoreError::Integrity)?)
+                }
+                None => None,
+            }
+        } else {
+            None
+        };
         save(
             tx,
             "changeblockowner",
@@ -45,6 +67,7 @@ pub(super) fn record_blocks(
             "rx.change-block-owner.v1",
             &Owner {
                 runtime_origin,
+                device_origin,
                 block: b.id.clone(),
                 cell: cell.configuration.id.clone(),
                 change: change.clone(),
@@ -84,7 +107,7 @@ pub(super) fn bind_runtime_restrictions(
             if owner.block != origin.block.id
                 || owner.cell != origin.cell
                 || owner.change != job.request.change
-                || owner.reason != BlockReason::RuntimeRestart
+                || owner.reason != origin.block.reason
                 || owner.runtime_origin != Some(digest)
             {
                 return reject(Reject::Forbidden);
@@ -100,8 +123,9 @@ pub(super) fn bind_runtime_restrictions(
                     block: origin.block.id.clone(),
                     cell: origin.cell.clone(),
                     change: job.request.change.clone(),
-                    reason: BlockReason::RuntimeRestart,
+                    reason: origin.block.reason,
                     runtime_origin: Some(digest),
+                    device_origin: None,
                 },
             )?;
         }
@@ -112,6 +136,76 @@ pub(super) fn bind_runtime_restrictions(
             None,
             "rx.runtime-restriction-binding.v1",
             &RuntimeRestrictionBinding {
+                block: origin.block.id.clone(),
+                cell: origin.cell.clone(),
+                change: job.request.change.clone(),
+                review: job.request.id.clone(),
+                request_digest,
+                origin_digest: digest,
+            },
+        )?;
+    }
+    Ok(())
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+struct DeviceRestrictionBinding {
+    block: Id,
+    cell: Name,
+    change: Id,
+    review: Id,
+    request_digest: Digest,
+    origin_digest: Digest,
+}
+const DEVICE_BINDING: &str = "rx.device-restriction-binding.v1";
+pub(super) fn bind_device_restrictions(
+    tx: &mut dyn Transaction,
+    meta: &Installation,
+    job: &q::Job,
+) -> Result<()> {
+    let request_digest = job.request.digest().map_err(StoreError::Invalid)?;
+    for origin in &job.request.device_restrictions {
+        let actual =
+            crate::device_invalidation::read_for_cell(tx, meta, &origin.cell, &origin.block.id)?
+                .ok_or(StoreError::Rejected(Reject::ContinuityUnproven))?;
+        let digest = origin.digest().map_err(StoreError::Integrity)?;
+        if actual.digest().map_err(StoreError::Integrity)? != digest {
+            return reject(Reject::StaleRevision);
+        }
+        let k = key("changeblockowner", &origin.block.id);
+        if let Some(row) = tx.get(&k)? {
+            let owner: Owner = decode(&row, "rx.change-block-owner.v1")?;
+            if owner.block != origin.block.id
+                || owner.cell != origin.cell
+                || owner.change != job.request.change
+                || owner.reason != BlockReason::DeviceRestart
+                || owner.device_origin != Some(digest)
+            {
+                return reject(Reject::Forbidden);
+            }
+        } else {
+            save(
+                tx,
+                "changeblockowner",
+                &origin.block.id,
+                None,
+                "rx.change-block-owner.v1",
+                &Owner {
+                    block: origin.block.id.clone(),
+                    cell: origin.cell.clone(),
+                    change: job.request.change.clone(),
+                    reason: BlockReason::DeviceRestart,
+                    runtime_origin: None,
+                    device_origin: Some(digest),
+                },
+            )?;
+        }
+        save(
+            tx,
+            "devicerestrictionbinding",
+            (&job.request.id, &origin.block.id),
+            None,
+            DEVICE_BINDING,
+            &DeviceRestrictionBinding {
                 block: origin.block.id.clone(),
                 cell: origin.cell.clone(),
                 change: job.request.change.clone(),
@@ -328,7 +422,9 @@ fn owned_clear(tx: &mut dyn Transaction, job: &q::Job, cell: &Cell, ids: &[Id]) 
         {
             return reject(Reject::Forbidden);
         }
-        if b.reason == BlockReason::RuntimeRestart {
+        // A block with runtime provenance (a restart, or a stop's AuthorityRevoked) or device
+        // provenance clears only when this Job selected it and bound that exact origin.
+        if b.reason == BlockReason::RuntimeRestart || owner.runtime_origin.is_some() {
             let origin = job
                 .request
                 .runtime_restrictions
@@ -352,8 +448,31 @@ fn owned_clear(tx: &mut dyn Transaction, job: &q::Job, cell: &Cell, ids: &[Id]) 
             {
                 return reject(Reject::Forbidden);
             }
-        } else if owner.runtime_origin.is_some() {
-            return reject(Reject::Forbidden);
+        } else if b.reason == BlockReason::DeviceRestart || owner.device_origin.is_some() {
+            // A DeviceRestart block without provenance selected by this Job is never cleared.
+            let origin = job
+                .request
+                .device_restrictions
+                .iter()
+                .find(|o| o.block.id == *id && o.cell == cell.configuration.id)
+                .ok_or(StoreError::Rejected(Reject::Forbidden))?;
+            let digest = origin.digest().map_err(StoreError::Integrity)?;
+            let (_, binding): (_, DeviceRestrictionBinding) = load(
+                tx,
+                "devicerestrictionbinding",
+                (&job.request.id, id),
+                DEVICE_BINDING,
+            )?;
+            if owner.device_origin != Some(digest)
+                || binding.block != *id
+                || binding.cell != cell.configuration.id
+                || binding.change != job.request.change
+                || binding.review != job.request.id
+                || binding.origin_digest != digest
+                || binding.request_digest != job.request.digest().map_err(StoreError::Integrity)?
+            {
+                return reject(Reject::Forbidden);
+            }
         }
     }
     Ok(())
@@ -609,12 +728,10 @@ pub(super) fn suspend(
     record_batch(tx, &changed, Some(b.revision))?;
     for target in &b.cells {
         let (rev, mut cell): (_, Cell) = load(tx, "cell", &target.cell, CELL)?;
-        let own = cell
+        if let Some(q) = cell
             .qualification
-            .as_ref()
-            .is_some_and(|q| q.id == target.qualification.id);
-        if own {
-            let q = cell.qualification.take().unwrap();
+            .take_if(|q| q.id == target.qualification.id)
+        {
             let k = key("qualificationhistory", &q.id);
             if tx.get(&k)?.is_none() {
                 tx.put(&k, None, &doc("rx.internal.qualification-history.v1", &q)?)?;
@@ -642,6 +759,44 @@ pub(super) fn suspend(
         process_change::record(tx, &c, Some(rev))?;
     }
     Ok(changed)
+}
+pub(super) fn suspend_for_executor_replacement(
+    tx: &mut dyn Transaction,
+    meta: &Installation,
+    cells: &BTreeSet<Name>,
+    before: &BTreeMap<Name, BTreeSet<Id>>,
+) -> Result<()> {
+    // Complete the known invalidation in the peer-opening transaction. Otherwise
+    // a later Host poll can advance the epoch again after recovery was approved.
+    for row in tx.scan("qualificationbatch/")? {
+        let b: a::Batch = decode(&row, BATCH)?;
+        if matches!(b.state, a::State::Pending | a::State::Active)
+            && b.cells.iter().any(|c| cells.contains(&c.cell))
+        {
+            if b.state == a::State::Active && b.runtime_boot == meta.runtime_boot {
+                for target in b.cells.iter().filter(|c| cells.contains(&c.cell)) {
+                    let (_, cell): (_, Cell) = load(tx, "cell", &target.cell, CELL)?;
+                    if cell.qualification.as_ref().is_some_and(|q| {
+                        q.id == target.qualification.id
+                            && q.revision == target.qualification.revision
+                    }) && process_change::config_ref(&cell.configuration)?
+                        == target.configuration
+                    {
+                        let previous = before.get(&target.cell).ok_or(StoreError::Integrity(
+                            "executor invalidation baseline missing".into(),
+                        ))?;
+                        // Only restrictions created by this authenticated replacement
+                        // inherit the exact active qualification's Change ownership.
+                        // Existing holds or unrelated authority restrictions remain owned
+                        // by their original procedures, or unowned when no proof exists.
+                        record_blocks(tx, &b.change, &cell, previous)?;
+                    }
+                }
+            }
+            suspend(tx, &b, Some(meta), name("EXECUTOR_INCARNATION_CHANGED"))?;
+        }
+    }
+    Ok(())
 }
 pub(super) fn suspend_changed_roots(tx: &mut dyn Transaction, meta: &Installation) -> Result<()> {
     let policy = match requalification::policy(tx, meta) {

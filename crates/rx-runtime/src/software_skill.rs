@@ -14,6 +14,12 @@ pub enum Command {
     Claim(Id, u64),
     Finish(Finish, u64),
     Abandon(Id, u64),
+    RegisterProcess(process::Definition),
+    Processes,
+    StartProcess(process::StartProcess, u64),
+    ProcessRun(Id),
+    ProcessRuns,
+    Metrics(metrics::Window),
 }
 pub struct Application<R>(pub Engine<R>);
 impl<R: Repository + Send + 'static> Processor for Application<R> {
@@ -36,6 +42,12 @@ impl<R: Repository + Send + 'static> Processor for Application<R> {
             Command::Claim(id, n) => json!(self.0.claim(id, n)?),
             Command::Finish(r, n) => json!(self.0.finish(r, n)?),
             Command::Abandon(id, n) => json!({"unresolved":self.0.abandon_worker(id,n)?}),
+            Command::RegisterProcess(p) => json!(self.0.register_process(p)?),
+            Command::Processes => json!(self.0.processes()?),
+            Command::StartProcess(r, n) => json!(self.0.start_process(r, n)?),
+            Command::ProcessRun(id) => json!(self.0.process_run(&id)?),
+            Command::ProcessRuns => json!(self.0.process_runs()?),
+            Command::Metrics(window) => json!(self.0.metrics(window)?),
         })
     }
 }

@@ -2,7 +2,7 @@
 
 The [machine-readable map](invariant-traceability.json) answers which existing local test declarations have been explicitly linked to each of the 30 contract IDs. It contains both I01-I12 and OI01-OI18, including entries with no declared link.
 
-This revision declares scenario evidence for **10/30 IDs** and leaves **20/30 uncovered**. `uncovered` means no reviewed test binding is declared here; it does not prove that relevant tests are absent. `declared` means only the scenario and boundary stated in that entry. It does not mean exhaustive invariant conformance, formal verification or physical qualification. Individual test links carry a source-reading rationale.
+This revision declares scenario evidence for **21/30 IDs** and leaves **9/30 uncovered**. `uncovered` means no reviewed test binding is declared here; it does not prove that relevant tests are absent. `declared` means only the scenario and boundary stated in that entry. It does not mean exhaustive invariant conformance, formal verification or physical qualification. Individual test links carry a source-reading rationale.
 
 ## What the checker establishes
 
@@ -25,7 +25,16 @@ print(next(entry for entry in value["invariants"] if entry["id"] == "OI07"))
 PYTHON
 ```
 
-OI07 is **uncovered** in this repository. Generic controller ownership/reservation and adapter shutdown tests do not stage two material-support releases that rely on reciprocal current-support PASS. Naming those tests as complete material-support evidence would overstate their assertions. Other intentionally undeclared entries also explain the missing reviewed connection. No test or production behavior was changed to fill this map.
+OI07 is **declared** only for P's T1 resource check. Its test stages two support releases on different Hosts that each rely on the other's current support PASS, and asserts that the second one naming the same support resource is refused. The platform has no MaterialState or alias model, so the entry does not claim that undeclared aliases of one material conflict.
+
+Each declared entry's `reason` states its boundary. Most name the Host, device or site half that this repository does not own.
+
+The nine uncovered entries fall into two groups:
+
+- **Not platform-local.** I06, I12, OI12, OI13, OI14 and OI18 are owned by the Host in rx-solutions, by local protective functions, or by site and OEM validation. Their reasons name that owner and any adjacent platform behavior.
+- **Platform finding.** For OI08, OI11 and OI17 the platform's own half does not meet the specification. Their reasons record the finding. The OI11 and OI17 reasons also name a focused test that establishes the part that does hold, without declaring it.
+
+This revision added focused tests under `crates/rx-application/tests/support/invariant_*_tests.rs`. No production behavior was changed to fill this map.
 
 ## Source and maintenance limits
 

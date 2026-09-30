@@ -1,6 +1,7 @@
 mod device_binding;
 mod device_review;
 mod host_recovery;
+mod settlement;
 use crate::{
     auth::{Auth, COOKIE, Credentials, SESSION_SECONDS},
     error::ApiError,
@@ -113,6 +114,8 @@ fn build_router(
         .route("/api/v1/session", post(login).get(profile))
         .route("/api/v1/session/end", post(logout))
         .route("/api/v1/overview", get(overview))
+        .route("/api/v1/runtime-skills", get(runtime_skills))
+        .route("/api/v1/runtime-skill-result", get(runtime_skill_result))
         .route("/api/v1/host-recovery-context", get(host_recovery::context))
         .route(
             "/api/v1/host-recoveries",
@@ -195,8 +198,18 @@ fn build_router(
             get(list_process_reviews).post(create_process_review),
         )
         .route("/api/v1/process-review", get(get_process_review))
+        .route("/api/v1/recovery-settlements", post(settlement::approve))
         .route("/api/v1/process-changes", post(propose_process_change))
         .route("/api/v1/process-change", get(get_process_change))
+        .route(
+            "/api/v1/process-change/host-binding-intents",
+            post(issue_host_binding_intents),
+        )
+        .route("/api/v1/hosts/readmission", post(approve_host_readmission))
+        .route(
+            "/api/v1/process-change/host-binding-intents/adopt",
+            post(adopt_host_binding_intents),
+        )
         .route("/api/v1/process-change/apply", post(apply_process_change))
         .route(
             "/api/v1/process-change/configure-hosts",
@@ -235,6 +248,7 @@ fn build_router(
         )
         .route("/api/v1/cell", get(cell))
         .route("/api/v1/runtime-restrictions", get(runtime_restrictions))
+        .route("/api/v1/device-restrictions", get(device_restrictions))
         .route("/api/cell/v1/cells/{cell_id}/inspect", get(cell_context))
         .route("/api/v1/cells", post(install_cell))
         .route("/api/v1/runs", post(create_run))
@@ -243,6 +257,7 @@ fn build_router(
         .route("/api/v1/run/checkpoint", get(run_checkpoint))
         .route("/api/v1/run/checkpoint/artifact", get(checkpoint_artifact))
         .route("/api/v1/runs/start", post(start_run))
+        .route("/api/v1/runs/abandon", post(abandon_run))
         .route("/api/v1/cells/hold", post(hold))
         .route("/api/v1/cases", get(cases))
         .route("/api/v1/case", get(case_detail))
@@ -502,6 +517,98 @@ async fn overview(State(s): State<ApiState>, headers: HeaderMap) -> Result<Respo
         _ => Err(mismatch()),
     }
 }
+async fn adopt_host_binding_intents(
+    State(s): State<ApiState>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Response, ApiError> {
+    let value: Mutation<rx_application::process_change::Transition> = decode(&body)?;
+    match s
+        .runtime
+        .request(Command::AdoptHostBindingIntents {
+            identity: identity(&s, &headers)?,
+            key: value.request_key,
+            input: value.command,
+        })
+        .await?
+    {
+        Reply::HostBindingIntents(v) => Ok(Json(v).into_response()),
+        _ => Err(mismatch()),
+    }
+}
+async fn approve_host_readmission(
+    State(s): State<ApiState>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Response, ApiError> {
+    let value: Mutation<rx_application::host_readmission::Approve> = decode(&body)?;
+    match s
+        .runtime
+        .request(Command::ApproveHostReadmission {
+            identity: identity(&s, &headers)?,
+            key: value.request_key,
+            input: value.command,
+        })
+        .await?
+    {
+        Reply::HostReadmission(v) => Ok(Json(v).into_response()),
+        _ => Err(mismatch()),
+    }
+}
+async fn issue_host_binding_intents(
+    State(s): State<ApiState>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Response, ApiError> {
+    let value: Mutation<rx_application::process_change::Transition> = decode(&body)?;
+    match s
+        .runtime
+        .request(Command::IssueHostBindingIntents {
+            identity: identity(&s, &headers)?,
+            key: value.request_key,
+            input: value.command,
+        })
+        .await?
+    {
+        Reply::HostBindingIntents(v) => Ok(Json(v).into_response()),
+        _ => Err(mismatch()),
+    }
+}
+async fn runtime_skills(
+    State(s): State<ApiState>,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    match s
+        .runtime
+        .request(Command::RuntimeSkillCatalog(identity(&s, &headers)?))
+        .await?
+    {
+        Reply::RuntimeSkillCatalog(v) => Ok(Json(v).into_response()),
+        _ => Err(mismatch()),
+    }
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RuntimeSkillRunQuery {
+    run: Id,
+}
+async fn runtime_skill_result(
+    State(s): State<ApiState>,
+    headers: HeaderMap,
+    Query(q): Query<RuntimeSkillRunQuery>,
+) -> Result<Response, ApiError> {
+    match s
+        .runtime
+        .request(Command::RuntimeSkillResult {
+            identity: identity(&s, &headers)?,
+            run: q.run,
+        })
+        .await?
+    {
+        Reply::RuntimeSkillResult(v) => Ok(Json(v).into_response()),
+        _ => Err(mismatch()),
+    }
+}
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct CellQuery {
@@ -526,6 +633,28 @@ async fn runtime_restrictions(
         .await?
     {
         Reply::RuntimeRestrictions(value) => Ok(Json(value).into_response()),
+        _ => Err(mismatch()),
+    }
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DeviceRestrictionsQuery {
+    cell: Name,
+}
+async fn device_restrictions(
+    State(s): State<ApiState>,
+    headers: HeaderMap,
+    Query(q): Query<DeviceRestrictionsQuery>,
+) -> Result<Response, ApiError> {
+    match s
+        .runtime
+        .request(Command::DeviceRestrictions {
+            identity: identity(&s, &headers)?,
+            cell: q.cell,
+        })
+        .await?
+    {
+        Reply::DeviceRestrictions(value) => Ok(Json(value).into_response()),
         _ => Err(mismatch()),
     }
 }
@@ -682,6 +811,26 @@ async fn create_run(
     match s
         .runtime
         .request(Command::CreateRun {
+            identity: current,
+            key: value.request_key,
+            command: value.command,
+        })
+        .await?
+    {
+        Reply::Run(run) => Ok(Json(run).into_response()),
+        _ => Err(mismatch()),
+    }
+}
+async fn abandon_run(
+    State(s): State<ApiState>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Response, ApiError> {
+    let current = identity(&s, &headers)?;
+    let value: Mutation<rx_application::AbandonRun> = decode(&body)?;
+    match s
+        .runtime
+        .request(Command::AbandonRun {
             identity: current,
             key: value.request_key,
             command: value.command,

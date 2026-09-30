@@ -42,7 +42,7 @@ def patch_s(final:Path, installation:dict, engine_sha:str, expected_backend:str=
     publish_new(final/'executor-config/cell.json',executor)
 
 
-def exercise(docker,materials,final:Path,bundle:Path,p_image:dict,s_image:dict,port:int,validator:str,release_evidence:Path,composition:str,*,start_services=None,after_commissioning=None,expected_backend="FILE_SIMULATION")->None:
+def exercise(docker,materials,final:Path,bundle:Path,p_image:dict,s_image:dict,port:int,validator:str,release_evidence:Path,composition:str,*,start_services=None,after_commissioning=None,before_commissioning=None,expected_backend="FILE_SIMULATION")->None:
     browser=json.loads((final/'browser-fixture.json').read_text())
     delivery=json.loads((final/'delivery.json').read_text())
     target=json.loads((final/'reference/target-cell.json').read_text())
@@ -51,7 +51,8 @@ def exercise(docker,materials,final:Path,bundle:Path,p_image:dict,s_image:dict,p
     imports=docker.volume('imports');ui=docker.volume('ui')
     docker.put(p_image['Id'],p_config,final/'config')
     docker.put(p_image['Id'],imports,final/'import')
-    docker.put(p_image['Id'],ui,bundle)
+    if bundle is not None:
+        docker.put(p_image['Id'],ui,bundle)
     docker.prepare_permissions(p_image['Id'],[p_config+':/config',p_data+':/data',p_work+':/work'])
     # Public import contents need readable ownership for later append-only publications too.
     docker.prepare_permissions(p_image['Id'],[imports+':/config',p_data+':/data',p_work+':/work'])
@@ -93,6 +94,7 @@ def exercise(docker,materials,final:Path,bundle:Path,p_image:dict,s_image:dict,p
         context.update(start_independent(docker,final,s_image))
     context['users']={who:api(who) for who in ['engineer','verifier','release','operator']}
     try:
+        if before_commissioning is not None:before_commissioning(context)
         run_commissioning(context)
     finally:
         if composition == 'supervisor':
