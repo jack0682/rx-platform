@@ -1,6 +1,7 @@
 mod device_binding;
 mod device_review;
 mod host_recovery;
+mod resident_components;
 mod settlement;
 use crate::{
     auth::{Auth, COOKIE, Credentials, SESSION_SECONDS},
@@ -251,6 +252,19 @@ fn build_router(
         .route("/api/v1/device-restrictions", get(device_restrictions))
         .route("/api/cell/v1/cells/{cell_id}/inspect", get(cell_context))
         .route("/api/v1/cells", post(install_cell))
+        .route(
+            "/api/v1/components",
+            post(resident_components::create_component),
+        )
+        .route("/api/v1/component", get(resident_components::get_component))
+        .route(
+            "/api/v1/components/update",
+            post(resident_components::update_component),
+        )
+        .route(
+            "/api/v1/components/retire",
+            post(resident_components::retire_component),
+        )
         .route("/api/v1/runs", post(create_run))
         .route("/api/v1/run/start-context", get(operator_start_context))
         .route("/api/v1/run/start-attempt", get(operator_start_attempt))

@@ -30,6 +30,7 @@
         "queries",
         "reconciliation",
         "requests",
+        "resident_component",
         "runtime_restrictions",
         "settlement",
         "store_restore"

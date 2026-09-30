@@ -8,6 +8,26 @@ use rx_domain::types::*;
 use rx_ports::{Repository, StoreError};
 
 pub enum Command {
+    CreateComponent {
+        identity: Identity,
+        key: Id,
+        input: rx_application::resident_component::Create,
+    },
+    UpdateComponent {
+        identity: Identity,
+        key: Id,
+        input: rx_application::resident_component::Update,
+    },
+    RetireComponent {
+        identity: Identity,
+        key: Id,
+        input: rx_application::resident_component::Retire,
+    },
+    GetComponent {
+        identity: Identity,
+        id: Id,
+        revision: Option<Counter>,
+    },
     RegisterHostRecoveryTransport {
         host: Name,
         pin: rx_application::host_recovery::TransportPin,
@@ -793,6 +813,7 @@ pub enum Command {
     },
 }
 pub enum Reply {
+    Component(Box<rx_application::resident_component::View>),
     Settlement(Box<rx_application::settlement::Authorization>),
     HostRecoveryContext(Box<rx_application::host_recovery::Context>),
     HostRecoveryBinding(Box<rx_application::host_recovery::Binding>),
@@ -967,6 +988,38 @@ impl<R: Repository + Send + 'static, C: Clock + 'static, A: QualificationAuthori
     }
     fn process(&mut self, command: Command) -> rx_ports::Result<Reply> {
         match command {
+            Command::CreateComponent {
+                identity,
+                key,
+                input,
+            } => self
+                .engine
+                .create_component(&identity, key.as_str(), input)
+                .map(|view| Reply::Component(Box::new(view))),
+            Command::UpdateComponent {
+                identity,
+                key,
+                input,
+            } => self
+                .engine
+                .update_component(&identity, key.as_str(), input)
+                .map(|view| Reply::Component(Box::new(view))),
+            Command::RetireComponent {
+                identity,
+                key,
+                input,
+            } => self
+                .engine
+                .retire_component(&identity, key.as_str(), input)
+                .map(|view| Reply::Component(Box::new(view))),
+            Command::GetComponent {
+                identity,
+                id,
+                revision,
+            } => self
+                .engine
+                .component(&identity, &id, revision)
+                .map(|view| Reply::Component(Box::new(view))),
             Command::RegisterHostRecoveryTransport { host, pin } => self
                 .engine
                 .register_host_recovery_transport(host, pin)
