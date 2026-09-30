@@ -8768,6 +8768,16 @@ fn device_provenance_cannot_pass_the_legacy_process_review_even_when_actions_mat
 #[path = "support/assignment_tests.rs"]
 mod assignment_tests;
 
+#[path = "support/invariant_admission_tests.rs"]
+mod invariant_admission_tests;
+#[path = "support/invariant_authority_tests.rs"]
+mod invariant_authority_tests;
+#[path = "support/invariant_change_tests.rs"]
+mod invariant_change_tests;
+#[path = "support/invariant_evidence_tests.rs"]
+mod invariant_evidence_tests;
+#[path = "support/invariant_session_tests.rs"]
+mod invariant_session_tests;
 #[path = "support/settlement.rs"]
 mod settlement_tests;
 #[path = "support/store_restore.rs"]
