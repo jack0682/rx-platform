@@ -106,20 +106,47 @@ impl ObservationReader {
         Ok(())
     }
 }
+/// How long the writer may refuse the watchdog as busy before the watchdog gives up. While the
+/// writer is saturated no new permit can be issued either, so only permits already issued are
+/// unchecked; this matches the shortest dispatch-permit window of the simulation envelope.
+const WRITER_BUSY_TOLERANCE: Duration = Duration::from_secs(1);
+
 /// Independent of network sampling: a blocked or failed read cannot postpone expiry checks.
+/// A full writer queue is a missed tick, not a failure, until it lasts longer than
+/// `WRITER_BUSY_TOLERANCE`; any other writer error ends the watchdog, which stops the runtime.
 pub async fn monitor_maintained(
     runtime: Arc<dyn ApplicationPort>,
+    stopped: tokio::sync::watch::Receiver<bool>,
+) -> Result<(), Error> {
+    monitor_maintained_within(runtime, stopped, WRITER_BUSY_TOLERANCE).await
+}
+async fn monitor_maintained_within(
+    runtime: Arc<dyn ApplicationPort>,
     mut stopped: tokio::sync::watch::Receiver<bool>,
+    busy_tolerance: Duration,
 ) -> Result<(), Error> {
     let mut tick = tokio::time::interval(Duration::from_millis(25));
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut busy_since = None;
     loop {
         if *stopped.borrow() || stopped.has_changed().is_err() {
             return Ok(());
         }
         tokio::select! {
             _=stopped.changed()=>{},
-            _=tick.tick()=>{let Reply::MaintainedRevoked(_)=runtime.request(Command::CheckMaintainedConditions).await? else {return Err("maintained watchdog reply".into());};}
+            _=tick.tick()=>{
+                match runtime.request(Command::CheckMaintainedConditions).await {
+                    Ok(Reply::MaintainedRevoked(_)) => busy_since = None,
+                    Ok(_) => return Err("maintained watchdog reply".into()),
+                    Err(rx_runtime::writer::WriterError::Busy) => {
+                        let since = *busy_since.get_or_insert_with(tokio::time::Instant::now);
+                        if since.elapsed() > busy_tolerance {
+                            return Err("maintained watchdog could not reach the busy writer".into());
+                        }
+                    }
+                    Err(error) => return Err(error.into()),
+                }
+            }
         }
     }
 }
@@ -135,13 +162,17 @@ mod tests {
     struct MonitorPort {
         calls: AtomicUsize,
         fail: bool,
+        /// Answer Busy for the first `busy` calls.
+        busy: usize,
     }
     impl ApplicationPort for MonitorPort {
         fn request(&self, command: Command) -> CallFuture<'_> {
             assert!(matches!(command, Command::CheckMaintainedConditions));
-            self.calls.fetch_add(1, Ordering::SeqCst);
+            let call = self.calls.fetch_add(1, Ordering::SeqCst);
             Box::pin(async move {
-                if self.fail {
+                if call < self.busy {
+                    Err(WriterError::Busy)
+                } else if self.fail {
                     Err(WriterError::Rejected(rx_ports::StoreError::Unavailable(
                         "injected writer failure".into(),
                     )))
@@ -159,6 +190,7 @@ mod tests {
         let port = Arc::new(MonitorPort {
             calls: AtomicUsize::new(0),
             fail: false,
+            busy: 0,
         });
         let (owner, stopped) = tokio::sync::watch::channel(false);
         let task = tokio::spawn(monitor_maintained(port.clone(), stopped));
@@ -177,6 +209,7 @@ mod tests {
         let port = Arc::new(MonitorPort {
             calls: AtomicUsize::new(0),
             fail: true,
+            busy: 0,
         });
         let (owner, stopped) = tokio::sync::watch::channel(false);
         assert!(monitor_maintained(port.clone(), stopped).await.is_err());
@@ -186,5 +219,45 @@ mod tests {
         drop(owner);
         monitor_maintained(port.clone(), stopped).await.unwrap();
         assert_eq!(port.calls.load(Ordering::SeqCst), 1);
+    }
+    #[tokio::test]
+    async fn a_briefly_busy_writer_is_a_missed_tick_but_a_lasting_one_ends_the_watchdog() {
+        // Busy for a few ticks, then answering: the watchdog keeps running.
+        let port = Arc::new(MonitorPort {
+            calls: AtomicUsize::new(0),
+            fail: false,
+            busy: 3,
+        });
+        let (owner, stopped) = tokio::sync::watch::channel(false);
+        let task = tokio::spawn(monitor_maintained_within(
+            port.clone(),
+            stopped,
+            Duration::from_millis(500),
+        ));
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while port.calls.load(Ordering::SeqCst) < 6 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(!task.is_finished());
+        owner.send(true).unwrap();
+        task.await.unwrap().unwrap();
+        // Busy for longer than the tolerance: the watchdog fails, so the runtime stops.
+        let port = Arc::new(MonitorPort {
+            calls: AtomicUsize::new(0),
+            fail: false,
+            busy: usize::MAX,
+        });
+        let (_owner, stopped) = tokio::sync::watch::channel(false);
+        let started = tokio::time::Instant::now();
+        assert!(
+            monitor_maintained_within(port.clone(), stopped, Duration::from_millis(100))
+                .await
+                .is_err()
+        );
+        assert!(started.elapsed() >= Duration::from_millis(100));
+        assert!(port.calls.load(Ordering::SeqCst) > 1);
     }
 }
