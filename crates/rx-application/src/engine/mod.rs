@@ -161,6 +161,7 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                     }
                 }
                 qualification_activation::suspend_changed_roots(tx, &old)?;
+                crate::run_index::rebuild(tx)?;
                 old
             } else {
                 if !bootstrap.roles.contains(&Role::AccountAdmin) || !bootstrap.active {

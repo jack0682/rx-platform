@@ -961,6 +961,75 @@ fn restart_runtime(f: Fixture) -> Fixture {
 }
 
 #[test]
+fn the_live_run_index_follows_every_run_write_and_is_rebuilt_at_start() {
+    let mut f = fixture_complete(1, true, false, true);
+    f.app.check_live_run_index().unwrap();
+    // Executing, then a second run left prepared.
+    let executing = start(&mut f, 1);
+    f.app.check_live_run_index().unwrap();
+    let revision = f
+        .app
+        .inspect_cell(&f.operator, &f.configuration.id)
+        .unwrap()
+        .0;
+    let prepared = f
+        .app
+        .create_run(&f.operator, id().as_str(), create_command(&f, revision))
+        .unwrap();
+    f.app.check_live_run_index().unwrap();
+    // A restart moves both to recovery; both stay live.
+    let mut f = restart_runtime(f);
+    f.app.check_live_run_index().unwrap();
+    for run in [&executing, &prepared] {
+        let (revision, current) = f.app.inspect_run(&f.operator, &run.id).unwrap();
+        assert_eq!(current.state, RunState::RecoveryRequired);
+        // Abandoning (possible once nothing is in flight) removes the run from the set.
+        if run.id == prepared.id {
+            f.app
+                .abandon_run(
+                    &f.operator,
+                    id().as_str(),
+                    AbandonRun {
+                        run: run.id.clone(),
+                        expected_run: revision,
+                    },
+                )
+                .unwrap();
+            f.app.check_live_run_index().unwrap();
+        }
+    }
+    // A stale set, as a revision that kept no index would leave (the executing run is still
+    // live), is rebuilt from the runs by the next start.
+    let installation = f.app.installation.id.clone();
+    let cell = f.configuration.id.clone();
+    let mut repository = f.app.into_repository();
+    repository
+        .transact(|tx| {
+            let key = rx_application::persistence::key("runlive", &cell);
+            let row = tx.get(&key)?.unwrap();
+            tx.put(
+                &key,
+                Some(row.revision),
+                &rx_application::persistence::doc(
+                    "rx.internal.run-live-index.v1",
+                    &serde_json::json!({"cell": cell, "runs": []}),
+                )?,
+            )?;
+            Ok(())
+        })
+        .unwrap();
+    let mut app = Engine::open(
+        repository,
+        f.clock.clone(),
+        SimulationAuthority,
+        installation,
+        principal("admin", &[Role::AccountAdmin]),
+    )
+    .unwrap();
+    app.check_live_run_index().unwrap();
+}
+
+#[test]
 fn a_run_left_for_recovery_by_a_restart_is_abandoned_only_once_nothing_of_it_is_in_flight() {
     for entered in [false, true] {
         let mut f = fixture_complete(1, true, false, true);

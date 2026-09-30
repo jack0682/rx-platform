@@ -236,6 +236,11 @@ fn source_ids<'a>(expression: &'a Condition, result: &mut BTreeSet<&'a Name>) {
 }
 
 impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
+    /// Local consistency check, not an RPC: recompute every cell's live runs from the runs and
+    /// compare them with the maintained index. Writes nothing.
+    pub fn check_live_run_index(&mut self) -> Result<()> {
+        self.repository.transact(|tx| crate::run_index::verify(tx))
+    }
     /// Trusted local supervisor binding only. It creates no stored execution authority.
     pub fn service_owner(
         &mut self,
