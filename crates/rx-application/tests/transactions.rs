@@ -4583,6 +4583,44 @@ fn add_case_lead(f: &mut Fixture) {
         .unwrap();
 }
 #[test]
+fn a_cell_installed_later_on_a_shared_resource_cannot_start_while_a_related_case_is_open() {
+    use rx_application::intervention::*;
+    for (kind, shared) in [
+        (CaseType::DiagnosticOnly, true),
+        (CaseType::FaultRecovery, true),
+        (CaseType::FaultRecovery, false),
+    ] {
+        let mut f = fixture(1, true);
+        add_case_lead(&mut f);
+        f.app
+            .open_case(&f.operator, id().as_str(), case_request(&f, kind))
+            .unwrap();
+        // cell/b arrives after the case opened; its own records name no case or block.
+        add_cell_b(&mut f, shared);
+        let (revision, cell_b) = f.app.inspect_cell(&f.operator, &name("cell/b")).unwrap();
+        assert!(cell_b.blocks.is_empty() && cell_b.open_cases.is_empty());
+        let run = f
+            .app
+            .create_run(&f.operator, id().as_str(), create_command(&f, revision))
+            .unwrap();
+        let started = f.app.start_run(
+            &f.operator,
+            id().as_str(),
+            start_command(&f, &run, revision, 1),
+        );
+        if shared {
+            // It shares controller/0 with cell/a, so cell/a's open case holds it too.
+            assert!(
+                matches!(started, Err(StoreError::Rejected(Rejection::BlockedByCase))),
+                "{kind:?}: {started:?}"
+            );
+        } else {
+            // A cell on its own controller and scope is not related to the case.
+            started.unwrap();
+        }
+    }
+}
+#[test]
 fn physical_case_open_is_atomic_and_acknowledgment_cannot_restore_authority() {
     use rx_application::intervention::*;
     use rx_domain::canonical;
