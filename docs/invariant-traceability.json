@@ -273,7 +273,7 @@
     {
       "id": "OI08",
       "status": "uncovered",
-      "reason": "P's half does not hold. A case's affected-cell closure is fixed when it opens (engine/intervention.rs); a cell installed later on a shared resource starts with no blocks or open cases (engine/configuration.rs), qualify does not check related cases, and start admission checks only the cell's own blocks and cases (engine/admission.rs ready). The case restart path is not implemented (READY_FOR_RESTART is never assigned). Host restart gating is rx-solutions; personnel and external restrictions are site procedures.",
+      "reason": "P's half holds only in part. Admission (engine/admission.rs ready) now recomputes the cell's current closure and refuses while any related cell has an open case, including a cell installed after the case opened; transactions.rs a_cell_installed_later_on_a_shared_resource_cannot_start_while_a_related_case_is_open establishes that, but is not declared because the restart the invariant is about is not implemented: the case restart path never assigns READY_FOR_RESTART. Host restart gating is rx-solutions; personnel and external restrictions are site procedures.",
       "tests": []
     },
     {

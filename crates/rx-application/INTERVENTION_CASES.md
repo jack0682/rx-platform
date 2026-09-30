@@ -8,6 +8,8 @@ Check current Operator/RecoveryLead/Executor/Host permissions and access to the 
 
 Since the current authority unit is the cell, impact extends through the cell closure connected by the current cell's scopes/shared resources. Unknown scope/material references are preserved as scope_uncertain. A requested narrow scope is not directly treated as a safety boundary.
 
+The closure a case records is fixed when it opens, but admission recomputes it: start, delivery planning, handover and operation admission refuse a cell with `BLOCKED_BY_CASE` while any cell that currently shares its scopes or resources has an open case. A cell installed on a shared resource after the case opened is therefore held by it too, although its own records name no case or block.
+
 | Case type | Atomic handling | Initial state |
 |---|---|---|
 | DIAGNOSTIC_ONLY | Add non-latched blocks and case membership to impacted cells. Preserve epoch/existing ACTIVE mandate | OPEN |

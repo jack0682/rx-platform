@@ -16,6 +16,16 @@ pub(super) fn ready(tx: &mut dyn Transaction, cell: &Cell, _now: &TimePoint) -> 
     if !cell.blocks.is_empty() || !cell.open_cases.is_empty() {
         return reject(Reject::BlockedByCase);
     }
+    // An open case holds every cell that shares its scopes or resources now, including a cell
+    // installed after the case opened, whose own records do not name it.
+    for related in affected_cells(tx, &cell.configuration.id)? {
+        if related != cell.configuration.id {
+            let (_, other): (_, Cell) = load(tx, "cell", &related, CELL)?;
+            if !other.open_cases.is_empty() {
+                return reject(Reject::BlockedByCase);
+            }
+        }
+    }
     Ok(())
 }
 
