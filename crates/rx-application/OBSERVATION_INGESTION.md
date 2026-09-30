@@ -48,7 +48,7 @@ The connection service owns ObservationReader alongside dispatcher/lease renewal
 
 A separate P monitor checks maintained conditions for currently active Runs/start attempts every 25 ms. It continues while a reader waits for a network response or fails. If maintained conditions are lost through expiry/uncertainty/failure, the same transaction revokes impacted mandates/permits and prepares Fence delivery. Original observation values/times/quality are not changed. An actually stale true remains a stale true.
 
-25 ms is the current scheduling setting. It is not a validated worst-case response time including complete scans/writer waits/OS scheduling and does not constitute real-time protection. Actual profiles with short source TTLs require separate performance validation including acquisition, delivery and evaluation delays.
+25 ms is the current scheduling setting. It is not a validated worst-case response time including complete scans/writer waits/OS scheduling and does not constitute real-time protection. When the writer queue is full the monitor treats the refusal as a missed tick; only if the writer stays busy for more than 1 s, or returns any other error, does the monitor end, which makes the runtime stop and revoke every cell. A momentary queue burst therefore no longer stops the platform, and a sustained one still does. Actual profiles with short source TTLs require separate performance validation including acquisition, delivery and evaluation delays.
 
 The P executable starts exactly one such monitor even without Host connection configuration. It surfaces writer errors as service failures rather than hiding them. Shutdown joins the reader and dispatcher; interrupted reads do not create native operations or restarts.
 
