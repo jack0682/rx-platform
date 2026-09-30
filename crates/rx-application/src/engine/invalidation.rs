@@ -59,11 +59,7 @@ fn invalidate_cell_for_pause(
         latched: true,
         scopes: cell.configuration.scopes.clone(),
     });
-    for record in tx.scan("run/")? {
-        let mut run: Run = decode(&record, RUN)?;
-        if run.cell != cell.configuration.id {
-            continue;
-        }
+    for (revision, mut run) in crate::run_index::live_runs(tx, &cell.configuration.id)? {
         if matches!(
             run.state,
             RunState::Executing | RunState::Prepared | RunState::Paused
@@ -75,7 +71,7 @@ fn invalidate_cell_for_pause(
             };
             run.executor_session = None;
             run.pending_attempt = None;
-            tx.put(&record.key, Some(record.revision), &doc(RUN, &run)?)?;
+            tx.put(&key("run", &run.id), Some(revision), &doc(RUN, &run)?)?;
         }
     }
     for record in tx.scan("attempt/")? {

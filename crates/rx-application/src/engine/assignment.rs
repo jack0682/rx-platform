@@ -18,22 +18,11 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                 cell_id,
             )?;
             let (_, session): (_, Session) = load(tx, "session", &identity.session, SESSION)?;
-            let rows = tx.scan("run/")?;
-            // Storage currently materializes a scan. Refuse an incomplete/oversized discovery;
-            // this bound is not claimed as a bound on the storage allocation itself.
-            if rows.len() > 10_000 {
-                return Err(StoreError::Unavailable("assignment scan limit".into()));
-            }
+            // Only this cell's live runs: completed and abandoned runs are never candidates, so
+            // the discovery no longer grows with the installation's run history.
             let mut candidates = Vec::new();
-            for row in rows {
-                let run: Run = decode(&row, RUN)?;
-                if row.key != key("run", &run.id) {
-                    return Err(StoreError::Integrity("assignment Run key differs".into()));
-                }
-                if run.cell != *cell_id
-                    || matches!(run.state, RunState::Completed | RunState::Abandoned)
-                    || (run.state == RunState::Prepared && run.pending_attempt.is_none())
-                {
+            for (revision, run) in crate::run_index::live_runs(tx, cell_id)? {
+                if run.state == RunState::Prepared && run.pending_attempt.is_none() {
                     continue;
                 }
                 let pending_attempt = if let Some(id) = &run.pending_attempt {
@@ -62,7 +51,7 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                     == process_change::config_ref(&cell.configuration)?;
                 candidates.push(Candidate {
                     run: run.id,
-                    revision: row.revision,
+                    revision,
                     state: run.state,
                     purpose: run.purpose,
                     definition: cfg.definition,

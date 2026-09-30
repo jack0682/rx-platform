@@ -910,6 +910,198 @@ fn restarting_runtime_preserves_consumption_and_revokes_mandate() {
     assert!(!cell.blocks.is_empty());
 }
 
+/// Only P restarts on the same ledger; admin and operator log in again.
+fn restart_runtime(f: Fixture) -> Fixture {
+    let Fixture {
+        _directory,
+        app,
+        clock,
+        failure,
+        mut admin,
+        mut operator,
+        executor,
+        hosts,
+        configuration,
+        registrations,
+    } = f;
+    let installation = app.installation.id.clone();
+    let mut app = Engine::open(
+        app.into_repository(),
+        clock.clone(),
+        SimulationAuthority,
+        installation,
+        principal("admin", &[Role::AccountAdmin]),
+    )
+    .unwrap();
+    admin.session = app
+        .authenticated_session(&admin.principal, id(), expiry(u64::MAX))
+        .unwrap()
+        .id;
+    operator.session = app
+        .authenticated_terminal_user_session(
+            &operator.principal,
+            id(),
+            Counter(99_000),
+            Digest::from_bytes([77; 32]),
+        )
+        .unwrap()
+        .id;
+    Fixture {
+        _directory,
+        app,
+        clock,
+        failure,
+        admin,
+        operator,
+        executor,
+        hosts,
+        configuration,
+        registrations,
+    }
+}
+
+#[test]
+fn the_live_run_index_follows_every_run_write_and_is_rebuilt_at_start() {
+    let mut f = fixture_complete(1, true, false, true);
+    f.app.check_live_run_index().unwrap();
+    // Executing, then a second run left prepared.
+    let executing = start(&mut f, 1);
+    f.app.check_live_run_index().unwrap();
+    let revision = f
+        .app
+        .inspect_cell(&f.operator, &f.configuration.id)
+        .unwrap()
+        .0;
+    let prepared = f
+        .app
+        .create_run(&f.operator, id().as_str(), create_command(&f, revision))
+        .unwrap();
+    f.app.check_live_run_index().unwrap();
+    // A restart moves both to recovery; both stay live.
+    let mut f = restart_runtime(f);
+    f.app.check_live_run_index().unwrap();
+    for run in [&executing, &prepared] {
+        let (revision, current) = f.app.inspect_run(&f.operator, &run.id).unwrap();
+        assert_eq!(current.state, RunState::RecoveryRequired);
+        // Abandoning (possible once nothing is in flight) removes the run from the set.
+        if run.id == prepared.id {
+            f.app
+                .abandon_run(
+                    &f.operator,
+                    id().as_str(),
+                    AbandonRun {
+                        run: run.id.clone(),
+                        expected_run: revision,
+                    },
+                )
+                .unwrap();
+            f.app.check_live_run_index().unwrap();
+        }
+    }
+    // A stale set, as a revision that kept no index would leave (the executing run is still
+    // live), is rebuilt from the runs by the next start.
+    let installation = f.app.installation.id.clone();
+    let cell = f.configuration.id.clone();
+    let mut repository = f.app.into_repository();
+    repository
+        .transact(|tx| {
+            let key = rx_application::persistence::key("runlive", &cell);
+            let row = tx.get(&key)?.unwrap();
+            tx.put(
+                &key,
+                Some(row.revision),
+                &rx_application::persistence::doc(
+                    "rx.internal.run-live-index.v1",
+                    &serde_json::json!({"cell": cell, "runs": []}),
+                )?,
+            )?;
+            Ok(())
+        })
+        .unwrap();
+    let mut app = Engine::open(
+        repository,
+        f.clock.clone(),
+        SimulationAuthority,
+        installation,
+        principal("admin", &[Role::AccountAdmin]),
+    )
+    .unwrap();
+    app.check_live_run_index().unwrap();
+}
+
+#[test]
+fn a_run_left_for_recovery_by_a_restart_is_abandoned_only_once_nothing_of_it_is_in_flight() {
+    for entered in [false, true] {
+        let mut f = fixture_complete(1, true, false, true);
+        let run = start(&mut f, 2);
+        let a = activation(&mut f, &run);
+        let work = submit(&mut f, &a, id().as_str()).unwrap();
+        if entered {
+            f.app
+                .plan_delivery(&f.hosts[0], work.operation.id())
+                .unwrap();
+        }
+        // An executing run is not abandoned; it is paused or left for recovery first.
+        let (revision, _) = f.app.inspect_run(&f.operator, &run.id).unwrap();
+        let command = |expected_run| AbandonRun {
+            run: run.id.clone(),
+            expected_run,
+        };
+        let (early, key, again) = (id(), id(), id());
+        let executing = f
+            .app
+            .abandon_run(&f.operator, early.as_str(), command(revision));
+        assert!(
+            matches!(executing, Err(StoreError::Rejected(Rejection::Busy))),
+            "{executing:?}"
+        );
+        let mut f = restart_runtime(f);
+        let (revision, left) = f.app.inspect_run(&f.operator, &run.id).unwrap();
+        assert_eq!(left.state, RunState::RecoveryRequired);
+        let result = f
+            .app
+            .abandon_run(&f.operator, key.as_str(), command(revision));
+        if entered {
+            // The entered send's outcome is unknown until investigated and reconciled.
+            assert_eq!(
+                f.app
+                    .inspect_work(&f.operator, work.operation.id())
+                    .unwrap()
+                    .operation
+                    .outcome(),
+                rx_domain::operation::Outcome::None
+            );
+            assert!(matches!(result, Err(StoreError::Rejected(Rejection::Busy))));
+            continue;
+        }
+        // The restart concluded the never-sent operation as not executed.
+        let abandoned = result.unwrap();
+        assert_eq!(abandoned.state, RunState::Abandoned);
+        assert_eq!(abandoned.executor_session, None);
+        assert_eq!(
+            abandoned.budget.as_ref().unwrap().consumed(),
+            left.budget.as_ref().unwrap().consumed()
+        );
+        // The same request replays its recorded result; another is refused.
+        assert_eq!(
+            f.app
+                .abandon_run(&f.operator, key.as_str(), command(revision))
+                .unwrap()
+                .state,
+            RunState::Abandoned
+        );
+        let (revision, _) = f.app.inspect_run(&f.operator, &run.id).unwrap();
+        assert!(matches!(
+            f.app
+                .abandon_run(&f.operator, again.as_str(), command(revision)),
+            Err(StoreError::Rejected(Rejection::StaleRevision))
+        ));
+        // Abandoning releases nothing: the restart's restrictions stay.
+        let (_, cell) = f.app.inspect_cell(&f.operator, &name("cell/a")).unwrap();
+        assert!(!cell.blocks.is_empty());
+    }
+}
+
 fn add_cell_b(f: &mut Fixture, shared: bool) {
     let mut configuration = f.configuration.clone();
     configuration.id = name("cell/b");

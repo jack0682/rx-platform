@@ -20,7 +20,8 @@ superseded. For a neighbouring cell reached through a shared scope or resource i
 epoch right after the invalidation; origins are recorded after every closure of the event is
 invalidated so this is the post-invalidation epoch. `digest()` uses
 `RX-DEVICE-INVALIDATION-ORIGIN-v1`; `read_for_cell` refuses an origin from another
-installation, store generation or cell, or one whose block no longer matches.
+installation or cell, one written under a store generation outside this ledger's restore
+lineage, or one whose block no longer matches.
 
 `GET /api/v1/device-restrictions?cell=...` returns the cell's latched DeviceRestart blocks in
 ID order with their origin and digest (both null without one), under the same roles and cell

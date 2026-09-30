@@ -781,6 +781,11 @@ pub enum Command {
         key: Id,
         command: StartRun,
     },
+    AbandonRun {
+        identity: Identity,
+        key: Id,
+        command: rx_application::AbandonRun,
+    },
     Hold {
         identity: Identity,
         key: Id,
@@ -2172,6 +2177,14 @@ impl<R: Repository + Send + 'static, C: Clock + 'static, A: QualificationAuthori
             } => self
                 .engine
                 .create_run(&identity, key.as_str(), command)
+                .map(Reply::Run),
+            Command::AbandonRun {
+                identity,
+                key,
+                command,
+            } => self
+                .engine
+                .abandon_run(&identity, key.as_str(), command)
                 .map(Reply::Run),
             Command::StartRun {
                 identity,

@@ -39,6 +39,27 @@ fn counter(n: i64) -> Result<Counter> {
 fn signed(c: Counter) -> Result<i64> {
     i64::try_from(c.0).map_err(|_| StoreError::Invalid("SQLite revision range exhausted".into()))
 }
+/// A range on the primary key is a B-tree search, so a scan costs what its prefix holds. `LIKE`
+/// on the BINARY key column is never optimized and read every key in the store.
+const SCAN: &str =
+    "SELECT key,revision,document FROM entities WHERE key >= ?1 AND key < ?2 ORDER BY key";
+/// Keys are `Name`s: ASCII alphanumerics and `._/-`. The keys that start with `prefix` are
+/// exactly those in `[prefix, upper)`, where `upper` is `prefix` with its last byte incremented.
+fn prefix_range(prefix: &str) -> Result<(&str, String)> {
+    let bytes = prefix.as_bytes();
+    let (last, head) = bytes
+        .split_last()
+        .ok_or_else(|| StoreError::Invalid("invalid internal key prefix".into()))?;
+    if !bytes
+        .iter()
+        .all(|c| c.is_ascii_alphanumeric() || b"._/-".contains(c))
+    {
+        return Err(StoreError::Invalid("invalid internal key prefix".into()));
+    }
+    let mut upper = head.to_vec();
+    upper.push(last + 1);
+    Ok((prefix, String::from_utf8(upper).map_err(integrity)?))
+}
 
 impl SqliteRepository {
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
@@ -440,15 +461,10 @@ impl rx_ports::Transaction for SqliteTransaction<'_, '_> {
     }
     fn scan(&mut self, prefix: &str) -> Result<Vec<Record>> {
         self.check_process()?;
-        if prefix.is_empty() || prefix.contains(['%', '_']) {
-            return Err(StoreError::Invalid("invalid internal key prefix".into()));
-        }
-        let mut statement = self
-            .transaction
-            .prepare("SELECT key,revision,document FROM entities WHERE key LIKE ?1 ORDER BY key")
-            .map_err(unavailable)?;
+        let (lower, upper) = prefix_range(prefix)?;
+        let mut statement = self.transaction.prepare(SCAN).map_err(unavailable)?;
         let rows = statement
-            .query_map([format!("{prefix}%")], |r| {
+            .query_map(params![lower, upper], |r| {
                 Ok((
                     r.get::<_, String>(0)?,
                     r.get::<_, i64>(1)?,
@@ -764,6 +780,42 @@ mod ownership_close_tests {
         println!(
             "SQLITE_CLOSE_UNCONFIRMED: no unlock; contender refused until holder process exits"
         );
+    }
+}
+
+#[cfg(test)]
+mod scan_tests {
+    use super::*;
+    #[test]
+    fn prefix_scan_is_a_key_range_search_not_a_full_scan() {
+        let temp = tempfile::tempdir().expect("temporary directory");
+        let repository = SqliteRepository::open(temp.path().join("platform.db")).expect("store");
+        let connection = repository.connection().expect("connection");
+        let mut statement = connection
+            .prepare(&format!("EXPLAIN QUERY PLAN {SCAN}"))
+            .expect("plan");
+        let plan: Vec<String> = statement
+            .query_map(params!["cell/", "cell0"], |r| r.get::<_, String>(3))
+            .expect("plan rows")
+            .collect::<std::result::Result<_, _>>()
+            .expect("plan details");
+        assert_eq!(plan.len(), 1, "{plan:?}");
+        assert!(plan[0].starts_with("SEARCH entities USING"), "{plan:?}");
+        assert!(plan[0].contains("key>? AND key<?"), "{plan:?}");
+    }
+    #[test]
+    fn prefix_range_is_exactly_the_keys_that_start_with_the_prefix() {
+        assert_eq!(
+            prefix_range("cell/").expect("range"),
+            ("cell/", "cell0".to_owned())
+        );
+        assert_eq!(
+            prefix_range("local-sim/run_").expect("range"),
+            ("local-sim/run_", "local-sim/run`".to_owned())
+        );
+        for invalid in ["", "cell%", "cell/*", "céll/", "cell /"] {
+            assert!(prefix_range(invalid).is_err(), "{invalid}");
+        }
     }
 }
 
