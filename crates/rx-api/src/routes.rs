@@ -258,6 +258,22 @@ fn build_router(
         )
         .route("/api/v1/component", get(resident_components::get_component))
         .route(
+            "/api/v1/component/reporting-scope",
+            get(resident_components::get_reporting_scope),
+        )
+        .route(
+            "/api/v1/components/reporting",
+            post(resident_components::issue_reporting),
+        )
+        .route(
+            "/api/v1/components/reporting/revoke",
+            post(resident_components::revoke_reporting),
+        )
+        .route(
+            "/api/v1/component/report",
+            get(resident_components::get_report),
+        )
+        .route(
             "/api/v1/components/update",
             post(resident_components::update_component),
         )

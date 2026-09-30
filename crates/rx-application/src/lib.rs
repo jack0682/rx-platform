@@ -10,6 +10,7 @@ pub mod persistence;
 pub mod procedure;
 pub mod projection;
 pub mod resident_component;
+pub mod resident_reporting;
 mod run_index;
 pub use engine::Engine;
 pub use model::*;

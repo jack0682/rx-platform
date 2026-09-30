@@ -29,6 +29,7 @@ class PreparationBoundary(unittest.TestCase):
             expected={p.relative_to(ROOT/'proto'):p.read_bytes() for p in (ROOT/'proto/rx').rglob('*.proto')}
             actual={p.relative_to(root/'proto'):p.read_bytes() for p in (root/'proto/rx').rglob('*.proto')}
             self.assertEqual(actual,expected)
-            self.assertEqual(len(actual),9)
+            self.assertEqual(len(actual),10)
+            self.assertIn(Path('rx/resident/reporting/v1/reporting.proto'),actual)
 
 if __name__=='__main__':unittest.main()

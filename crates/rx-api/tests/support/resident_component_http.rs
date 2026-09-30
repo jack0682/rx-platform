@@ -7,6 +7,170 @@ fn create(label: &str) -> Value {
 }
 
 #[tokio::test]
+async fn reporting_http_owner_controls_scope_and_reads_attributed_history() {
+    use rx_domain::{component::Binding, resident_reporting::*};
+    let f = fixture().await;
+    let admin = login(&f.app, "admin").await;
+    let reader = login(&f.app, "reader").await;
+    let (status, component, _) = send(
+        &f.app,
+        request(
+            "POST",
+            "/api/v1/components",
+            Some(&admin),
+            create("report-test").to_string(),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let auth = Digest::from_bytes([71; 32]);
+    let Reply::ResidentReporter(peer) = f
+        .handle
+        .call(Command::OpenResidentReporter {
+            principal: name("reader"),
+            peer_boot: id(),
+            authentication_binding: auth,
+        })
+        .await
+        .unwrap()
+    else {
+        panic!("reporter");
+    };
+    let source = id();
+    let issue = json!({"request_key":id(),"command":{
+        "component":component["record"]["registration"]["id"],
+        "expected_component_revision":component["revision"],
+        "reporter_session":peer.id,"source_registration":source,"source_revision":"1"
+    }});
+    for (cookie, expected) in [
+        (None, StatusCode::UNAUTHORIZED),
+        (Some(reader.as_str()), StatusCode::FORBIDDEN),
+    ] {
+        let (status, _, _) = send(
+            &f.app,
+            request(
+                "POST",
+                "/api/v1/components/reporting",
+                cookie,
+                issue.to_string(),
+            ),
+        )
+        .await;
+        assert_eq!(status, expected);
+    }
+    let (status, issued, _) = send(
+        &f.app,
+        request(
+            "POST",
+            "/api/v1/components/reporting",
+            Some(&admin),
+            issue.to_string(),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{issued}");
+    let scope: Scope = serde_json::from_value(issued["scope"].clone()).unwrap();
+    let (_, replay, _) = send(
+        &f.app,
+        request(
+            "POST",
+            "/api/v1/components/reporting",
+            Some(&admin),
+            issue.to_string(),
+        ),
+    )
+    .await;
+    assert_eq!(replay, issued);
+    let scope_path = format!("/api/v1/component/reporting-scope?id={}", scope.id);
+    let (status, read, _) = send(
+        &f.app,
+        request("GET", &scope_path, Some(&admin), String::new()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(read, issued);
+    let instance = id();
+    f.handle
+        .call(Command::PublishResidentReport {
+            identity: rx_application::resident_reporting::ReporterIdentity {
+                principal: peer.principal.clone(),
+                session: peer.id.clone(),
+                authentication_binding: auth,
+            },
+            key: id(),
+            report: Report {
+                scope: scope.id.clone(),
+                source: Binding {
+                    registration: source,
+                    registration_revision: Counter(1),
+                    catalog: scope.catalog,
+                    run: id(),
+                    selection: name("report-test"),
+                    instance: instance.clone(),
+                },
+                sequence: Counter(1),
+                state: ExecutionState::Unknown,
+                pid: None,
+                exit_code: None,
+                detail: "no live process claim".into(),
+            },
+        })
+        .await
+        .unwrap();
+    let report_path = format!(
+        "/api/v1/component/report?component={}&instance={instance}",
+        scope.component
+    );
+    for path in [&scope_path, &report_path] {
+        let (status, _, _) = send(&f.app, request("GET", path, Some(&reader), String::new())).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+    }
+    let (status, report, _) = send(
+        &f.app,
+        request("GET", &report_path, Some(&admin), String::new()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        report["receipt"]["execution_ownership"],
+        "NOT_ESTABLISHED_BY_REPORT"
+    );
+    assert_eq!(report["reporter_session_current"], true);
+    let revoke = json!({"request_key":id(),"command":{"scope":scope.id,"expected_revision":issued["revision"]}});
+    let (status, _, _) = send(
+        &f.app,
+        request(
+            "POST",
+            "/api/v1/components/reporting/revoke",
+            Some(&reader),
+            revoke.to_string(),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let (status, revoked, _) = send(
+        &f.app,
+        request(
+            "POST",
+            "/api/v1/components/reporting/revoke",
+            Some(&admin),
+            revoke.to_string(),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{revoked}");
+    assert_eq!(revoked["scope"]["active"], false);
+    let (status, history, _) = send(
+        &f.app,
+        request("GET", &report_path, Some(&admin), String::new()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(history["reporter_session_current"], false);
+    assert_eq!(history["receipt"], report["receipt"]);
+}
+
+#[tokio::test]
 async fn component_http_writes_use_the_authoritative_writer_and_preserve_history() {
     let f = fixture().await;
     let cookie = login(&f.app, "admin").await;

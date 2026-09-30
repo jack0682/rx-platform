@@ -321,6 +321,15 @@ a = Schema("rx.executor.assignment.v1", "rx/executor/assignment/v1/assignment.pr
 a.message("InspectCell", "context:base.CallContext#1 cell_id:Name#2 binding_hash:Digest#3")
 a.service("ExecutorAssignment", [("Inspect", "InspectCell", "rx.executor.v1.ReadPayload")])
 a.write()
+# Optional resident observations use a separate peer session, not a Host role.
+rr = Schema("rx.resident.reporting.v1", "rx/resident/reporting/v1/reporting.proto")
+rr.message("OpenReporter", "peer_id:Name#1 peer_boot:Id#2 installation_id:Id#3 store_generation:Id#4 shared_clock_id:string#5 release_digest:Digest#6 binding_hash:Digest#7")
+rr.message("InspectScope", "session_id:Id#1 scope_id:Id#2 binding_hash:Digest#3")
+rr.message("PublishReport", "session_id:Id#1 request_key:Id#2 payload:bytes#3 payload_sha256:Digest#4 binding_hash:Digest#5")
+rr.message("Payload", "schema:string#1 data:bytes#2 sha256:Digest#3")
+rr.service("ResidentReporting", [("Open", "OpenReporter", "Payload"), ("Inspect", "InspectScope", "Payload"), ("Publish", "PublishReport", "Payload")])
+rr.write()
+
 # Optional Host bootstrap/state read binding; no new native write surface.
 h = Schema("rx.host.read.v1", "rx/host/read/v1/read.proto", ("rx/contract/v1/contract.proto", "rx/cell/v1/cell.proto"))
 h.message("InspectHost", "call:rx.cell.v1.CellCall#1 source_ids:Name[]#2 binding_hash:Digest#3")

@@ -1,0 +1,570 @@
+//! Actual mTLS reporter ingress with the real application writer. No device authority.
+use rx_api::grpc::{Configuration, PlatformIngress, TlsMaterial};
+use rx_application::*;
+use rx_domain::{canonical, component::*, resident_reporting::*, types::*};
+use rx_protocol::{base, resident_reporting as wire};
+use rx_runtime::{
+    application::{Application, ApplicationPort, CallFuture, Command, Handle, Reply},
+    writer::{Status, Writer, WriterError},
+};
+use rx_storage::SqliteRepository;
+use sha2::Digest as _;
+use std::{
+    collections::BTreeMap,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
+};
+use tonic::transport::{Certificate, Channel, ClientTlsConfig, Identity as TlsIdentity};
+
+fn id() -> Id {
+    Id::new(uuid::Uuid::new_v4().to_string()).unwrap()
+}
+fn name(s: &str) -> Name {
+    Name::new(s).unwrap()
+}
+fn binding() -> Vec<u8> {
+    sha2::Sha256::digest(include_bytes!(
+        "../../../spec/resident-reporting/v1/binding.json"
+    ))
+    .to_vec()
+}
+struct Clock;
+impl rx_application::Clock for Clock {
+    fn now(&self) -> TimePoint {
+        TimePoint {
+            clock_id: "reporter-test-clock".into(),
+            ticks_ns: Counter(1000),
+        }
+    }
+}
+struct Deny;
+impl QualificationAuthority for Deny {
+    fn verify(&self, _: &CellConfiguration, _: &[ArtifactRef], _: &[Digest]) -> bool {
+        false
+    }
+}
+type App = Handle<Application<SqliteRepository, Clock, Deny>>;
+struct LostAck {
+    handle: App,
+    lose: AtomicBool,
+}
+impl ApplicationPort for LostAck {
+    fn request(&self, command: Command) -> CallFuture<'_> {
+        let lose = matches!(command, Command::PublishResidentReport { .. })
+            && self.lose.swap(false, Ordering::SeqCst);
+        Box::pin(async move {
+            let reply = self.handle.call(command).await?;
+            if lose {
+                Err(WriterError::Unavailable)
+            } else {
+                Ok(reply)
+            }
+        })
+    }
+    fn status(&self) -> Status {
+        self.handle.status()
+    }
+}
+struct Fixture {
+    dir: tempfile::TempDir,
+    handle: App,
+    admin: rx_application::Identity,
+    installation: Installation,
+    endpoint: String,
+    ca: String,
+    keys: BTreeMap<String, (String, String)>,
+    release: Digest,
+    stop: Option<tokio::sync::oneshot::Sender<()>>,
+    task: Option<tokio::task::JoinHandle<Result<(), tonic::transport::Error>>>,
+}
+impl Drop for Fixture {
+    fn drop(&mut self) {
+        if let Some(stop) = self.stop.take() {
+            let _ = stop.send(());
+        }
+        if let Some(task) = self.task.take() {
+            task.abort();
+        }
+    }
+}
+impl Fixture {
+    async fn channel(&self, who: &str) -> Channel {
+        let (cert, key) = &self.keys[who];
+        tonic::transport::Endpoint::from_shared(self.endpoint.clone())
+            .unwrap()
+            .connect_timeout(Duration::from_secs(3))
+            .timeout(Duration::from_secs(3))
+            .tls_config(
+                ClientTlsConfig::new()
+                    .domain_name("localhost")
+                    .ca_certificate(Certificate::from_pem(&self.ca))
+                    .identity(TlsIdentity::from_pem(cert, key)),
+            )
+            .unwrap()
+            .connect()
+            .await
+            .unwrap()
+    }
+    fn hello(&self, who: &str) -> wire::OpenReporter {
+        wire::OpenReporter {
+            peer_id: who.into(),
+            peer_boot: id().to_string(),
+            installation_id: self.installation.id.to_string(),
+            store_generation: self.installation.store_generation.to_string(),
+            shared_clock_id: self.installation.clock_id.clone(),
+            release_digest: self.release.as_bytes().to_vec(),
+            binding_hash: binding(),
+        }
+    }
+    async fn issue(
+        &self,
+        peer: &Peer,
+        registration: &VersionedRegistration,
+    ) -> rx_application::resident_reporting::ScopeView {
+        let Reply::Component(component) = self
+            .handle
+            .call(Command::CreateComponent {
+                identity: self.admin.clone(),
+                key: id(),
+                input: rx_application::resident_component::Create {
+                    declaration: registration.registration.declaration.clone(),
+                },
+            })
+            .await
+            .unwrap()
+        else {
+            panic!("component");
+        };
+        let Reply::ResidentReportingScopeView(scope) = self
+            .handle
+            .call(Command::IssueResidentReporting {
+                identity: self.admin.clone(),
+                key: id(),
+                input: rx_application::resident_reporting::Issue {
+                    component: component.record.registration.id,
+                    expected_component_revision: component.revision,
+                    reporter_session: peer.id.clone(),
+                    source_registration: registration.registration.id.clone(),
+                    source_revision: registration.revision,
+                },
+            })
+            .await
+            .unwrap()
+        else {
+            panic!("scope");
+        };
+        *scope
+    }
+}
+async fn fixture() -> Fixture {
+    use rcgen::*;
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("platform.db");
+    let session = id();
+    let admin_session = session.clone();
+    let writer = Writer::start(move || {
+        let mut engine = Engine::open(
+            SqliteRepository::open(db)?,
+            Clock,
+            Deny,
+            id(),
+            Principal {
+                id: name("admin"),
+                client_namespace: name("admin"),
+                roles: [Role::AccountAdmin, Role::Engineer].into(),
+                cells: Default::default(),
+                active: true,
+            },
+        )?;
+        engine.authenticated_session(
+            &name("admin"),
+            session.clone(),
+            TimePoint {
+                clock_id: "reporter-test-clock".into(),
+                ticks_ns: Counter(u64::MAX),
+            },
+        )?;
+        let admin = rx_application::Identity {
+            principal: name("admin"),
+            session,
+            terminal: None,
+        };
+        for (label, role) in [
+            ("reporter", Role::Observer),
+            ("other", Role::Observer),
+            ("host", Role::Host),
+        ] {
+            engine.put_principal(
+                &admin,
+                Principal {
+                    id: name(label),
+                    client_namespace: name(label),
+                    roles: [role].into(),
+                    cells: Default::default(),
+                    active: true,
+                },
+                None,
+            )?;
+        }
+        Ok(Application::new(engine))
+    })
+    .await
+    .unwrap();
+    let handle = Handle::new(writer);
+    let Reply::Installation(installation) = handle.call(Command::Installation).await.unwrap()
+    else {
+        panic!("installation");
+    };
+    let mut parameters = CertificateParams::new(vec![]).unwrap();
+    parameters.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+    parameters.key_usages = vec![KeyUsagePurpose::KeyCertSign];
+    let ca = CertifiedIssuer::self_signed(parameters, KeyPair::generate().unwrap()).unwrap();
+    let leaf = |label: &str, usage: ExtendedKeyUsagePurpose| {
+        let key = KeyPair::generate().unwrap();
+        let mut p = CertificateParams::new(vec![label.into()]).unwrap();
+        p.extended_key_usages = vec![usage];
+        p.key_usages = vec![KeyUsagePurpose::DigitalSignature];
+        (p.signed_by(&key, &ca).unwrap(), key)
+    };
+    let (server, server_key) = leaf("localhost", ExtendedKeyUsagePurpose::ServerAuth);
+    let mut allowed = BTreeMap::new();
+    let mut keys = BTreeMap::new();
+    for who in ["reporter", "other", "host", "unregistered"] {
+        let (cert, key) = leaf(who, ExtendedKeyUsagePurpose::ClientAuth);
+        if who != "unregistered" {
+            allowed.insert(
+                Digest::from_bytes(sha2::Sha256::digest(cert.der().as_ref()).into()),
+                name(who),
+            );
+        }
+        keys.insert(who.to_string(), (cert.pem(), key.serialize_pem()));
+    }
+    let release = Digest::from_bytes([55; 32]);
+    let ingress = PlatformIngress::new(
+        Arc::new(LostAck {
+            handle: handle.clone(),
+            lose: AtomicBool::new(true),
+        }),
+        Configuration {
+            installation: installation.clone(),
+            release_digest: release,
+            allowed_certificates: allowed,
+        },
+    )
+    .await
+    .unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("https://{}", listener.local_addr().unwrap());
+    let (stop, rx) = tokio::sync::oneshot::channel();
+    let tls = TlsMaterial {
+        server_certificate_pem: server.pem().into_bytes(),
+        server_key_pem: server_key.serialize_pem().into_bytes(),
+        client_ca_pem: ca.pem().into_bytes(),
+    };
+    let task = tokio::spawn(ingress.serve(listener, tls, async {
+        let _ = rx.await;
+    }));
+    Fixture {
+        dir,
+        handle,
+        admin: rx_application::Identity {
+            principal: name("admin"),
+            session: admin_session,
+            terminal: None,
+        },
+        installation,
+        endpoint,
+        ca: ca.pem(),
+        keys,
+        release,
+        stop: Some(stop),
+        task: Some(task),
+    }
+}
+fn decode<T: serde::de::DeserializeOwned>(p: wire::Payload) -> T {
+    assert_eq!(p.sha256, sha2::Sha256::digest(&p.data).as_slice());
+    canonical::decode_json(&p.data).unwrap()
+}
+fn publish(peer: &Peer, key: &Id, report: &Report) -> wire::PublishReport {
+    let data = canonical::bytes(report).unwrap();
+    wire::PublishReport {
+        session_id: peer.id.to_string(),
+        request_key: key.to_string(),
+        payload_sha256: sha2::Sha256::digest(&data).to_vec(),
+        payload: data,
+        binding_hash: binding(),
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn mtls_reporter_is_scoped_and_cannot_become_a_host_or_author() {
+    use wire::resident_reporting_service_client::ResidentReportingServiceClient as Client;
+    let f = fixture().await;
+    for who in ["unregistered", "host"] {
+        let mut client = Client::new(f.channel(who).await);
+        assert_eq!(
+            client.open(f.hello(who)).await.unwrap_err().code(),
+            tonic::Code::PermissionDenied
+        );
+    }
+    let channel = f.channel("reporter").await;
+    let mut client = Client::new(channel.clone());
+    let mut wrong = f.hello("reporter");
+    wrong.binding_hash = vec![0; 32];
+    assert_eq!(
+        client.open(wrong).await.unwrap_err().code(),
+        tonic::Code::FailedPrecondition
+    );
+    let mut wrong = f.hello("other");
+    wrong.installation_id = id().to_string();
+    assert_eq!(
+        client.open(wrong).await.unwrap_err().code(),
+        tonic::Code::FailedPrecondition
+    );
+    let peer: Peer = decode(client.open(f.hello("reporter")).await.unwrap().into_inner());
+    let mut base_client = base::session_service_client::SessionServiceClient::new(channel);
+    let base_manifest: serde_json::Value = serde_json::from_slice(include_bytes!(
+        "../../../spec/contracts/v1.0/protocol_manifest.json"
+    ))
+    .unwrap();
+    let hash = sha2::Sha256::digest(canonical::bytes(&base_manifest).unwrap()).to_vec();
+    let host_hello = base::PeerHello {
+        peer_id: "reporter".into(),
+        role: base::Role::Host as i32,
+        boot_id: id().to_string(),
+        installation_id: f.installation.id.to_string(),
+        store_generation: f.installation.store_generation.to_string(),
+        supported_versions: vec![base::Version {
+            major: 1,
+            minor: 0,
+            schema_hash: hash,
+        }],
+        release_digest: f.release.as_bytes().to_vec(),
+        journal_id: Some(id().to_string()),
+        last_seq: Some(0),
+        shared_clock_id: f.installation.clock_id.clone(),
+    };
+    assert_eq!(
+        base_client.open(host_hello).await.unwrap_err().code(),
+        tonic::Code::Unauthenticated
+    );
+    assert!(
+        f.handle
+            .call(Command::OpenEvidenceProducer {
+                principal: name("reporter"),
+                peer_boot: id(),
+                journal: id(),
+                authentication_binding: Digest::from_bytes([7; 32])
+            })
+            .await
+            .is_err()
+    );
+    let registration = VersionedRegistration {
+        revision: Counter(1),
+        registration: Registration {
+            id: id(),
+            declaration: Declaration {
+                label: name("status"),
+                catalog: CatalogReference {
+                    program: name("test/status"),
+                    digest: Digest::from_bytes([8; 32]),
+                },
+            },
+            state: RegistrationState::Accepted,
+        },
+    };
+    let scope = f.issue(&peer, &registration).await;
+    let mut other = Client::new(f.channel("other").await);
+    let other_peer: Peer = decode(other.open(f.hello("other")).await.unwrap().into_inner());
+    assert_eq!(
+        other
+            .inspect(wire::InspectScope {
+                session_id: other_peer.id.to_string(),
+                scope_id: scope.scope.id.to_string(),
+                binding_hash: binding()
+            })
+            .await
+            .unwrap_err()
+            .code(),
+        tonic::Code::PermissionDenied
+    );
+    let report = Report {
+        scope: scope.scope.id.clone(),
+        source: Binding {
+            registration: scope.scope.source_registration.clone(),
+            registration_revision: scope.scope.source_revision,
+            catalog: scope.scope.catalog.clone(),
+            run: id(),
+            selection: name("status"),
+            instance: id(),
+        },
+        sequence: Counter(1),
+        state: ExecutionState::Running,
+        pid: Some(4242),
+        exit_code: None,
+        detail: "attributed test observation".into(),
+    };
+    let key = id();
+    let request = publish(&peer, &key, &report);
+    let mut bad = request.clone();
+    bad.payload_sha256 = vec![0; 32];
+    assert_eq!(
+        client.publish(bad).await.unwrap_err().code(),
+        tonic::Code::InvalidArgument
+    );
+    let mut extra = serde_json::to_value(&report).unwrap();
+    extra["work_use_permission"] = serde_json::json!("ALLOWED");
+    let mut noncanonical = request.payload.clone();
+    noncanonical.push(b' ');
+    for data in [canonical::bytes(&extra).unwrap(), noncanonical] {
+        let mut bad = request.clone();
+        bad.payload_sha256 = sha2::Sha256::digest(&data).to_vec();
+        bad.payload = data;
+        assert_eq!(
+            client.publish(bad).await.unwrap_err().code(),
+            tonic::Code::InvalidArgument
+        );
+    }
+    let mut oversized = request.clone();
+    oversized.payload = vec![b' '; 65537];
+    oversized.payload_sha256 = sha2::Sha256::digest(&oversized.payload).to_vec();
+    assert_eq!(
+        client.publish(oversized).await.unwrap_err().code(),
+        tonic::Code::ResourceExhausted
+    );
+    assert_eq!(
+        client.publish(request.clone()).await.unwrap_err().code(),
+        tonic::Code::Unavailable
+    );
+    let receipt: Receipt = decode(client.publish(request.clone()).await.unwrap().into_inner());
+    let repeated: Receipt = decode(client.publish(request).await.unwrap().into_inner());
+    assert_eq!(receipt, repeated);
+    assert_eq!(receipt.work_use_permission, WorkUse::NotEvaluated);
+    f.handle
+        .call(Command::RevokeResidentReporting {
+            identity: f.admin.clone(),
+            key: id(),
+            input: rx_application::resident_reporting::Revoke {
+                scope: scope.scope.id,
+                expected_revision: scope.revision,
+            },
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        client
+            .publish(publish(&peer, &key, &report))
+            .await
+            .unwrap_err()
+            .code(),
+        tonic::Code::PermissionDenied
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "tools/test_resident_reporting.py supplies the separately built real Supervisor fixture"]
+async fn actual_supervisor_child_reports_running_and_owned_exit_through_the_scoped_client() {
+    let executable =
+        std::env::var("RX_RESIDENT_REPORT_FIXTURE").expect("separate S fixture required");
+    let f = fixture().await;
+    let output = f.dir.path().join("reporter");
+    std::fs::create_dir(&output).unwrap();
+    for (name, bytes) in [
+        ("ca.pem", f.ca.as_bytes()),
+        ("client.pem", f.keys["reporter"].0.as_bytes()),
+        ("client.key", f.keys["reporter"].1.as_bytes()),
+    ] {
+        std::fs::write(f.dir.path().join(name), bytes).unwrap();
+    }
+    let config = f.dir.path().join("reporter.json");
+    std::fs::write(&config,serde_json::to_vec(&serde_json::json!({"endpoint":f.endpoint,"ca":f.dir.path().join("ca.pem"),"certificate":f.dir.path().join("client.pem"),
+        "key":f.dir.path().join("client.key"),"output":output,"installation":f.installation.id,"store_generation":f.installation.store_generation,
+        "clock":f.installation.clock_id,"release":f.release})).unwrap()).unwrap();
+    struct Child(std::process::Child);
+    impl Drop for Child {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    let mut child = Child(
+        std::process::Command::new(executable)
+            .arg(config)
+            .spawn()
+            .unwrap(),
+    );
+    let deadline = std::time::Instant::now() + Duration::from_secs(45);
+    let ready = output.join("ready.json");
+    while !ready.is_file() {
+        assert!(
+            child.0.try_wait().unwrap().is_none(),
+            "S fixture exited before ready"
+        );
+        assert!(std::time::Instant::now() < deadline);
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let value: serde_json::Value = serde_json::from_slice(&std::fs::read(ready).unwrap()).unwrap();
+    let peer: Peer = serde_json::from_value(value["peer"].clone()).unwrap();
+    // VersionedRegistration is intentionally a read model; decode its value fields separately.
+    let registration = VersionedRegistration {
+        revision: serde_json::from_value(value["registration"]["revision"].clone()).unwrap(),
+        registration: serde_json::from_value(value["registration"]["registration"].clone())
+            .unwrap(),
+    };
+    let scope = f.issue(&peer, &registration).await;
+    std::fs::write(
+        output.join("authorization.pending"),
+        serde_json::to_vec(
+            &serde_json::json!({"scope":scope.scope.id,"component":scope.scope.component}),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    std::fs::rename(
+        output.join("authorization.pending"),
+        output.join("authorization.json"),
+    )
+    .unwrap();
+    loop {
+        if let Some(exit) = child.0.try_wait().unwrap() {
+            assert!(exit.success(), "S fixture exit: {exit}");
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline);
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let result: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(output.join("result.json")).unwrap()).unwrap();
+    assert_eq!(result["status"], "PASS");
+    let stopped: Receipt = serde_json::from_value(result["stopped"].clone()).unwrap();
+    let Reply::ResidentReportView(view) = f
+        .handle
+        .call(Command::GetResidentReport {
+            identity: f.admin.clone(),
+            component: scope.scope.component,
+            instance: stopped.report.source.instance.clone(),
+        })
+        .await
+        .unwrap()
+    else {
+        panic!("report view");
+    };
+    assert_eq!(view.receipt, stopped);
+    assert_eq!(view.receipt.report.state, ExecutionState::Exited);
+    assert_eq!(view.receipt.report.exit_code, Some(0));
+    assert_eq!(
+        view.receipt.report.source.registration,
+        registration.registration.id
+    );
+    assert_eq!(
+        view.receipt.execution_ownership,
+        Ownership::NotEstablishedByReport
+    );
+    assert_eq!(view.receipt.work_use_permission, WorkUse::NotEvaluated);
+    if let Ok(path) = std::env::var("RX_RESIDENT_REPORT_EVIDENCE") {
+        std::fs::write(path, serde_json::to_vec_pretty(&result).unwrap()).unwrap();
+    }
+}

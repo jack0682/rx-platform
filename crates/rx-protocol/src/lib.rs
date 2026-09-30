@@ -4,6 +4,13 @@ pub mod json;
 pub mod strict;
 
 pub mod rx {
+    pub mod resident {
+        pub mod reporting {
+            pub mod v1 {
+                tonic::include_proto!("rx.resident.reporting.v1");
+            }
+        }
+    }
     pub mod host {
         pub mod qualification {
             pub mod v1 {
@@ -73,3 +80,4 @@ pub use rx::host::configuration::v1 as host_configuration;
 pub use rx::host::qualification::v1 as host_qualification;
 
 pub use rx::executor::assignment::v1 as assignment;
+pub use rx::resident::reporting::v1 as resident_reporting;

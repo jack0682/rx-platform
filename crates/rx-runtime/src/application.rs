@@ -8,6 +8,39 @@ use rx_domain::types::*;
 use rx_ports::{Repository, StoreError};
 
 pub enum Command {
+    ReadResidentReportingScope {
+        identity: Identity,
+        scope: Id,
+    },
+    OpenResidentReporter {
+        principal: Name,
+        peer_boot: Id,
+        authentication_binding: Digest,
+    },
+    IssueResidentReporting {
+        identity: Identity,
+        key: Id,
+        input: rx_application::resident_reporting::Issue,
+    },
+    RevokeResidentReporting {
+        identity: Identity,
+        key: Id,
+        input: rx_application::resident_reporting::Revoke,
+    },
+    InspectResidentReporting {
+        identity: rx_application::resident_reporting::ReporterIdentity,
+        scope: Id,
+    },
+    PublishResidentReport {
+        identity: rx_application::resident_reporting::ReporterIdentity,
+        key: Id,
+        report: rx_domain::resident_reporting::Report,
+    },
+    GetResidentReport {
+        identity: Identity,
+        component: Id,
+        instance: Id,
+    },
     CreateComponent {
         identity: Identity,
         key: Id,
@@ -813,6 +846,11 @@ pub enum Command {
     },
 }
 pub enum Reply {
+    ResidentReporter(Box<rx_domain::resident_reporting::Peer>),
+    ResidentReportingScope(Box<rx_domain::resident_reporting::Scope>),
+    ResidentReportingScopeView(Box<rx_application::resident_reporting::ScopeView>),
+    ResidentReportReceipt(Box<rx_domain::resident_reporting::Receipt>),
+    ResidentReportView(Box<rx_domain::resident_reporting::View>),
     Component(Box<rx_application::resident_component::View>),
     Settlement(Box<rx_application::settlement::Authorization>),
     HostRecoveryContext(Box<rx_application::host_recovery::Context>),
@@ -988,6 +1026,54 @@ impl<R: Repository + Send + 'static, C: Clock + 'static, A: QualificationAuthori
     }
     fn process(&mut self, command: Command) -> rx_ports::Result<Reply> {
         match command {
+            Command::ReadResidentReportingScope { identity, scope } => self
+                .engine
+                .inspect_resident_reporting(&identity, &scope)
+                .map(|v| Reply::ResidentReportingScopeView(Box::new(v))),
+            Command::OpenResidentReporter {
+                principal,
+                peer_boot,
+                authentication_binding,
+            } => self
+                .engine
+                .open_resident_reporter(&principal, peer_boot, authentication_binding)
+                .map(|v| Reply::ResidentReporter(Box::new(v))),
+            Command::IssueResidentReporting {
+                identity,
+                key,
+                input,
+            } => self
+                .engine
+                .issue_resident_reporting(&identity, key.as_str(), input)
+                .map(|v| Reply::ResidentReportingScopeView(Box::new(v))),
+            Command::RevokeResidentReporting {
+                identity,
+                key,
+                input,
+            } => self
+                .engine
+                .revoke_resident_reporting(&identity, key.as_str(), input)
+                .map(|v| Reply::ResidentReportingScopeView(Box::new(v))),
+            Command::InspectResidentReporting { identity, scope } => self
+                .engine
+                .resident_reporting_scope(&identity, &scope)
+                .map(|v| Reply::ResidentReportingScope(Box::new(v))),
+            Command::PublishResidentReport {
+                identity,
+                key,
+                report,
+            } => self
+                .engine
+                .publish_resident_report(&identity, key.as_str(), report)
+                .map(|v| Reply::ResidentReportReceipt(Box::new(v))),
+            Command::GetResidentReport {
+                identity,
+                component,
+                instance,
+            } => self
+                .engine
+                .resident_report(&identity, &component, &instance)
+                .map(|v| Reply::ResidentReportView(Box::new(v))),
             Command::CreateComponent {
                 identity,
                 key,
