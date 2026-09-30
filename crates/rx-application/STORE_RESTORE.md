@@ -23,9 +23,14 @@ It changes no cell, registration, grant, permit, qualification, Run or work. Wha
 
 - The next `Engine::open` starts a new runtime boot and applies the ordinary RuntimeRestart
   invalidation to every cell, with provenance under the new generation.
-- `runtime_invalidation::read_for_cell` refuses provenance recorded under the previous
-  generation, so restart restrictions from before the restore cannot be cleared by naming that
-  provenance; they need the usual review without it.
+- Restrictions recorded before the restore keep their provenance. `read_for_cell` (runtime and
+  device origins) accepts an origin written under the current generation or under any
+  generation a restore recorded in this ledger replaced, i.e. the generations the restored
+  cut's content was written under; any other generation is refused. So the restart and stop
+  restrictions a backup carries (an offline backup is always taken from a stopped runtime) are
+  released like any others: selected by an explicit requalification after the restore. An
+  earlier revision refused them outright, which left every cell of a restored installation
+  permanently blocked, since no review path exists for a restriction without provenance.
 - Every Host's session open is refused until the operator re-pins its destination to the new
   generation and restarts it; the Host then needs an explicit re-admission of its replaced
   generation ([HOST_READMISSION.md](../rx-api/HOST_READMISSION.md)). Restoring an older cut
