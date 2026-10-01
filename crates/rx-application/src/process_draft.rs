@@ -3,6 +3,34 @@ use rx_domain::{canonical, types::*};
 use rx_process_contract::source_validation;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+/// Library labels are classification, not operating-area identity or authority.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Library {
+    pub site: Option<String>,
+    pub service: Option<String>,
+    pub archived: bool,
+}
+impl Library {
+    pub fn validate(&self) -> Result<(), String> {
+        for value in [&self.site, &self.service].into_iter().flatten() {
+            if value.trim().is_empty() || value.chars().count() > 120 || value != value.trim() {
+                return Err(
+                    "site and service labels must be trimmed, nonempty and at most 120 characters"
+                        .into(),
+                );
+            }
+        }
+        Ok(())
+    }
+}
+#[derive(Clone, Debug, Default)]
+pub struct Filter {
+    pub query: String,
+    pub site: Option<String>,
+    pub service: Option<String>,
+    pub archived: Option<bool>,
+}
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Position {
@@ -31,6 +59,8 @@ impl Presentation {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Save {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub library: Option<Library>,
     pub id: Id,
     pub cell: Name,
     pub expected: Option<Counter>,
@@ -50,6 +80,9 @@ impl PreparedSave {
     pub fn prepare(input: Save) -> Result<Self, String> {
         if input.title.trim().is_empty() || input.title.chars().count() > 120 {
             return Err("draft title must have 1–120 characters".into());
+        }
+        if let Some(library) = &input.library {
+            library.validate()?;
         }
         if let Some(presentation) = &input.presentation {
             presentation.validate()?;
@@ -71,6 +104,8 @@ impl PreparedSave {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Version {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub library: Option<Library>,
     pub id: Id,
     pub cell: Name,
     pub revision: Counter,
@@ -95,10 +130,20 @@ pub struct Page {
     pub drafts: Vec<Summary>,
     pub next: Option<Id>,
 }
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct History {
+    pub cell: Name,
+    pub draft: Id,
+    pub versions: Vec<Summary>,
+    pub next: Option<Counter>,
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Summary {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub library: Option<Library>,
     pub id: Id,
     pub cell: Name,
     pub revision: Counter,
@@ -111,6 +156,7 @@ pub struct Summary {
 impl From<&Version> for Summary {
     fn from(v: &Version) -> Self {
         Self {
+            library: v.library.clone(),
             id: v.id.clone(),
             cell: v.cell.clone(),
             revision: v.revision,
