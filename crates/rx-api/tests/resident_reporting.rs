@@ -50,10 +50,12 @@ type App = Handle<Application<SqliteRepository, Clock, Deny>>;
 struct LostAck {
     handle: App,
     lose: AtomicBool,
+    lose_acceptance: AtomicBool,
     stall: Arc<AtomicBool>,
 }
 impl ApplicationPort for LostAck {
     fn request(&self, command: Command) -> CallFuture<'_> {
+        let acceptance = matches!(command, Command::RegistrationTargetAcceptance { .. });
         let lose = matches!(command, Command::PublishResidentReport { .. })
             && self.lose.swap(false, Ordering::SeqCst);
         let stalled = matches!(
@@ -65,7 +67,7 @@ impl ApplicationPort for LostAck {
                 tokio::time::sleep(Duration::from_secs(10)).await;
             }
             let reply = self.handle.call(command).await?;
-            if lose {
+            if lose || (acceptance && self.lose_acceptance.swap(false, Ordering::SeqCst)) {
                 Err(WriterError::Unavailable)
             } else {
                 Ok(reply)
@@ -257,6 +259,7 @@ async fn fixture() -> Fixture {
         Arc::new(LostAck {
             handle: handle.clone(),
             lose: AtomicBool::new(true),
+            lose_acceptance: AtomicBool::new(true),
             stall: stall.clone(),
         }),
         Configuration {
@@ -976,6 +979,8 @@ async fn actual_registration_source_is_imported_through_authenticated_http_and_o
         serde_json::Value::Array(archived.clone()),
         original["history"]
     );
+    std::fs::rename(f.dir.path().join("source.offline"), &source).unwrap();
+    let reconciled = reconcile_source_over_mtls(&f, &source, &original).await;
     f.handle.close();
     f.handle.closed().await;
     let old = std::process::Command::new(std::env::var("RX_REGISTRATION_PRIOR_READER").unwrap())
@@ -990,6 +995,194 @@ async fn actual_registration_source_is_imported_through_authenticated_http_and_o
         String::from_utf8_lossy(&old.stderr)
     );
     if let Ok(path) = std::env::var("RX_REGISTRATION_INTAKE_EVIDENCE") {
-        std::fs::write(path,serde_json::to_vec_pretty(&serde_json::json!({"status":"PASS_TARGET_INTAKE","receipt":receipt,"original_freeze":original["freeze"],"history_records":archived.len(),"old_reader_refused":true,"source_offline_recovery":true,"cell_count":cell_count,"process_ownership":"NOT_TRANSFERRED","physical_execution":"NOT_PERFORMED"})).unwrap()).unwrap();
+        std::fs::write(path,serde_json::to_vec_pretty(&serde_json::json!({"status":"PASS_TARGET_INTAKE","receipt":receipt,"original_freeze":original["freeze"],"history_records":archived.len(),"old_reader_refused":true,"source_offline_recovery":true,"cell_count":cell_count,"process_ownership":"NOT_TRANSFERRED","physical_execution":"NOT_PERFORMED","reconciliation":reconciled})).unwrap()).unwrap();
     }
+}
+
+async fn reconcile_source_over_mtls(
+    f: &Fixture,
+    source: &std::path::Path,
+    original: &serde_json::Value,
+) -> serde_json::Value {
+    use std::io::{BufRead, Read, Write};
+    use std::process::{Command as Process, Stdio};
+    use wire::resident_reporting_service_client::ResidentReportingServiceClient;
+    let executable = std::env::var("RX_REGISTRATION_RECONCILER").unwrap();
+    let config = f.dir.path().join("acceptance-connection.json");
+    let ca = f.dir.path().join("acceptance-ca.pem");
+    let cert = f.dir.path().join("acceptance-cert.pem");
+    let key = f.dir.path().join("acceptance-key.pem");
+    std::fs::write(&ca, &f.ca).unwrap();
+    std::fs::write(&cert, &f.keys["reporter"].0).unwrap();
+    std::fs::write(&key, &f.keys["reporter"].1).unwrap();
+    std::fs::write(&config,serde_json::to_vec(&serde_json::json!({
+        "schema":"rx.resident-report-connection.v1","endpoint":f.endpoint,"server_name":"localhost",
+        "ca":ca,"certificate":cert,"private_key":key,"principal":"reporter",
+        "installation":f.installation.id,"store_generation":f.installation.store_generation,
+        "shared_clock_id":f.installation.clock_id,"release_digest":f.release,
+    })).unwrap()).unwrap();
+    let declaration = &original["freeze"]["declarations"][0];
+    let component: Id =
+        serde_json::from_value(declaration["document"]["value"]["id"].clone()).unwrap();
+    let revision: Counter = serde_json::from_value(declaration["revision"].clone()).unwrap();
+    let freeze: Id =
+        serde_json::from_value(original["freeze"]["record"]["request"]["id"].clone()).unwrap();
+    struct Child(std::process::Child);
+    impl Drop for Child {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    async fn line(
+        mut reader: std::io::BufReader<std::process::ChildStdout>,
+    ) -> (
+        std::io::BufReader<std::process::ChildStdout>,
+        serde_json::Value,
+    ) {
+        tokio::time::timeout(
+            Duration::from_secs(10),
+            tokio::task::spawn_blocking(move || {
+                let mut text = String::new();
+                reader.read_line(&mut text).unwrap();
+                let value = serde_json::from_str(&text)
+                    .unwrap_or_else(|e| panic!("CLI output {text:?}: {e}"));
+                (reader, value)
+            }),
+        )
+        .await
+        .unwrap()
+        .unwrap()
+    }
+    let mut results = Vec::new();
+    let mut old_query = None;
+    for attempt in 0..2 {
+        let mut child = Child(
+            Process::new(&executable)
+                .arg("reconcile")
+                .arg(source)
+                .arg(&config)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .unwrap(),
+        );
+        let stdout = std::io::BufReader::new(child.0.stdout.take().unwrap());
+        let (stdout, ready) = line(stdout).await;
+        assert_eq!(ready["state"], "AWAITING_OWNER_SCOPE");
+        let peer: Peer = serde_json::from_value(ready["peer"].clone()).unwrap();
+        assert_eq!(ready["source"], original["freeze"]["record"]);
+        let mut transport = ResidentReportingServiceClient::new(f.channel("reporter").await);
+        if let Some(old) = old_query.take() {
+            assert!(transport.acceptance(old).await.is_err());
+        }
+        let query = wire::ReadAcceptance {
+            session_id: peer.id.to_string(),
+            scope_id: id().to_string(),
+            freeze_id: freeze.to_string(),
+            binding_hash: binding(),
+        };
+        assert!(transport.acceptance(query.clone()).await.is_err());
+        let Reply::ResidentReportingScopeView(scope) = f
+            .handle
+            .call(Command::IssueResidentReporting {
+                identity: f.admin.clone(),
+                key: id(),
+                input: rx_application::resident_reporting::Issue {
+                    component: component.clone(),
+                    expected_component_revision: revision,
+                    reporter_session: peer.id,
+                    source_registration: component.clone(),
+                    source_revision: revision,
+                },
+            })
+            .await
+            .unwrap()
+        else {
+            panic!("canonical scope")
+        };
+        let query = wire::ReadAcceptance {
+            scope_id: scope.scope.id.to_string(),
+            ..query
+        };
+        let mut other = ResidentReportingServiceClient::new(f.channel("other").await);
+        assert!(other.acceptance(query.clone()).await.is_err());
+        let wrong = wire::ReadAcceptance {
+            freeze_id: id().to_string(),
+            ..query.clone()
+        };
+        assert!(transport.acceptance(wrong).await.is_err());
+        let wrong = wire::ReadAcceptance {
+            binding_hash: vec![0; 32],
+            ..query.clone()
+        };
+        assert!(transport.acceptance(wrong).await.is_err());
+        if attempt == 0 {
+            let lost = transport.acceptance(query.clone()).await.unwrap_err();
+            assert_eq!(lost.code(), tonic::Code::Unavailable);
+        }
+        old_query = Some(query.clone());
+        writeln!(
+            child.0.stdin.as_mut().unwrap(),
+            "{}",
+            serde_json::json!({"component":component,"scope":scope.scope.id})
+        )
+        .unwrap();
+        child.0.stdin.take();
+        let (_stdout, result) = line(stdout).await;
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let status = loop {
+            if let Some(status) = child.0.try_wait().unwrap() {
+                break status;
+            }
+            assert!(std::time::Instant::now() < deadline, "CLI did not finish");
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        };
+        let mut stderr = String::new();
+        child
+            .0
+            .stderr
+            .take()
+            .unwrap()
+            .read_to_string(&mut stderr)
+            .unwrap();
+        assert!(status.success(), "{stderr}");
+        assert_eq!(result["state"], "RECORDED_FROM_AUTHENTICATED_PLATFORM");
+        assert_eq!(
+            result["acceptance"]["original"],
+            original["freeze"]["record"]
+        );
+        assert_eq!(result["process_ownership"], "NOT_TRANSFERRED");
+        results.push(result);
+    }
+    assert_eq!(results[0]["acceptance"], results[1]["acceptance"]);
+    assert_ne!(
+        results[0]["current_observation"]["peer"]["peer_boot"],
+        results[1]["current_observation"]["peer"]["peer_boot"]
+    );
+    let output = Process::new(&executable)
+        .arg("inspect")
+        .arg(source)
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let inspected: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        inspected["platform_acceptance"],
+        "RECORDED_FROM_AUTHENTICATED_PLATFORM"
+    );
+    assert_eq!(inspected["record"], original["freeze"]["record"]);
+    let mut registry = SqliteRepository::open_sealed_existing(source).unwrap();
+    use rx_ports::Repository;
+    let events = registry.control_events_after(Counter(0), 128).unwrap();
+    assert_eq!(
+        events
+            .iter()
+            .filter(|e| e.document.schema.as_str() == "rx.registration-acceptance-recorded.v1")
+            .count(),
+        1
+    );
+    registry.close().unwrap();
+    serde_json::json!({"status":"PASS_SCOPED_MTLS_RECONCILIATION","first":results[0],"after_restart":results[1],"single_local_acceptance_event":true,"lost_target_read_recovered":true})
 }

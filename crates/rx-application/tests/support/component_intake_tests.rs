@@ -550,3 +550,208 @@ fn a_cached_import_receipt_does_not_bypass_current_authorization() {
             .is_ok()
     );
 }
+
+#[test]
+fn only_a_current_canonical_report_scope_reads_original_target_acceptance() {
+    use rx_application::{resident_component as component, resident_reporting as reporting};
+    let mut f = fixture(1, false);
+    let (_dir, db, freeze, ids, _) = source(&f.app.installation.id, 1);
+    let input = configure(&mut f, &freeze);
+    let mut r = reader(&mut f, &id(), input, db);
+    stage(&mut f, &mut r);
+    f.app.finish_component_intake(r.finish()).unwrap();
+    f.app
+        .put_principal(&f.admin, principal("reporter", &[Role::Observer]), None)
+        .unwrap();
+    let peer = f
+        .app
+        .open_resident_reporter(&name("reporter"), id(), Digest::from_bytes([3; 32]))
+        .unwrap();
+    let actor = reporting::ReporterIdentity {
+        principal: peer.principal.clone(),
+        session: peer.id.clone(),
+        authentication_binding: peer.authentication_binding,
+    };
+    assert!(
+        f.app
+            .registration_target_acceptance(&actor, &id(), &freeze.request.id)
+            .is_err()
+    );
+    let scope = f
+        .app
+        .issue_resident_reporting(
+            &f.admin,
+            id().as_str(),
+            reporting::Issue {
+                component: ids[0].clone(),
+                expected_component_revision: Counter(2),
+                reporter_session: peer.id.clone(),
+                source_registration: ids[0].clone(),
+                source_revision: Counter(2),
+            },
+        )
+        .unwrap();
+    let value = f
+        .app
+        .registration_target_acceptance(&actor, &scope.scope.id, &freeze.request.id)
+        .unwrap();
+    assert_eq!(value.original, freeze);
+    assert_eq!(value.peer, peer);
+    assert_eq!(value.component, ids[0]);
+    assert!(
+        f.app
+            .registration_target_acceptance(&actor, &scope.scope.id, &id())
+            .is_err()
+    );
+    let forged = reporting::ReporterIdentity {
+        authentication_binding: Digest::from_bytes([4; 32]),
+        ..actor.clone()
+    };
+    assert!(
+        f.app
+            .registration_target_acceptance(&forged, &scope.scope.id, &freeze.request.id)
+            .is_err()
+    );
+    f.app
+        .update_component(
+            &f.admin,
+            id().as_str(),
+            component::Update {
+                id: ids[0].clone(),
+                expected_revision: Counter(2),
+                declaration: Declaration {
+                    label: name("new-p-declaration"),
+                    catalog: CatalogReference {
+                        program: name("different"),
+                        digest: Digest::from_bytes([5; 32]),
+                    },
+                },
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        f.app
+            .registration_target_acceptance(&actor, &scope.scope.id, &freeze.request.id)
+            .unwrap(),
+        value
+    );
+    f.app
+        .revoke_resident_reporting(
+            &f.admin,
+            id().as_str(),
+            reporting::Revoke {
+                scope: scope.scope.id.clone(),
+                expected_revision: scope.revision,
+            },
+        )
+        .unwrap();
+    assert!(
+        f.app
+            .registration_target_acceptance(&actor, &scope.scope.id, &freeze.request.id)
+            .is_err()
+    );
+    let scope = f
+        .app
+        .issue_resident_reporting(
+            &f.admin,
+            id().as_str(),
+            reporting::Issue {
+                component: ids[0].clone(),
+                expected_component_revision: Counter(3),
+                reporter_session: peer.id.clone(),
+                source_registration: ids[0].clone(),
+                source_revision: Counter(2),
+            },
+        )
+        .unwrap();
+    assert!(
+        f.app
+            .registration_target_acceptance(&actor, &scope.scope.id, &freeze.request.id)
+            .is_ok()
+    );
+    f.app
+        .open_resident_reporter(&name("reporter"), id(), Digest::from_bytes([3; 32]))
+        .unwrap();
+    assert!(
+        f.app
+            .registration_target_acceptance(&actor, &scope.scope.id, &freeze.request.id)
+            .is_err()
+    );
+    let peer = f
+        .app
+        .open_resident_reporter(&name("reporter"), id(), Digest::from_bytes([3; 32]))
+        .unwrap();
+    let actor = reporting::ReporterIdentity {
+        principal: peer.principal.clone(),
+        session: peer.id.clone(),
+        authentication_binding: peer.authentication_binding,
+    };
+    let issue = reporting::Issue {
+        component: ids[0].clone(),
+        expected_component_revision: Counter(3),
+        reporter_session: peer.id,
+        source_registration: ids[0].clone(),
+        source_revision: Counter(2),
+    };
+    let scope = f
+        .app
+        .issue_resident_reporting(&f.admin, id().as_str(), issue.clone())
+        .unwrap();
+    assert!(
+        f.app
+            .registration_target_acceptance(&actor, &scope.scope.id, &freeze.request.id)
+            .unwrap()
+            .same_decision(&value)
+    );
+    let installation = f.app.installation.id.clone();
+    let mut app = Engine::open(
+        f.app.into_repository(),
+        f.clock,
+        SimulationAuthority,
+        installation,
+        principal("admin", &[Role::AccountAdmin]),
+    )
+    .unwrap();
+    assert!(
+        app.registration_target_acceptance(&actor, &scope.scope.id, &freeze.request.id)
+            .is_err()
+    );
+    let session = app
+        .authenticated_session(
+            &name("admin"),
+            id(),
+            TimePoint {
+                clock_id: "test/boottime".into(),
+                ticks_ns: Counter(u64::MAX),
+            },
+        )
+        .unwrap();
+    let admin = Identity {
+        principal: name("admin"),
+        session: session.id,
+        terminal: None,
+    };
+    let peer = app
+        .open_resident_reporter(&name("reporter"), id(), Digest::from_bytes([3; 32]))
+        .unwrap();
+    let actor = reporting::ReporterIdentity {
+        principal: peer.principal.clone(),
+        session: peer.id.clone(),
+        authentication_binding: peer.authentication_binding,
+    };
+    let scope = app
+        .issue_resident_reporting(
+            &admin,
+            id().as_str(),
+            reporting::Issue {
+                reporter_session: peer.id,
+                ..issue
+            },
+        )
+        .unwrap();
+    assert!(
+        app.registration_target_acceptance(&actor, &scope.scope.id, &freeze.request.id)
+            .unwrap()
+            .same_decision(&value)
+    );
+}

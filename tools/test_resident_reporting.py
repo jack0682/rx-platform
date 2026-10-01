@@ -32,10 +32,13 @@ def run(repo, label, args, extra=None):
 run(solutions, 'build-reporter', ['build', '-p', 'rx-supervisor', '--features', 'test-harness', '--bin',
     'rx-resident-report-fixture', '--locked', '--target-dir', str(targets[1])])
 executable = targets[1] / 'debug/rx-resident-report-fixture'
-run(root, 'actual-reporting', ['test', '-p', 'rx-api', '--test', 'resident_reporting',
-    'actual_', '--locked',
-    '--target-dir', str(targets[0]), '--', '--ignored'],
-    {'RX_RESIDENT_REPORT_FIXTURE': str(executable), 'RX_RESIDENT_REPORT_EVIDENCE': str(evidence / 'result.json')})
+for label, test in [
+    ('actual-reporting', 'actual_supervisor_child_reports_running_and_owned_exit_through_the_scoped_client'),
+    ('actual-reporting-outage', 'actual_reporter_outage_preserves_local_stop_and_owner_approved_restart'),
+]:
+    run(root, label, ['test', '-p', 'rx-api', '--test', 'resident_reporting',
+        test, '--locked', '--target-dir', str(targets[0]), '--', '--ignored', '--exact'],
+        {'RX_RESIDENT_REPORT_FIXTURE': str(executable), 'RX_RESIDENT_REPORT_EVIDENCE': str(evidence / 'result.json')})
 result = json.loads((evidence / 'result.json').read_text())
 outage = json.loads((evidence / 'result.json.outage.json').read_text())
 if outage['status'] != 'PASS' or not outage['retained_during_outage'] or outage['local_stop_ms'] >= 2000:

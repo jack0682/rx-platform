@@ -8,6 +8,11 @@ use rx_domain::types::*;
 use rx_ports::{Repository, StoreError};
 
 pub enum Command {
+    RegistrationTargetAcceptance {
+        identity: resident_reporting::ReporterIdentity,
+        scope: Id,
+        freeze: Id,
+    },
     ConfigureComponentSources(component_intake::Bindings),
     ComponentIntakeContext {
         identity: Identity,
@@ -888,6 +893,7 @@ pub enum Command {
     },
 }
 pub enum Reply {
+    RegistrationTargetAcceptance(Box<rx_domain::component_transfer::TargetAcceptance>),
     ComponentSourcesConfigured,
     ComponentIntakeContext(Box<component_intake::Context>),
     ComponentIntakePreflight(component_intake::Preflight),
@@ -1075,6 +1081,14 @@ impl<R: Repository + Send + 'static, C: Clock + 'static, A: QualificationAuthori
     }
     fn process(&mut self, command: Command) -> rx_ports::Result<Reply> {
         match command {
+            Command::RegistrationTargetAcceptance {
+                identity,
+                scope,
+                freeze,
+            } => self
+                .engine
+                .registration_target_acceptance(&identity, &scope, &freeze)
+                .map(|v| Reply::RegistrationTargetAcceptance(Box::new(v))),
             Command::ConfigureComponentSources(sources) => self
                 .engine
                 .configure_component_sources(sources)

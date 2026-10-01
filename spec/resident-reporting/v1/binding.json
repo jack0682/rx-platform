@@ -1,12 +1,13 @@
 {
   "max_payload_bytes": 65536,
   "package": "rx.resident.reporting.v1",
-  "revision": 2,
+  "revision": 3,
   "schema": "rx.resident-reporting-binding.v1",
   "source_sha256": {
     "crates/rx-domain/src/component.rs": "a8e764a3dea945621c8caf4adcf70a19dcd4154df43be6ff7cfd8c4b85a19f80",
+    "crates/rx-domain/src/component_transfer.rs": "47b3cb6c72889f67ec2cd393ec19778a08b809c0fc00bbbbaede40600399f3e3",
     "crates/rx-domain/src/resident_reporting.rs": "4299bf162c497fcce311c258885fb5ba9a1a3c049ba0766c29fd633e3a018f89",
-    "proto/rx/resident/reporting/v1/reporting.proto": "03b4353e7f012b83444a8f0fa239ae0a1e47e1ef8fd50fdac06db7cc22659878",
-    "spec/resident-reporting/v1/README.md": "2d750a59f0b4ea7a85f3843e62050a1e35aff79d3f6da1d566e57d42188eb374"
+    "proto/rx/resident/reporting/v1/reporting.proto": "70f810ebd8dae094c9d1b46c1e4f63ae57704095a6febc41b445e9f238b6fee7",
+    "spec/resident-reporting/v1/README.md": "9d387c97ce6ed0c94d44d674ac494ab5c821f1bbac9f87946f89f2fd48bc3e9b"
   }
 }

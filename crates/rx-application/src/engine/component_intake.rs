@@ -501,6 +501,41 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             Ok(receipt)
         })
     }
+    /// Scoped metadata provenance, never a launch or content-verification grant.
+    pub fn registration_target_acceptance(
+        &mut self,
+        identity: &crate::resident_reporting::ReporterIdentity,
+        scope: &Id,
+        freeze: &Id,
+    ) -> Result<rx_domain::component_transfer::TargetAcceptance> {
+        let meta = &self.installation;
+        self.repository.transact(|tx| {
+            let (peer, scope) = resident_reporting::scoped(tx, meta, identity, scope)?;
+            if scope.component != scope.source_registration {
+                return reject(Reject::Forbidden);
+            }
+            let (_, origin): (_, Origin) = load(tx, "componentimport", &scope.component, IMPORTED)?;
+            if origin.transfer != *freeze {
+                return reject(Reject::Forbidden);
+            }
+            require_accepted(tx, &scope.component)?;
+            let (_, receipt): (_, Receipt) = load(tx, "componenttransferreceipt", freeze, RECEIPT)?;
+            Ok(rx_domain::component_transfer::TargetAcceptance {
+                original: receipt.original.clone(),
+                receipt_digest: canonical::digest("RX-REGISTRATION-ACCEPTANCE-v1", &receipt)
+                    .map_err(domain_error)?,
+                accepted_at: receipt.imported_at,
+                component: scope.component,
+                scope: scope.id,
+                peer,
+                process_ownership: rx_domain::component_transfer::ProcessOwnership::NotTransferred,
+                content_verification:
+                    rx_domain::component_transfer::ContentVerification::NotEstablished,
+                work_use_permission: rx_domain::component_transfer::WorkUse::NotEvaluated,
+            })
+        })
+    }
+
     pub fn component_intake_progress(&mut self, identity: &Identity, id: &Id) -> Result<Progress> {
         let meta = &self.installation;
         let clock = &self.clock;
