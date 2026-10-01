@@ -307,6 +307,40 @@ impl Tracking<'_> {
     }
 }
 impl Transaction for Tracking<'_> {
+    fn scan_page(
+        &mut self,
+        prefix: &str,
+        after: Option<&Name>,
+        limit: usize,
+    ) -> Result<Vec<Record>> {
+        self.tx.scan_page(prefix, after, limit)
+    }
+    fn require_component_intake_reader(&mut self) -> Result<()> {
+        self.tx.require_component_intake_reader()
+    }
+    fn insert_revision(
+        &mut self,
+        k: &Name,
+        revision: Counter,
+        document: &Document,
+    ) -> Result<Record> {
+        if !k.as_str().starts_with("component/")
+            || document.schema.as_str() != "rx.internal.resident-component.v1"
+        {
+            return Err(StoreError::Invalid(
+                "historical seed is restricted to imported component metadata".into(),
+            ));
+        }
+        self.tx.insert_revision(k, revision, document)
+    }
+    fn insert_archive(&mut self, k: &Name, document: &Document) -> Result<Record> {
+        if !k.as_str().starts_with("componenttransferhistory/") {
+            return Err(StoreError::Invalid(
+                "opaque archive namespace refused".into(),
+            ));
+        }
+        self.tx.insert_archive(k, document)
+    }
     fn put(&mut self, k: &Name, expected: Option<Counter>, document: &Document) -> Result<Record> {
         if let Some(expected_kind) = key_kind(k)
             && entity_kind(document.schema.as_str()) != Some(expected_kind)

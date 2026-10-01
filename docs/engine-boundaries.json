@@ -31,6 +31,7 @@
         "reconciliation",
         "requests",
         "resident_component",
+        "component_intake",
         "resident_reporting",
         "runtime_restrictions",
         "settlement",

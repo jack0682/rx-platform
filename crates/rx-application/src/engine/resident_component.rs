@@ -2,8 +2,8 @@ use super::*;
 use crate::resident_component::{self as component, Record, View};
 use rx_domain::component::{Declaration, Registration, RegistrationState};
 
-const COMPONENT: &str = "rx.internal.resident-component.v1";
-const SNAPSHOT: &str = "rx.resident-component-view.v1";
+pub(super) const COMPONENT: &str = "rx.internal.resident-component.v1";
+pub(super) const SNAPSHOT: &str = "rx.resident-component-view.v1";
 
 pub(super) fn author(
     tx: &mut dyn Transaction,
@@ -32,6 +32,7 @@ pub(super) fn owned(
     if record.owner != principal.id && !principal.roles.contains(&Role::AccountAdmin) {
         return reject(Reject::Forbidden);
     }
+    super::component_intake::require_accepted(tx, id)?;
     Ok((revision, record))
 }
 

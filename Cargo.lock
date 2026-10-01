@@ -1894,6 +1894,7 @@ dependencies = [
  "rx-ports",
  "rx-process-contract",
  "rx-storage",
+ "serde",
  "serde_json",
  "tempfile",
  "thiserror",

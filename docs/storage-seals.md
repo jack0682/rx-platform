@@ -12,7 +12,12 @@ there is no application unseal API. Sibling prefixes remain writable.
 Compatibility: ordinary stores still initialize/upgrade to schema 6. A store
 with explicit seals becomes schema 7, and schema-6 readers refuse it. New readers
 check the guard SQL and nonempty seal list before using schema 7. Merely setting
-user_version to 7 does not create a valid sealed store. Schema 8+ is refused.
+user_version to 7 does not create a valid sealed store. Target registration intake
+explicitly promotes only its target to schema 8, preserving any existing seals.
+This prevents older readers from using partially staged registrations. Schema 8
+may have no source seals; when present, their definitions are still verified.
+Schema 9+ is refused. `open_sealed_existing` additionally requires an existing
+sealed source before initialization and never creates/upgrades an unsealed source.
 Frozen protocol manifests are unchanged; the generated SDK includes this adapter.
 
 This is a local persistence capability, not remote attestation. It cannot defend

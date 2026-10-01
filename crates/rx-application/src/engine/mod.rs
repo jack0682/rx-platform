@@ -230,3 +230,5 @@ mod host_readmission;
 pub mod store_restore;
 
 mod host_binding_transition;
+
+mod component_intake;

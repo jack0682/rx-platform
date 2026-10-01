@@ -80,6 +80,8 @@ pub struct HostLink {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub registration_sources: BTreeMap<Name, rx_runtime::component_intake::Source>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub operator_ui: Option<OperatorUi>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

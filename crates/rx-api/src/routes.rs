@@ -1,3 +1,4 @@
+mod component_intake;
 mod device_binding;
 mod device_review;
 mod host_recovery;
@@ -112,6 +113,26 @@ fn build_router(
     };
     Ok(Router::new()
         .route("/api/v1/health", get(health))
+        .route(
+            "/api/v1/registration-source",
+            get(component_intake::context),
+        )
+        .route(
+            "/api/v1/registration-transfers",
+            post(component_intake::import),
+        )
+        .route(
+            "/api/v1/registration-transfer",
+            get(component_intake::progress),
+        )
+        .route(
+            "/api/v1/registration-transfer/receipt",
+            get(component_intake::receipt),
+        )
+        .route(
+            "/api/v1/registration-transfer/history",
+            get(component_intake::history),
+        )
         .route("/api/v1/session", post(login).get(profile))
         .route("/api/v1/session/end", post(logout))
         .route("/api/v1/overview", get(overview))
