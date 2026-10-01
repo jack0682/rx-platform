@@ -418,7 +418,7 @@ fn metadata_compatibility_upgrade_preserves_record_bytes_and_rejects_future_stor
         assert_eq!(saved, bytes);
     }
     let connection = rusqlite::Connection::open(&path).unwrap();
-    connection.pragma_update(None, "user_version", 7).unwrap();
+    connection.pragma_update(None, "user_version", 8).unwrap();
     drop(connection);
     assert!(
         matches!(SqliteRepository::open(&path), Err(StoreError::Unavailable(message)) if message.contains("downgrade refused"))

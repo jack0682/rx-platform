@@ -1,6 +1,7 @@
 //! Local SQLite adapter. One process owns the lock and one worker owns this connection.
 //! No network or native-device calls may be made from a transaction callback.
 mod ownership;
+mod sealing;
 pub use ownership::ExclusiveFileLock;
 
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
@@ -103,7 +104,7 @@ impl SqliteRepository {
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .map_err(unavailable)?;
-        if version > 6 {
+        if version > 7 {
             return Err(StoreError::Unavailable(
                 "newer store schema: downgrade refused".into(),
             ));
@@ -137,6 +138,9 @@ impl SqliteRepository {
             connection
                 .execute_batch(include_str!("../migrations/0006.sql"))
                 .map_err(unavailable)?;
+        }
+        if version == 7 {
+            sealing::verify(connection)?;
         }
         Ok(())
     }
