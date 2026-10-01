@@ -542,6 +542,13 @@ pub enum Command {
         identity: Identity,
         cell: Name,
         after: Option<Id>,
+        filter: rx_application::process_draft::Filter,
+    },
+    ListProcessDraftHistory {
+        identity: Identity,
+        cell: Name,
+        id: Id,
+        before: Option<Counter>,
     },
     ConfigureHostServices(Vec<rx_application::service_health::Target>),
     ReplaceHostService(rx_application::service_health::Owner),
@@ -1020,6 +1027,7 @@ pub enum Reply {
     DraftBindingView(Box<rx_application::draft_bindings::View>),
     ProcessDraft(Box<rx_application::process_draft::Detail>),
     ProcessDrafts(Box<rx_application::process_draft::Page>),
+    ProcessDraftHistory(Box<rx_application::process_draft::History>),
     HostServiceOwners(Vec<rx_application::service_health::Owner>),
     HostServiceOwner(Box<rx_application::service_health::Owner>),
     Observations(rx_application::observation::BatchReceipt),
@@ -1946,10 +1954,20 @@ impl<R: Repository + Send + 'static, C: Clock + 'static, A: QualificationAuthori
                 identity,
                 cell,
                 after,
+                filter,
             } => self
                 .engine
-                .process_drafts(&identity, &cell, after.as_ref())
+                .process_drafts(&identity, &cell, after.as_ref(), &filter)
                 .map(|d| Reply::ProcessDrafts(Box::new(d))),
+            Command::ListProcessDraftHistory {
+                identity,
+                cell,
+                id,
+                before,
+            } => self
+                .engine
+                .process_draft_history(&identity, &cell, &id, before)
+                .map(|d| Reply::ProcessDraftHistory(Box::new(d))),
             Command::ConfigureHostServices(targets) => {
                 if targets.len() > 64
                     || targets

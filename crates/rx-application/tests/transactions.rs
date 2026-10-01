@@ -7000,6 +7000,9 @@ fn operator_diagnostic_browser_fixtures_are_real_unqualified_read_models() {
     }
 }
 
+#[path = "support/draft_library_tests.rs"]
+mod draft_library_tests;
+
 fn draft_document() -> serde_json::Value {
     serde_json::json!({"schema":"rx.process-source.v1","process":"example/draft","entry":"main","conditions":{},"flows":[{"id":"main","root":"load","nodes":[{"id":"load","body":{"kind":"OPERATION","binding":"load"}}]}]})
 }
@@ -7012,6 +7015,7 @@ fn draft_saves_are_atomic_recoverable_and_never_change_the_installed_cell() {
         let key = id();
         let draft = id();
         let save = Save {
+            library: None,
             presentation: None,
             id: draft.clone(),
             cell: f.configuration.id.clone(),
@@ -7067,6 +7071,7 @@ fn draft_history_keeps_incomplete_sources_and_concurrent_updates_do_not_overwrit
     let mut f = fixture(1, false);
     let draft = id();
     let save = Save {
+        library: None,
         presentation: None,
         id: draft.clone(),
         cell: f.configuration.id.clone(),
@@ -7117,7 +7122,7 @@ fn draft_history_keeps_incomplete_sources_and_concurrent_updates_do_not_overwrit
     );
     let page = f
         .app
-        .process_drafts(&f.admin, &f.configuration.id, None)
+        .process_drafts(&f.admin, &f.configuration.id, None, &Default::default())
         .unwrap();
     assert_eq!(page.drafts.len(), 1);
     assert!(!page.drafts[0].structurally_valid);
@@ -7133,6 +7138,7 @@ fn current_engineer_role_is_required_even_when_recovering_an_existing_draft_rece
     let mut f = fixture(1, false);
     let key = id();
     let save = Save {
+        library: None,
         presentation: None,
         id: id(),
         cell: f.configuration.id.clone(),
@@ -7164,6 +7170,7 @@ fn binding_draft(f: &mut Fixture) -> rx_application::process_draft::Detail {
             &id(),
             rx_application::process_draft::PreparedSave::prepare(
                 rx_application::process_draft::Save {
+                    library: None,
                     presentation: None,
                     id: id(),
                     cell: f.configuration.id.clone(),
@@ -7311,6 +7318,7 @@ fn binding_history_is_not_rebound_by_source_changes_and_title_only_changes_keep_
     let input = binding_command(&mut f, &d);
     f.app.save_draft_bindings(&f.admin, &id(), input).unwrap();
     let mut save = Save {
+        library: None,
         presentation: None,
         id: d.version.id.clone(),
         cell: f.configuration.id.clone(),
@@ -9037,6 +9045,7 @@ fn draft_canvas_layout_is_versioned_recoverable_and_does_not_change_execution_so
         expected: None,
         title: "Canvas draft".into(),
         document: draft_document(),
+        library: None,
         presentation: Some(Presentation {
             flows: [(
                 name("main"),

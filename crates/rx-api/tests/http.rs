@@ -11,6 +11,8 @@ use rx_api::{
 };
 use rx_application::*;
 use rx_domain::types::*;
+#[path = "support/draft_library_http.rs"]
+mod draft_library_http;
 #[path = "support/operator_start_http.rs"]
 mod operator_start_http;
 #[path = "support/resident_component_http.rs"]

@@ -270,6 +270,7 @@ fn build_router(
             get(process_drafts).post(save_process_draft),
         )
         .route("/api/v1/process-draft", get(process_draft))
+        .route("/api/v1/process-draft-history", get(process_draft_history))
         .route(
             "/api/v1/process-draft-compile-input",
             get(draft_compile_input),
@@ -1151,6 +1152,37 @@ async fn cell_context(
 struct ProcessDraftListQuery {
     cell: Name,
     after: Option<Id>,
+    #[serde(default)]
+    q: String,
+    site: Option<String>,
+    service: Option<String>,
+    archived: Option<bool>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProcessDraftHistoryQuery {
+    cell: Name,
+    id: Id,
+    before: Option<Counter>,
+}
+async fn process_draft_history(
+    State(s): State<ApiState>,
+    headers: HeaderMap,
+    Query(q): Query<ProcessDraftHistoryQuery>,
+) -> Result<Response, ApiError> {
+    match s
+        .runtime
+        .request(Command::ListProcessDraftHistory {
+            identity: identity(&s, &headers)?,
+            cell: q.cell,
+            id: q.id,
+            before: q.before,
+        })
+        .await?
+    {
+        Reply::ProcessDraftHistory(page) => Ok(Json(page).into_response()),
+        _ => Err(mismatch()),
+    }
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -1170,6 +1202,12 @@ async fn process_drafts(
             identity: identity(&s, &headers)?,
             cell: q.cell,
             after: q.after,
+            filter: rx_application::process_draft::Filter {
+                query: q.q,
+                site: q.site,
+                service: q.service,
+                archived: q.archived,
+            },
         })
         .await?
     {
