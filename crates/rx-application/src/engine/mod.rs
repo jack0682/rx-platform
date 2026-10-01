@@ -49,6 +49,7 @@ mod checkpoint_change;
 mod closure;
 mod configuration;
 mod configuration_dispatch;
+mod definition_catalog;
 mod delivery;
 mod device_binding;
 mod device_restrictions;

@@ -3,6 +3,7 @@ pub mod budget;
 pub mod canonical;
 pub mod component;
 pub mod condition;
+pub mod definition;
 pub mod epoch;
 pub mod fault;
 pub mod intent;

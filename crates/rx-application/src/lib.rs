@@ -29,6 +29,7 @@ pub mod diagnostics;
 
 pub mod service_health;
 
+pub mod definition_catalog;
 pub mod process_draft;
 
 pub mod draft_bindings;

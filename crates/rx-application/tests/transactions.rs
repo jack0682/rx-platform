@@ -7000,6 +7000,8 @@ fn operator_diagnostic_browser_fixtures_are_real_unqualified_read_models() {
     }
 }
 
+#[path = "support/definition_catalog_tests.rs"]
+mod definition_catalog_tests;
 #[path = "support/draft_library_tests.rs"]
 mod draft_library_tests;
 

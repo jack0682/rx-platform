@@ -1,4 +1,5 @@
 mod component_intake;
+mod definition_catalog;
 mod device_binding;
 mod device_review;
 mod host_recovery;
@@ -113,6 +114,27 @@ fn build_router(
         host_recovery,
     };
     Ok(Router::new()
+        .route(
+            "/api/v1/definition-catalogs",
+            get(definition_catalog::catalogs).post(definition_catalog::save_catalog),
+        )
+        .route(
+            "/api/v1/definition-catalog",
+            get(definition_catalog::catalog),
+        )
+        .route(
+            "/api/v1/definitions",
+            get(definition_catalog::list).post(definition_catalog::save),
+        )
+        .route("/api/v1/definition", get(definition_catalog::get))
+        .route(
+            "/api/v1/definition-points",
+            post(definition_catalog::points),
+        )
+        .route(
+            "/api/v1/definition-history",
+            get(definition_catalog::history),
+        )
         .route("/api/v1/health", get(health))
         .route(
             "/api/v1/resident-executions",
