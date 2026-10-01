@@ -1,0 +1,13 @@
+{
+  "max_payload_bytes": 262144,
+  "package": "rx.resident.execution.v1",
+  "revision": 1,
+  "schema": "rx.resident-execution-binding.v1",
+  "source_sha256": {
+    "crates/rx-domain/src/component.rs": "a8e764a3dea945621c8caf4adcf70a19dcd4154df43be6ff7cfd8c4b85a19f80",
+    "crates/rx-domain/src/component_transfer.rs": "47b3cb6c72889f67ec2cd393ec19778a08b809c0fc00bbbbaede40600399f3e3",
+    "crates/rx-domain/src/resident_execution.rs": "f8518b40275477f103dff417e4c9a257f0d6981ef0c4b833a7e9f3ec65e2bd16",
+    "proto/rx/resident/execution/v1/execution.proto": "a9e77ad265ad8d2c82506a5cf2ea6cec50cd2c9fb89c5edc3dcc46a1fc745b5c",
+    "spec/resident-execution/v1/README.md": "d48364f506355b12055c2769ff7d03e0f53c0151f13575dd99bfb41e21e23778"
+  }
+}

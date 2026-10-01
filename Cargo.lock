@@ -1699,6 +1699,7 @@ dependencies = [
  "rcgen",
  "reqwest",
  "rusqlite",
+ "rustix",
  "rx-application",
  "rx-domain",
  "rx-package",

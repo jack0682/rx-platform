@@ -222,3 +222,48 @@ fn intake_reader_barrier_and_seed_revision_commit_together() {
         8
     );
 }
+
+#[test]
+fn operational_reader_promotion_never_regresses_through_intake_or_source_sealing() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("operational.db");
+    let mut db = SqliteRepository::open(&path).unwrap();
+    let rejected: Result<()> = db.transact(|tx| {
+        tx.require_resident_execution_reader()?;
+        Err(StoreError::Unavailable("rollback".into()))
+    });
+    assert!(rejected.is_err());
+    db.close().unwrap();
+    let raw = rusqlite::Connection::open(&path).unwrap();
+    assert_eq!(
+        raw.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
+            .unwrap(),
+        6
+    );
+    drop(raw);
+    let mut db = SqliteRepository::open(&path).unwrap();
+    db.transact(|tx| {
+        tx.require_resident_execution_reader()?;
+        tx.require_component_intake_reader()?;
+        Ok(())
+    })
+    .unwrap();
+    db.seal_prefixes(&[n("frozen/")], |tx| {
+        tx.put(&n("frozen/marker"), None, &document(1))?;
+        Ok(())
+    })
+    .unwrap();
+    db.close().unwrap();
+    let db = SqliteRepository::open_sealed_existing(&path).unwrap();
+    assert_eq!(
+        db.canonical_path().unwrap(),
+        std::fs::canonicalize(&path).unwrap()
+    );
+    db.close().unwrap();
+    let raw = rusqlite::Connection::open(&path).unwrap();
+    assert_eq!(
+        raw.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
+            .unwrap(),
+        9
+    );
+}

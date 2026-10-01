@@ -21,6 +21,7 @@ pub(super) fn authorize(
     }
     let (_, mut principal): (_, Principal) = load(tx, "principal", &identity.principal, PRINCIPAL)?;
     if !principal.active
+        || principal.roles.contains(&Role::Supervisor)
         || !principal.roles.contains(&role)
         || cell.is_some_and(|c| !principal.cells.contains(c))
     {

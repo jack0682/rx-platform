@@ -8,6 +8,48 @@ use rx_domain::types::*;
 use rx_ports::{Repository, StoreError};
 
 pub enum Command {
+    ConfigureResidentSupervisors(
+        std::collections::BTreeMap<Name, rx_domain::resident_execution::Enrollment>,
+    ),
+    OpenResidentSupervisor {
+        principal: Name,
+        peer_boot: Id,
+        authentication_binding: Digest,
+        registry: Digest,
+    },
+    ProposeResidentExecution {
+        identity: Identity,
+        key: Id,
+        input: rx_domain::resident_execution::Propose,
+    },
+    GetResidentExecution {
+        identity: Identity,
+        id: Id,
+    },
+    InspectResidentExecution {
+        identity: resident_execution::Identity,
+        id: Id,
+    },
+    PrepareResidentExecution {
+        identity: resident_execution::Identity,
+        key: Id,
+        input: rx_domain::resident_execution::Preparation,
+    },
+    ApproveResidentExecution {
+        identity: Identity,
+        key: Id,
+        input: rx_domain::resident_execution::Approve,
+    },
+    StopResidentExecution {
+        identity: Identity,
+        key: Id,
+        input: rx_domain::resident_execution::Stop,
+    },
+    ObserveResidentExecution {
+        identity: resident_execution::Identity,
+        key: Id,
+        input: rx_domain::resident_execution::Observation,
+    },
     RegistrationTargetAcceptance {
         identity: resident_reporting::ReporterIdentity,
         scope: Id,
@@ -893,6 +935,11 @@ pub enum Command {
     },
 }
 pub enum Reply {
+    ResidentSupervisorsConfigured,
+    ResidentSupervisor(Box<rx_domain::resident_execution::Peer>),
+    ResidentExecution(Box<rx_domain::resident_execution::View>),
+    ResidentExecutionContent(Box<rx_domain::resident_execution::ContentReceipt>),
+    ResidentExecutionObservation(Box<rx_domain::resident_execution::ObservationReceipt>),
     RegistrationTargetAcceptance(Box<rx_domain::component_transfer::TargetAcceptance>),
     ComponentSourcesConfigured,
     ComponentIntakeContext(Box<component_intake::Context>),
@@ -1054,7 +1101,9 @@ impl<R: Repository + Send + 'static, C: Clock + 'static, A: QualificationAuthori
     type Error = StoreError;
     fn priority(command: &Command) -> Priority {
         match command {
-            Command::SuspendQualification { .. }
+            Command::StopResidentExecution { .. }
+            | Command::ConfigureResidentSupervisors(_)
+            | Command::SuspendQualification { .. }
             | Command::BeginProcessChangePreparation { .. }
             | Command::BeginRequalification { .. }
             | Command::ConfigureRequalification(_)
@@ -1081,6 +1130,67 @@ impl<R: Repository + Send + 'static, C: Clock + 'static, A: QualificationAuthori
     }
     fn process(&mut self, command: Command) -> rx_ports::Result<Reply> {
         match command {
+            Command::ConfigureResidentSupervisors(v) => self
+                .engine
+                .configure_resident_supervisors(v)
+                .map(|_| Reply::ResidentSupervisorsConfigured),
+            Command::OpenResidentSupervisor {
+                principal,
+                peer_boot,
+                authentication_binding,
+                registry,
+            } => self
+                .engine
+                .open_resident_supervisor(&principal, peer_boot, authentication_binding, registry)
+                .map(|v| Reply::ResidentSupervisor(Box::new(v))),
+            Command::ProposeResidentExecution {
+                identity,
+                key,
+                input,
+            } => self
+                .engine
+                .propose_resident_execution(&identity, key.as_str(), input)
+                .map(|v| Reply::ResidentExecution(Box::new(v))),
+            Command::GetResidentExecution { identity, id } => self
+                .engine
+                .resident_execution(&identity, &id)
+                .map(|v| Reply::ResidentExecution(Box::new(v))),
+            Command::InspectResidentExecution { identity, id } => self
+                .engine
+                .inspect_resident_execution(&identity, &id)
+                .map(|v| Reply::ResidentExecution(Box::new(v))),
+            Command::PrepareResidentExecution {
+                identity,
+                key,
+                input,
+            } => self
+                .engine
+                .prepare_resident_execution(&identity, key.as_str(), input)
+                .map(|v| Reply::ResidentExecutionContent(Box::new(v))),
+            Command::ApproveResidentExecution {
+                identity,
+                key,
+                input,
+            } => self
+                .engine
+                .approve_resident_execution(&identity, key.as_str(), input)
+                .map(|v| Reply::ResidentExecution(Box::new(v))),
+            Command::StopResidentExecution {
+                identity,
+                key,
+                input,
+            } => self
+                .engine
+                .stop_resident_execution(&identity, key.as_str(), input)
+                .map(|v| Reply::ResidentExecution(Box::new(v))),
+            Command::ObserveResidentExecution {
+                identity,
+                key,
+                input,
+            } => self
+                .engine
+                .observe_resident_execution(&identity, key.as_str(), input)
+                .map(|v| Reply::ResidentExecutionObservation(Box::new(v))),
             Command::RegistrationTargetAcceptance {
                 identity,
                 scope,

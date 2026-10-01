@@ -9018,3 +9018,6 @@ mod invariant_session_tests;
 mod settlement_tests;
 #[path = "support/store_restore.rs"]
 mod store_restore_tests;
+
+#[path = "support/resident_execution_tests.rs"]
+mod resident_execution_tests;

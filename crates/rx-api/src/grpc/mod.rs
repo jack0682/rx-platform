@@ -6,6 +6,7 @@ mod execution_read;
 mod executor_plan;
 mod operation;
 mod production;
+mod resident_execution;
 mod resident_reporting;
 mod session;
 mod workflow;
@@ -124,6 +125,7 @@ impl PlatformIngress {
                 rx_protocol::resident_reporting::resident_reporting_service_server::ResidentReportingServiceServer::new(self.clone())
                     .max_decoding_message_size(1_048_576).max_encoding_message_size(1_048_576),
             )
+            .add_service(rx_protocol::resident_execution::resident_execution_service_server::ResidentExecutionServiceServer::new(self.clone()).max_decoding_message_size(1_048_576).max_encoding_message_size(1_048_576))
             .add_service(
                 base::evidence_service_server::EvidenceServiceServer::new(self)
                     .max_decoding_message_size(1_048_576)

@@ -140,6 +140,24 @@ pub(super) fn require_canonical_report_target(
     Ok(())
 }
 
+pub(super) fn execution_origin(
+    tx: &mut dyn Transaction,
+    component: &Id,
+) -> Result<Option<rx_domain::resident_execution::LegacyOrigin>> {
+    let Some(row) = tx.get(&key("componentimport", component))? else {
+        return Ok(None);
+    };
+    let origin: Origin = decode(&row, IMPORTED)?;
+    let (_, stage): (_, Stage) = load(tx, "componenttransfer", &origin.transfer, STAGE)?;
+    if stage.state != State::Accepted {
+        return reject(Reject::InvalidInput);
+    }
+    Ok(Some(rx_domain::resident_execution::LegacyOrigin {
+        registry: stage.binding.location,
+        freeze: stage.original,
+    }))
+}
+
 impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
     /// Trusted startup composition only. Paths never enter the authoritative store.
     pub fn configure_component_sources(&mut self, sources: Bindings) -> Result<()> {

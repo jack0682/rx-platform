@@ -163,6 +163,7 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                 return Ok(view);
             }
             lifecycle::require_serving(tx)?;
+            super::resident_execution::require_unassigned(tx, id)?;
             check_revision(revision, expected)?;
             if record.registration.state == RegistrationState::Retired {
                 return reject(Reject::InvalidInput);
