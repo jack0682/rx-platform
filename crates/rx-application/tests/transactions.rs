@@ -7012,6 +7012,7 @@ fn draft_saves_are_atomic_recoverable_and_never_change_the_installed_cell() {
         let key = id();
         let draft = id();
         let save = Save {
+            presentation: None,
             id: draft.clone(),
             cell: f.configuration.id.clone(),
             expected: None,
@@ -7066,6 +7067,7 @@ fn draft_history_keeps_incomplete_sources_and_concurrent_updates_do_not_overwrit
     let mut f = fixture(1, false);
     let draft = id();
     let save = Save {
+        presentation: None,
         id: draft.clone(),
         cell: f.configuration.id.clone(),
         expected: None,
@@ -7131,6 +7133,7 @@ fn current_engineer_role_is_required_even_when_recovering_an_existing_draft_rece
     let mut f = fixture(1, false);
     let key = id();
     let save = Save {
+        presentation: None,
         id: id(),
         cell: f.configuration.id.clone(),
         expected: None,
@@ -7161,6 +7164,7 @@ fn binding_draft(f: &mut Fixture) -> rx_application::process_draft::Detail {
             &id(),
             rx_application::process_draft::PreparedSave::prepare(
                 rx_application::process_draft::Save {
+                    presentation: None,
                     id: id(),
                     cell: f.configuration.id.clone(),
                     expected: None,
@@ -7307,6 +7311,7 @@ fn binding_history_is_not_rebound_by_source_changes_and_title_only_changes_keep_
     let input = binding_command(&mut f, &d);
     f.app.save_draft_bindings(&f.admin, &id(), input).unwrap();
     let mut save = Save {
+        presentation: None,
         id: d.version.id.clone(),
         cell: f.configuration.id.clone(),
         expected: Some(Counter(1)),
@@ -9021,3 +9026,111 @@ mod store_restore_tests;
 
 #[path = "support/resident_execution_tests.rs"]
 mod resident_execution_tests;
+
+#[test]
+fn draft_canvas_layout_is_versioned_recoverable_and_does_not_change_execution_source() {
+    use rx_application::process_draft::{Position, PreparedSave, Presentation, Save};
+    let mut f = fixture(1, true);
+    let mut input = Save {
+        id: id(),
+        cell: f.configuration.id.clone(),
+        expected: None,
+        title: "Canvas draft".into(),
+        document: draft_document(),
+        presentation: Some(Presentation {
+            flows: [(
+                name("main"),
+                [(name("root"), Position { x: 120, y: 80 })].into(),
+            )]
+            .into(),
+        }),
+    };
+    let first = f
+        .app
+        .save_process_draft(
+            &f.admin,
+            &id(),
+            PreparedSave::prepare(input.clone()).unwrap(),
+        )
+        .unwrap();
+    input.expected = Some(first.version.revision);
+    input
+        .presentation
+        .as_mut()
+        .unwrap()
+        .flows
+        .get_mut(&name("main"))
+        .unwrap()
+        .get_mut(&name("root"))
+        .unwrap()
+        .x = 480;
+    let key = id();
+    f.failure.store(2, Ordering::SeqCst);
+    assert!(
+        f.app
+            .save_process_draft(
+                &f.admin,
+                &key,
+                PreparedSave::prepare(input.clone()).unwrap()
+            )
+            .is_err()
+    );
+    let moved = f
+        .app
+        .save_process_draft(
+            &f.admin,
+            &key,
+            PreparedSave::prepare(input.clone()).unwrap(),
+        )
+        .unwrap();
+    assert_eq!(moved.version.revision, Counter(2));
+    assert_eq!(first.version.document_digest, moved.version.document_digest);
+    assert_eq!(first.document, moved.document);
+    let history = f
+        .app
+        .process_draft(&f.admin, &input.cell, &input.id, Some(Counter(1)))
+        .unwrap();
+    assert_eq!(history.version.presentation, first.version.presentation);
+    assert_ne!(history.version.presentation, moved.version.presentation);
+    input.expected = Some(Counter(1));
+    assert!(
+        f.app
+            .save_process_draft(
+                &f.admin,
+                &id(),
+                PreparedSave::prepare(input.clone()).unwrap()
+            )
+            .is_err()
+    );
+    input.expected = Some(Counter(2));
+    input.presentation = None;
+    input.title = "Legacy client title change".into();
+    let preserved = f
+        .app
+        .save_process_draft(
+            &f.admin,
+            &id(),
+            PreparedSave::prepare(input.clone()).unwrap(),
+        )
+        .unwrap();
+    assert_eq!(preserved.version.presentation, moved.version.presentation);
+    input.expected = Some(Counter(3));
+    input.presentation = Some(Presentation::default());
+    let cleared = f
+        .app
+        .save_process_draft(
+            &f.admin,
+            &id(),
+            PreparedSave::prepare(input.clone()).unwrap(),
+        )
+        .unwrap();
+    assert!(cleared.version.presentation.unwrap().flows.is_empty());
+    input.presentation = Some(Presentation {
+        flows: [(
+            name("main"),
+            [(name("root"), Position { x: 100_001, y: 0 })].into(),
+        )]
+        .into(),
+    });
+    assert!(PreparedSave::prepare(input).is_err());
+}

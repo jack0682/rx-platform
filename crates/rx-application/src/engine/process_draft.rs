@@ -86,6 +86,10 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                 title: command.title.clone(),
                 document_digest: prepared.digest,
                 validation: prepared.report,
+                presentation: command
+                    .presentation
+                    .clone()
+                    .or_else(|| previous.as_ref().and_then(|p| p.presentation.clone())),
                 created_by: previous.map_or_else(|| principal.id.clone(), |p| p.created_by),
                 updated_by: principal.id,
                 updated_at: now,
