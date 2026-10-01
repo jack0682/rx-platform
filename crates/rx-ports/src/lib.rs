@@ -91,6 +91,39 @@ pub struct OutboxRecord {
 /// All methods participate in the caller's single atomic transaction.
 /// Implementations must not silently retry the callback: it can allocate command identities.
 pub trait Transaction {
+    /// Insert immutable source data without treating its schema as target control authority.
+    fn insert_archive(&mut self, _key: &Name, _document: &Document) -> Result<Record> {
+        Err(StoreError::Unavailable(
+            "opaque archive insertion unsupported".into(),
+        ))
+    }
+    fn scan_page(
+        &mut self,
+        _prefix: &str,
+        _after: Option<&Name>,
+        _limit: usize,
+    ) -> Result<Vec<Record>> {
+        Err(StoreError::Unavailable(
+            "bounded key scan unsupported".into(),
+        ))
+    }
+    /// Opt-in reader barrier for staged component intake. Unsupported adapters must refuse.
+    fn require_component_intake_reader(&mut self) -> Result<()> {
+        Err(StoreError::Unavailable(
+            "component intake reader barrier unsupported".into(),
+        ))
+    }
+    /// Import a verified historical revision only into an absent target key.
+    fn insert_revision(
+        &mut self,
+        _key: &Name,
+        _revision: Counter,
+        _document: &Document,
+    ) -> Result<Record> {
+        Err(StoreError::Unavailable(
+            "historical revision insertion unsupported".into(),
+        ))
+    }
     /// Append one committed control-state change and replace its current projection atomically.
     fn append_control(
         &mut self,
@@ -133,4 +166,9 @@ pub trait Repository {
     ) -> Result<T>;
     fn snapshot(&mut self) -> Result<(Counter, Vec<Record>)>;
     fn events_after(&mut self, after: Counter, limit: usize) -> Result<Vec<StoredEvent>>;
+}
+
+/// Trusted persistence adapter capability, never a caller-supplied seal claim.
+pub trait SealedRepository: Repository {
+    fn sealed_namespaces(&self) -> Result<Vec<Name>>;
 }

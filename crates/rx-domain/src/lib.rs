@@ -27,3 +27,5 @@ pub mod host_snapshot;
 pub mod host_configuration;
 
 pub mod host_qualification;
+
+pub mod component_transfer;

@@ -48,6 +48,16 @@ fn normalized(sql: &str) -> String {
     sql.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+pub(super) fn present(connection: &Connection) -> Result<bool> {
+    connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE name='sealed_prefixes')",
+            [],
+            |r| r.get(0),
+        )
+        .map_err(integrity)
+}
+
 pub(super) fn verify(connection: &Connection) -> Result<()> {
     for (name, expected) in schema() {
         let actual: Option<String> = connection
@@ -122,11 +132,11 @@ impl SqliteRepository {
         let version: i64 = transaction
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .map_err(unavailable)?;
-        if version == 6 {
+        if matches!(version, 6 | 8) && !present(transaction)? {
             for (_, sql) in schema() {
                 transaction.execute_batch(&sql).map_err(unavailable)?;
             }
-        } else if version != 7 {
+        } else if !matches!(version, 7 | 8) {
             return Err(integrity("unsupported namespace fence source schema"));
         }
         for prefix in prefixes {
@@ -138,7 +148,7 @@ impl SqliteRepository {
                 .map_err(unavailable)?;
         }
         transaction
-            .pragma_update(None, "user_version", 7)
+            .pragma_update(None, "user_version", version.max(7))
             .map_err(unavailable)?;
         verify(transaction)?;
         scope.commit()?;
@@ -151,10 +161,10 @@ impl SqliteRepository {
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .map_err(unavailable)?;
-        if version == 6 {
+        if version == 6 || (version == 8 && !present(connection)?) {
             return Ok(vec![]);
         }
-        if version != 7 {
+        if !matches!(version, 7 | 8) {
             return Err(integrity("unsupported seal schema"));
         }
         verify(connection)?;

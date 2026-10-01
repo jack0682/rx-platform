@@ -157,3 +157,68 @@ fn ddl_failure_after_staging_rolls_back_marker_schema_and_new_seals() {
         0
     );
 }
+
+#[test]
+fn sealed_source_open_never_initializes_or_upgrades_an_unsealed_database() {
+    let dir = tempfile::tempdir().unwrap();
+    let missing = dir.path().join("absent.db");
+    assert!(SqliteRepository::open_sealed_existing(&missing).is_err());
+    assert!(!missing.exists());
+    let path = dir.path().join("legacy.db");
+    let raw = rusqlite::Connection::open(&path).unwrap();
+    raw.execute_batch(include_str!("../migrations/0001.sql"))
+        .unwrap();
+    drop(raw);
+    let before = std::fs::read(&path).unwrap();
+    assert!(SqliteRepository::open_sealed_existing(&path).is_err());
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+    let raw = rusqlite::Connection::open(path).unwrap();
+    assert_eq!(
+        raw.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
+            .unwrap(),
+        1
+    );
+}
+#[test]
+fn intake_reader_barrier_and_seed_revision_commit_together() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("target.db");
+    let mut db = SqliteRepository::open(&path).unwrap();
+    let failed: Result<()> = db.transact(|tx| {
+        tx.require_component_intake_reader()?;
+        tx.insert_revision(&n("component/one"), Counter(7), &document(1))?;
+        Err(StoreError::Unavailable("rollback".into()))
+    });
+    assert!(failed.is_err());
+    assert!(
+        db.transact(|tx| tx.get(&n("component/one")))
+            .unwrap()
+            .is_none()
+    );
+    db.transact(|tx| {
+        tx.require_component_intake_reader()?;
+        tx.insert_revision(&n("component/one"), Counter(7), &document(1))?;
+        Ok(())
+    })
+    .unwrap();
+    assert!(
+        db.transact(|tx| tx.insert_revision(&n("component/one"), Counter(1), &document(2)))
+            .is_err()
+    );
+    assert_eq!(
+        db.transact(|tx| tx.put(&n("component/one"), Some(Counter(7)), &document(2)))
+            .unwrap()
+            .revision,
+        Counter(8)
+    );
+    db.close().unwrap();
+    let db = SqliteRepository::open(&path).unwrap();
+    assert!(db.sealed_prefixes().unwrap().is_empty());
+    db.close().unwrap();
+    let raw = rusqlite::Connection::open(path).unwrap();
+    assert_eq!(
+        raw.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
+            .unwrap(),
+        8
+    );
+}

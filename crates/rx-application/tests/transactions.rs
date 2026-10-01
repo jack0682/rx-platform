@@ -129,6 +129,8 @@ impl Repository for FaultRepository {
     }
 }
 type App = Engine<FaultRepository, ManualClock, SimulationAuthority>;
+#[path = "support/component_intake_tests.rs"]
+mod component_intake_tests;
 #[path = "support/resident_component_tests.rs"]
 mod resident_component_tests;
 #[path = "support/resident_reporting_tests.rs"]

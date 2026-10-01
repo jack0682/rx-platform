@@ -125,6 +125,11 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             let principal = resident_component::author(tx, identity, meta, &now)?;
             let (revision, component) =
                 resident_component::owned(tx, &principal, meta, &input.component)?;
+            component_intake::require_canonical_report_target(
+                tx,
+                &input.source_registration,
+                &input.component,
+            )?;
             let (request, fingerprint) = request(
                 meta,
                 &principal,
@@ -226,6 +231,11 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             let (revision, mut previous): (_, Scope) =
                 load(tx, "residentreportscope", &input.scope, SCOPE)?;
             resident_component::owned(tx, &principal, meta, &previous.component)?;
+            component_intake::require_canonical_report_target(
+                tx,
+                &previous.source_registration,
+                &previous.component,
+            )?;
             let (request, fingerprint) = request(
                 meta,
                 &principal,

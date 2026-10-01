@@ -8,6 +8,38 @@ use rx_domain::types::*;
 use rx_ports::{Repository, StoreError};
 
 pub enum Command {
+    ConfigureComponentSources(component_intake::Bindings),
+    ComponentIntakeContext {
+        identity: Identity,
+        source: Name,
+    },
+    ImportComponents {
+        identity: Identity,
+        key: Id,
+        input: component_intake::Submit,
+    },
+    PrepareComponentIntake {
+        identity: Identity,
+        key: Id,
+        input: component_intake::Submit,
+    },
+    BeginComponentIntake(Box<component_intake::Begin>),
+    StageComponentDeclarations(Box<component_intake::Declarations>),
+    StageComponentHistory(Box<component_intake::History>),
+    FinishComponentIntake(Box<component_intake::Finish>),
+    ComponentIntakeProgress {
+        identity: Identity,
+        id: Id,
+    },
+    ComponentIntakeReceipt {
+        identity: Identity,
+        id: Id,
+    },
+    ComponentIntakeHistory {
+        identity: Identity,
+        id: Id,
+        after: Counter,
+    },
     ContinueResidentReporting {
         identity: Identity,
         key: Id,
@@ -856,6 +888,12 @@ pub enum Command {
     },
 }
 pub enum Reply {
+    ComponentSourcesConfigured,
+    ComponentIntakeContext(Box<component_intake::Context>),
+    ComponentIntakePreflight(component_intake::Preflight),
+    ComponentIntakeProgress(Box<component_intake::Progress>),
+    ComponentIntakeReceipt(Box<component_intake::Receipt>),
+    ComponentIntakeHistory(Box<component_intake::ArchivePage>),
     ResidentReportHead(Box<rx_domain::resident_reporting::Head>),
     ResidentReporter(Box<rx_domain::resident_reporting::Peer>),
     ResidentReportingScope(Box<rx_domain::resident_reporting::Scope>),
@@ -1037,6 +1075,57 @@ impl<R: Repository + Send + 'static, C: Clock + 'static, A: QualificationAuthori
     }
     fn process(&mut self, command: Command) -> rx_ports::Result<Reply> {
         match command {
+            Command::ConfigureComponentSources(sources) => self
+                .engine
+                .configure_component_sources(sources)
+                .map(|_| Reply::ComponentSourcesConfigured),
+            Command::ComponentIntakeContext { identity, source } => self
+                .engine
+                .component_intake_context(&identity, &source)
+                .map(|v| Reply::ComponentIntakeContext(Box::new(v))),
+            Command::ImportComponents { .. } => Err(StoreError::Unavailable(
+                "registration source service not configured".into(),
+            )),
+            Command::PrepareComponentIntake {
+                identity,
+                key,
+                input,
+            } => self
+                .engine
+                .prepare_component_intake(&identity, key, input)
+                .map(Reply::ComponentIntakePreflight),
+            Command::BeginComponentIntake(input) => self
+                .engine
+                .begin_component_intake(*input)
+                .map(|v| Reply::ComponentIntakeProgress(Box::new(v))),
+            Command::StageComponentDeclarations(input) => self
+                .engine
+                .stage_component_declarations(*input)
+                .map(|v| Reply::ComponentIntakeProgress(Box::new(v))),
+            Command::StageComponentHistory(input) => self
+                .engine
+                .stage_component_history(*input)
+                .map(|v| Reply::ComponentIntakeProgress(Box::new(v))),
+            Command::FinishComponentIntake(input) => self
+                .engine
+                .finish_component_intake(*input)
+                .map(|v| Reply::ComponentIntakeReceipt(Box::new(v))),
+            Command::ComponentIntakeProgress { identity, id } => self
+                .engine
+                .component_intake_progress(&identity, &id)
+                .map(|v| Reply::ComponentIntakeProgress(Box::new(v))),
+            Command::ComponentIntakeReceipt { identity, id } => self
+                .engine
+                .component_intake_receipt(&identity, &id)
+                .map(|v| Reply::ComponentIntakeReceipt(Box::new(v))),
+            Command::ComponentIntakeHistory {
+                identity,
+                id,
+                after,
+            } => self
+                .engine
+                .component_intake_history(&identity, &id, after)
+                .map(|v| Reply::ComponentIntakeHistory(Box::new(v))),
             Command::ContinueResidentReporting {
                 identity,
                 key,

@@ -637,3 +637,359 @@ async fn run_resident_scene(outage: bool) {
         std::fs::write(path, serde_json::to_vec_pretty(&result).unwrap()).unwrap();
     }
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "tools/test_registration_intake.py supplies the actual source fixture and prior reader"]
+async fn actual_registration_source_is_imported_through_authenticated_http_and_original_request_recovery()
+ {
+    use axum::{
+        body::{Body, to_bytes},
+        extract::ConnectInfo,
+        http::{Request, StatusCode},
+    };
+    use tower::ServiceExt;
+    let f = fixture().await;
+    let source = f.dir.path().join("source.db");
+    let seed = std::env::var("RX_REGISTRATION_SOURCE").unwrap();
+    for suffix in ["", "-wal", "-shm"] {
+        let input = std::path::PathBuf::from(format!("{seed}{suffix}"));
+        if input.is_file() {
+            std::fs::copy(input, format!("{}{suffix}", source.display())).unwrap();
+        }
+    }
+    let freeze = id();
+    let output =
+        std::process::Command::new(std::env::var("RX_REGISTRATION_SOURCE_FIXTURE").unwrap())
+            .args([
+                source.to_str().unwrap(),
+                f.installation.id.as_str(),
+                freeze.as_str(),
+            ])
+            .output()
+            .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let original: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    struct LostAcceptance {
+        inner: App,
+        lose: AtomicBool,
+    }
+    impl ApplicationPort for LostAcceptance {
+        fn request(&self, command: Command) -> CallFuture<'_> {
+            let lose = matches!(command, Command::FinishComponentIntake(_))
+                && self.lose.swap(false, Ordering::SeqCst);
+            Box::pin(async move {
+                let reply = self.inner.call(command).await?;
+                if lose {
+                    Err(WriterError::Unavailable)
+                } else {
+                    Ok(reply)
+                }
+            })
+        }
+        fn status(&self) -> Status {
+            self.inner.status()
+        }
+    }
+    let service = rx_runtime::component_intake::Service::configure(
+        Arc::new(LostAcceptance {
+            inner: f.handle.clone(),
+            lose: AtomicBool::new(true),
+        }),
+        [(
+            name("source"),
+            rx_runtime::component_intake::Source {
+                path: source.clone(),
+                owner: name("admin"),
+            },
+        )]
+        .into(),
+    )
+    .await
+    .unwrap();
+    let credentials = rx_api::auth::Credentials {
+        schema: "rx.local-credentials.v1".into(),
+        accounts: vec![rx_api::auth::LocalAccount {
+            principal: name("admin"),
+            password_hash: rx_api::auth::password_hash("fixture-only").unwrap(),
+        }],
+    };
+    let app = rx_api::router(
+        service,
+        credentials,
+        rx_api::LocalPolicy::new("http://127.0.0.1:8080").unwrap(),
+    )
+    .unwrap();
+    fn request(
+        method: &str,
+        path: &str,
+        cookie: Option<&str>,
+        body: serde_json::Value,
+    ) -> Request<Body> {
+        let mut r = Request::builder()
+            .method(method)
+            .uri(path)
+            .header("host", "127.0.0.1:8080")
+            .header("origin", "http://127.0.0.1:8080")
+            .header("content-type", "application/json")
+            .header("x-rx-client", "browser-v1");
+        if let Some(cookie) = cookie {
+            r = r.header("cookie", cookie);
+        }
+        let mut r = r.body(Body::from(body.to_string())).unwrap();
+        r.extensions_mut()
+            .insert(ConnectInfo::<std::net::SocketAddr>(
+                "127.0.0.1:12345".parse().unwrap(),
+            ));
+        r
+    }
+    async fn body(response: axum::response::Response) -> (StatusCode, serde_json::Value) {
+        let status = response.status();
+        let data = to_bytes(response.into_body(), 32 * 1024 * 1024)
+            .await
+            .unwrap();
+        (status, serde_json::from_slice(&data).unwrap())
+    }
+    let login = app
+        .clone()
+        .oneshot(request(
+            "POST",
+            "/api/v1/session",
+            None,
+            serde_json::json!({"principal":"admin","password":"fixture-only"}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(login.status(), StatusCode::OK);
+    let cookie = login
+        .headers()
+        .get("set-cookie")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_owned();
+    assert_eq!(login.status(), StatusCode::OK);
+    let (_, context) = body(
+        app.clone()
+            .oneshot(request(
+                "GET",
+                "/api/v1/registration-source?source=source",
+                Some(&cookie),
+                serde_json::Value::Null,
+            ))
+            .await
+            .unwrap(),
+    )
+    .await;
+    let (_, overview) = body(
+        app.clone()
+            .oneshot(request(
+                "GET",
+                "/api/v1/overview",
+                Some(&cookie),
+                serde_json::Value::Null,
+            ))
+            .await
+            .unwrap(),
+    )
+    .await;
+    let cell_count = overview["cells"].as_array().unwrap().len();
+    assert_eq!(cell_count, 0);
+    let payload = serde_json::json!({"request_key":id(),"command":{"source":"source","freeze":freeze,"expected_binding":context["binding"]}});
+    let before = std::fs::read(&source).unwrap();
+    assert_eq!(
+        body(
+            app.clone()
+                .oneshot(request(
+                    "POST",
+                    "/api/v1/registration-transfers",
+                    None,
+                    payload.clone()
+                ))
+                .await
+                .unwrap()
+        )
+        .await
+        .0,
+        StatusCode::UNAUTHORIZED
+    );
+    let mut forged = payload.clone();
+    forged["command"]["sealed"] = serde_json::json!(true);
+    assert_eq!(
+        body(
+            app.clone()
+                .oneshot(request(
+                    "POST",
+                    "/api/v1/registration-transfers",
+                    Some(&cookie),
+                    forged
+                ))
+                .await
+                .unwrap()
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(std::fs::read(&source).unwrap(), before);
+    // Each rejected source is private to this test. Refusal must not create/upgrade it.
+    let held = f.dir.path().join("source.held");
+    std::fs::rename(&source, &held).unwrap();
+    let unavailable = app
+        .clone()
+        .oneshot(request(
+            "POST",
+            "/api/v1/registration-transfers",
+            Some(&cookie),
+            payload.clone(),
+        ))
+        .await
+        .unwrap();
+    assert!(!unavailable.status().is_success());
+    assert!(!source.exists());
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(&held, &source).unwrap();
+        let alias = app
+            .clone()
+            .oneshot(request(
+                "POST",
+                "/api/v1/registration-transfers",
+                Some(&cookie),
+                payload.clone(),
+            ))
+            .await
+            .unwrap();
+        assert!(!alias.status().is_success());
+        std::fs::remove_file(&source).unwrap();
+        std::fs::hard_link(&held, &source).unwrap();
+        let alias = app
+            .clone()
+            .oneshot(request(
+                "POST",
+                "/api/v1/registration-transfers",
+                Some(&cookie),
+                payload.clone(),
+            ))
+            .await
+            .unwrap();
+        assert!(!alias.status().is_success());
+        std::fs::remove_file(&source).unwrap();
+    }
+    SqliteRepository::open(&source).unwrap().close().unwrap();
+    let unsealed = std::fs::read(&source).unwrap();
+    let refused = app
+        .clone()
+        .oneshot(request(
+            "POST",
+            "/api/v1/registration-transfers",
+            Some(&cookie),
+            payload.clone(),
+        ))
+        .await
+        .unwrap();
+    assert!(!refused.status().is_success());
+    assert_eq!(std::fs::read(&source).unwrap(), unsealed);
+    std::fs::remove_file(&source).unwrap();
+    std::fs::rename(&held, &source).unwrap();
+    assert_eq!(std::fs::read(&source).unwrap(), before);
+    let (status, lost) = body(
+        app.clone()
+            .oneshot(request(
+                "POST",
+                "/api/v1/registration-transfers",
+                Some(&cookie),
+                payload.clone(),
+            ))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{lost}");
+    assert_eq!(lost["outcome_unknown"], true);
+    // Recovery must not require another source read after target acceptance committed.
+    std::fs::rename(&source, f.dir.path().join("source.offline")).unwrap();
+    let (status, receipt) = body(
+        app.clone()
+            .oneshot(request(
+                "POST",
+                "/api/v1/registration-transfers",
+                Some(&cookie),
+                payload,
+            ))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{receipt}");
+    assert_eq!(receipt["work_use_permission"], "NOT_EVALUATED");
+    for declaration in original["freeze"]["declarations"].as_array().unwrap() {
+        let cid = declaration["document"]["value"]["id"].as_str().unwrap();
+        let (status, current) = body(
+            app.clone()
+                .oneshot(request(
+                    "GET",
+                    &format!("/api/v1/component?id={cid}"),
+                    Some(&cookie),
+                    serde_json::Value::Null,
+                ))
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(current["revision"], declaration["revision"]);
+        assert_eq!(
+            current["record"]["registration"],
+            declaration["document"]["value"]
+        );
+    }
+    let mut archived = Vec::new();
+    let mut after = "0".to_string();
+    loop {
+        let (status, page) = body(
+            app.clone()
+                .oneshot(request(
+                    "GET",
+                    &format!("/api/v1/registration-transfer/history?id={freeze}&after={after}"),
+                    Some(&cookie),
+                    serde_json::Value::Null,
+                ))
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        archived.extend(page["events"].as_array().unwrap().clone());
+        match page["next_after"].as_str() {
+            Some(next) => after = next.to_string(),
+            None => break,
+        }
+    }
+    assert_eq!(
+        serde_json::Value::Array(archived.clone()),
+        original["history"]
+    );
+    f.handle.close();
+    f.handle.closed().await;
+    let old = std::process::Command::new(std::env::var("RX_REGISTRATION_PRIOR_READER").unwrap())
+        .arg("inspect")
+        .arg(f.dir.path().join("platform.db"))
+        .output()
+        .unwrap();
+    assert!(!old.status.success());
+    assert!(
+        String::from_utf8_lossy(&old.stderr).contains("newer store schema: downgrade refused"),
+        "{}",
+        String::from_utf8_lossy(&old.stderr)
+    );
+    if let Ok(path) = std::env::var("RX_REGISTRATION_INTAKE_EVIDENCE") {
+        std::fs::write(path,serde_json::to_vec_pretty(&serde_json::json!({"status":"PASS_TARGET_INTAKE","receipt":receipt,"original_freeze":original["freeze"],"history_records":archived.len(),"old_reader_refused":true,"source_offline_recovery":true,"cell_count":cell_count,"process_ownership":"NOT_TRANSFERRED","physical_execution":"NOT_PERFORMED"})).unwrap()).unwrap();
+    }
+}
