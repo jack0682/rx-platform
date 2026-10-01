@@ -13,7 +13,7 @@ fn member_prefix(principal: &Name) -> Result<String> {
         canonical::digest("RX-DEFINITION-CATALOG-MEMBER-v1", principal).map_err(domain_error)?
     ))
 }
-fn author(
+pub(super) fn author(
     tx: &mut dyn Transaction,
     identity: &Identity,
     meta: &Installation,
@@ -36,7 +36,7 @@ fn allowed(c: &Catalog, p: &Principal, identity: &Identity, write: bool) -> bool
             .as_ref()
             .is_none_or(|(id, _)| c.terminals.contains(id))
 }
-fn access(
+pub(super) fn access(
     tx: &mut dyn Transaction,
     identity: &Identity,
     p: &Principal,
@@ -57,7 +57,7 @@ fn access(
     }
     Ok(c)
 }
-fn version(
+pub(super) fn version(
     tx: &mut dyn Transaction,
     catalog: &Id,
     id: &Id,

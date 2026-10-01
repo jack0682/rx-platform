@@ -37,7 +37,8 @@
         "runtime_restrictions",
         "settlement",
         "store_restore",
-        "definition_catalog"
+        "definition_catalog",
+        "workflow_model"
       ]
     },
     "cell": {

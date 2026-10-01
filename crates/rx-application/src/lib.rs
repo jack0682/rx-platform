@@ -69,3 +69,5 @@ pub mod host_binding_transition;
 pub mod component_intake;
 
 pub mod resident_execution;
+
+pub mod workflow_model;
