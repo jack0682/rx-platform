@@ -139,21 +139,97 @@ pub(super) async fn report(
     }
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub(super) enum ReportView {
+    Details,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct ReportList {
+    catalog: Id,
+    after: Option<Name>,
+    view: Option<ReportView>,
+}
 pub(super) async fn reports(
     State(s): State<ApiState>,
     headers: HeaderMap,
-    Query(q): Query<List>,
+    Query(q): Query<ReportList>,
 ) -> Result<Response, ApiError> {
-    match s
+    let actor = identity(&s, &headers)?;
+    let Reply::WorkflowResolutions(page) = s
         .runtime
         .request(Command::ListWorkflowResolutions {
-            identity: identity(&s, &headers)?,
-            catalog: q.catalog,
+            identity: actor.clone(),
+            catalog: q.catalog.clone(),
             after: q.after,
         })
         .await?
-    {
-        Reply::WorkflowResolutions(v) => Ok(Json(v).into_response()),
-        _ => Err(mismatch()),
+    else {
+        return Err(mismatch());
+    };
+    if q.view.is_none() {
+        return Ok(Json(page).into_response());
     }
+    // Additive read projection: legacy clients retain the original strict response shape.
+    // Each immutable receipt/model is read through the same catalog authorization boundary.
+    let mut models = std::collections::BTreeMap::new();
+    let mut reports = Vec::new();
+    for summary in &page.reports {
+        let Reply::WorkflowResolution(receipt) = s
+            .runtime
+            .request(Command::GetWorkflowResolution {
+                identity: actor.clone(),
+                catalog: q.catalog.clone(),
+                id: summary.reference.id.clone(),
+            })
+            .await?
+        else {
+            return Err(mismatch());
+        };
+        if receipt.reference != summary.reference
+            || receipt.report.request.workflow != summary.workflow
+        {
+            return Err(mismatch());
+        }
+        let reference = &receipt.report.request.workflow;
+        if !models.contains_key(reference) {
+            let Reply::WorkflowModel(value) = s
+                .runtime
+                .request(Command::GetWorkflowModel {
+                    identity: actor.clone(),
+                    catalog: reference.catalog.clone(),
+                    id: reference.id.clone(),
+                    revision: Some(reference.revision),
+                })
+                .await?
+            else {
+                return Err(mismatch());
+            };
+            if value.reference != *reference {
+                return Err(mismatch());
+            }
+            models.insert(reference.clone(), value);
+        }
+        let mut contexts = models[reference].spec.defaults.clone();
+        contexts.extend(receipt.report.request.contexts.clone());
+        let context_refs: std::collections::BTreeSet<_> = contexts.values().flatten().collect();
+        let names: Vec<_> = receipt
+            .report
+            .definitions
+            .iter()
+            .filter(|d| context_refs.contains(&d.reference))
+            .collect();
+        reports.push(serde_json::json!({
+            "reference":receipt.reference,"workflow":reference,"slot_index":summary.slot_index,
+            "status":summary.status,"created_at":receipt.created_at,"created_by":receipt.created_by,
+            "contexts":contexts,"overrides":receipt.report.request.overrides,
+            "definitions":names,
+        }));
+    }
+    Ok(Json(
+        serde_json::json!({"schema":"rx.workflow-resolution-index.v1", "catalog":page.catalog,
+        "reports":reports,"next":page.next}),
+    )
+    .into_response())
 }
