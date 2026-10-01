@@ -2,6 +2,32 @@
 use rx_domain::{canonical, types::*};
 use rx_process_contract::source_validation;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Position {
+    pub x: u32,
+    pub y: u32,
+}
+/// Canvas placement only. It never supplies process edges, conditions or execution authority.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Presentation {
+    pub flows: BTreeMap<Name, BTreeMap<Name, Position>>,
+}
+impl Presentation {
+    fn validate(&self) -> Result<(), String> {
+        if self.flows.len() > 128
+            || self.flows.values().any(|nodes| {
+                nodes.len() > 1024 || nodes.values().any(|p| p.x > 100_000 || p.y > 100_000)
+            })
+            || canonical::bytes(self).map_err(|e| e.to_string())?.len() > 131_072
+        {
+            return Err("draft canvas layout exceeds its bounds".into());
+        }
+        Ok(())
+    }
+}
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Save {
@@ -10,6 +36,9 @@ pub struct Save {
     pub expected: Option<Counter>,
     pub title: String,
     pub document: serde_json::Value,
+    /// Omission preserves the previous layout. An empty flows map explicitly clears it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub presentation: Option<Presentation>,
 }
 pub struct PreparedSave {
     pub(crate) input: Save,
@@ -21,6 +50,9 @@ impl PreparedSave {
     pub fn prepare(input: Save) -> Result<Self, String> {
         if input.title.trim().is_empty() || input.title.chars().count() > 120 {
             return Err("draft title must have 1–120 characters".into());
+        }
+        if let Some(presentation) = &input.presentation {
+            presentation.validate()?;
         }
         let bytes = canonical::bytes(&input.document).map_err(|e| e.to_string())?;
         if bytes.len() > 524_288 {
@@ -48,6 +80,8 @@ pub struct Version {
     pub created_by: Name,
     pub updated_by: Name,
     pub updated_at: TimePoint,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub presentation: Option<Presentation>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

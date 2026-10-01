@@ -56,3 +56,21 @@ Visual selection of equipment capabilities/bindings, complete condition and inte
 Results were also retained from processing source saved/exported in the actual browser together with simulated bindings through the compiler in the final S image. The result is COMPILED_NOT_QUALIFIED; package signing/activation/native execution were not performed.
 
 [Equipment operation bindings](DRAFT_BINDINGS.md) that select registered steps in the current cell and matched compile input export are connected. Creating bindings for new equipment/profiles and package approval remain separate.
+
+## Canvas presentation metadata
+
+The Save request optionally includes `presentation: {flows: {FLOW: {NODE: {x, y}}}}`.
+Coordinates are bounded nonnegative integers. The layout is limited to 128 flow maps,
+1024 positions per flow and 128 KiB overall; it never defines child order or conditions.
+It is stored in the same immutable Version as the source revision and returned in
+`Detail.version.presentation`. Moving a node creates a reviewed draft revision but
+keeps the source document digest and compiler input unchanged. Saved-request recovery,
+authorization and CAS conflicts cover the layout as part of the original request.
+
+Omitting presentation preserves the previous layout, including when an older client
+only changes title/source. Sending an explicit empty flows map clears it. Historical
+versions preserve their own layout. Old records decode without presentation. The
+response field is additive; clients that reject unknown response fields must be
+upgraded before reading a draft with a saved layout. An old strict server refuses
+those version records instead of silently overwriting them. No installed cell,
+execution authority, device binding or frozen wire contract changes here.
