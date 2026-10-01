@@ -527,6 +527,42 @@ pub enum Command {
         id: Id,
         revision: Option<Counter>,
     },
+    SaveWorkflowModel {
+        identity: Identity,
+        key: Id,
+        prepared: rx_application::workflow_model::PreparedSave,
+    },
+    GetWorkflowModel {
+        identity: Identity,
+        catalog: Id,
+        id: Id,
+        revision: Option<Counter>,
+    },
+    ListWorkflowModels {
+        identity: Identity,
+        catalog: Id,
+        after: Option<Name>,
+    },
+    PrepareWorkflowResolution {
+        identity: Identity,
+        key: Id,
+        input: rx_domain::workflow::Request,
+    },
+    SaveWorkflowResolution {
+        identity: Identity,
+        key: Id,
+        prepared: rx_application::workflow_model::PreparedResolution,
+    },
+    ListWorkflowResolutions {
+        identity: Identity,
+        catalog: Id,
+        after: Option<Name>,
+    },
+    GetWorkflowResolution {
+        identity: Identity,
+        catalog: Id,
+        id: Id,
+    },
     SaveDefinitionCatalog {
         identity: Identity,
         key: Id,
@@ -1066,6 +1102,11 @@ pub enum Reply {
     DraftBindingVersion(Box<rx_application::draft_bindings::Version>),
     DraftBindingView(Box<rx_application::draft_bindings::View>),
     ProcessDraft(Box<rx_application::process_draft::Detail>),
+    WorkflowModel(Box<rx_application::workflow_model::Version>),
+    WorkflowModels(Box<rx_application::workflow_model::Page>),
+    WorkflowResolutionPreparation(Box<rx_application::workflow_model::Preparation>),
+    WorkflowResolution(Box<rx_application::workflow_model::Receipt>),
+    WorkflowResolutions(Box<rx_application::workflow_model::Reports>),
     DefinitionCatalog(Box<rx_application::definition_catalog::Catalog>),
     DefinitionCatalogs(Box<rx_application::definition_catalog::CatalogPage>),
     Definition(Box<rx_application::definition_catalog::View>),
@@ -1979,6 +2020,63 @@ impl<R: Repository + Send + 'static, C: Clock + 'static, A: QualificationAuthori
                 .engine
                 .draft_bindings(&identity, &cell, &id, revision)
                 .map(|v| Reply::DraftBindingView(Box::new(v))),
+            Command::SaveWorkflowModel {
+                identity,
+                key,
+                prepared,
+            } => self
+                .engine
+                .save_workflow_model(&identity, &key, prepared)
+                .map(|v| Reply::WorkflowModel(Box::new(v))),
+            Command::GetWorkflowModel {
+                identity,
+                catalog,
+                id,
+                revision,
+            } => self
+                .engine
+                .workflow_model(&identity, &catalog, &id, revision)
+                .map(|v| Reply::WorkflowModel(Box::new(v))),
+            Command::ListWorkflowModels {
+                identity,
+                catalog,
+                after,
+            } => self
+                .engine
+                .workflow_models(&identity, &catalog, after.as_ref())
+                .map(|v| Reply::WorkflowModels(Box::new(v))),
+            Command::PrepareWorkflowResolution {
+                identity,
+                key,
+                input,
+            } => self
+                .engine
+                .prepare_workflow_resolution(&identity, &key, input)
+                .map(|v| Reply::WorkflowResolutionPreparation(Box::new(v))),
+            Command::SaveWorkflowResolution {
+                identity,
+                key,
+                prepared,
+            } => self
+                .engine
+                .save_workflow_resolution(&identity, &key, prepared)
+                .map(|v| Reply::WorkflowResolution(Box::new(v))),
+            Command::ListWorkflowResolutions {
+                identity,
+                catalog,
+                after,
+            } => self
+                .engine
+                .workflow_resolutions(&identity, &catalog, after.as_ref())
+                .map(|v| Reply::WorkflowResolutions(Box::new(v))),
+            Command::GetWorkflowResolution {
+                identity,
+                catalog,
+                id,
+            } => self
+                .engine
+                .workflow_resolution(&identity, &catalog, &id)
+                .map(|v| Reply::WorkflowResolution(Box::new(v))),
             Command::SaveDefinitionCatalog {
                 identity,
                 key,

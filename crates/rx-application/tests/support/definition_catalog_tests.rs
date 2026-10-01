@@ -848,3 +848,6 @@ fn point_patterns_are_versioned_data_with_inheritance_and_bounded_paging() {
             .is_err()
     );
 }
+
+#[path = "workflow_model_tests.rs"]
+mod workflow_model_tests;

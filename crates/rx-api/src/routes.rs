@@ -6,6 +6,7 @@ mod host_recovery;
 mod resident_components;
 mod resident_execution;
 mod settlement;
+mod workflow_model;
 use crate::{
     auth::{Auth, COOKIE, Credentials, SESSION_SECONDS},
     error::ApiError,
@@ -114,6 +115,16 @@ fn build_router(
         host_recovery,
     };
     Ok(Router::new()
+        .route(
+            "/api/v1/workflow-models",
+            get(workflow_model::list).post(workflow_model::save),
+        )
+        .route("/api/v1/workflow-model", get(workflow_model::get))
+        .route(
+            "/api/v1/workflow-resolutions",
+            post(workflow_model::resolve).get(workflow_model::reports),
+        )
+        .route("/api/v1/workflow-resolution", get(workflow_model::report))
         .route(
             "/api/v1/definition-catalogs",
             get(definition_catalog::catalogs).post(definition_catalog::save_catalog),

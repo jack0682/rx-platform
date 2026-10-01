@@ -32,3 +32,5 @@ pub mod host_qualification;
 pub mod component_transfer;
 
 pub mod resident_execution;
+
+pub mod workflow;
