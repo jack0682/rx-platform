@@ -36,7 +36,8 @@
         "resident_reporting",
         "runtime_restrictions",
         "settlement",
-        "store_restore"
+        "store_restore",
+        "definition_catalog"
       ]
     },
     "cell": {

@@ -527,6 +527,46 @@ pub enum Command {
         id: Id,
         revision: Option<Counter>,
     },
+    SaveDefinitionCatalog {
+        identity: Identity,
+        key: Id,
+        input: rx_application::definition_catalog::CatalogSave,
+    },
+    ListDefinitionCatalogs {
+        identity: Identity,
+        after: Option<Name>,
+    },
+    GetDefinitionCatalog {
+        identity: Identity,
+        id: Id,
+    },
+    SaveDefinition {
+        identity: Identity,
+        key: Id,
+        prepared: rx_application::definition_catalog::Prepared,
+    },
+    GetDefinition {
+        identity: Identity,
+        catalog: Id,
+        id: Id,
+        revision: Option<Counter>,
+    },
+    ListDefinitions {
+        identity: Identity,
+        catalog: Id,
+        after: Option<Name>,
+        filter: rx_application::definition_catalog::Filter,
+    },
+    DefinitionPoints {
+        identity: Identity,
+        query: rx_domain::definition::pattern::Query,
+    },
+    DefinitionHistory {
+        identity: Identity,
+        catalog: Id,
+        id: Id,
+        before: Option<Counter>,
+    },
     SaveProcessDraft {
         identity: Identity,
         key: Id,
@@ -1026,6 +1066,12 @@ pub enum Reply {
     DraftBindingVersion(Box<rx_application::draft_bindings::Version>),
     DraftBindingView(Box<rx_application::draft_bindings::View>),
     ProcessDraft(Box<rx_application::process_draft::Detail>),
+    DefinitionCatalog(Box<rx_application::definition_catalog::Catalog>),
+    DefinitionCatalogs(Box<rx_application::definition_catalog::CatalogPage>),
+    Definition(Box<rx_application::definition_catalog::View>),
+    Definitions(Box<rx_application::definition_catalog::Page>),
+    DefinitionHistory(Box<rx_application::definition_catalog::History>),
+    DefinitionPoints(Box<rx_domain::definition::pattern::Page>),
     ProcessDrafts(Box<rx_application::process_draft::Page>),
     ProcessDraftHistory(Box<rx_application::process_draft::History>),
     HostServiceOwners(Vec<rx_application::service_health::Owner>),
@@ -1933,6 +1979,61 @@ impl<R: Repository + Send + 'static, C: Clock + 'static, A: QualificationAuthori
                 .engine
                 .draft_bindings(&identity, &cell, &id, revision)
                 .map(|v| Reply::DraftBindingView(Box::new(v))),
+            Command::SaveDefinitionCatalog {
+                identity,
+                key,
+                input,
+            } => self
+                .engine
+                .save_definition_catalog(&identity, &key, input)
+                .map(|v| Reply::DefinitionCatalog(Box::new(v))),
+            Command::ListDefinitionCatalogs { identity, after } => self
+                .engine
+                .definition_catalogs(&identity, after.as_ref())
+                .map(|v| Reply::DefinitionCatalogs(Box::new(v))),
+            Command::GetDefinitionCatalog { identity, id } => self
+                .engine
+                .definition_catalog(&identity, &id)
+                .map(|v| Reply::DefinitionCatalog(Box::new(v))),
+            Command::SaveDefinition {
+                identity,
+                key,
+                prepared,
+            } => self
+                .engine
+                .save_definition(&identity, &key, prepared)
+                .map(|v| Reply::Definition(Box::new(v))),
+            Command::GetDefinition {
+                identity,
+                catalog,
+                id,
+                revision,
+            } => self
+                .engine
+                .definition(&identity, &catalog, &id, revision)
+                .map(|v| Reply::Definition(Box::new(v))),
+            Command::ListDefinitions {
+                identity,
+                catalog,
+                after,
+                filter,
+            } => self
+                .engine
+                .definitions(&identity, &catalog, after.as_ref(), &filter)
+                .map(|v| Reply::Definitions(Box::new(v))),
+            Command::DefinitionPoints { identity, query } => self
+                .engine
+                .definition_points(&identity, &query)
+                .map(|v| Reply::DefinitionPoints(Box::new(v))),
+            Command::DefinitionHistory {
+                identity,
+                catalog,
+                id,
+                before,
+            } => self
+                .engine
+                .definition_history(&identity, &catalog, &id, before)
+                .map(|v| Reply::DefinitionHistory(Box::new(v))),
             Command::SaveProcessDraft {
                 identity,
                 key,
