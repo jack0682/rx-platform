@@ -69,7 +69,7 @@ async fn reporting_http_owner_controls_scope_and_reads_attributed_history() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{issued}");
-    let scope: Scope = serde_json::from_value(issued["scope"].clone()).unwrap();
+    let mut scope: Scope = serde_json::from_value(issued["scope"].clone()).unwrap();
     let (_, replay, _) = send(
         &f.app,
         request(
@@ -89,6 +89,34 @@ async fn reporting_http_owner_controls_scope_and_reads_attributed_history() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(read, issued);
+    let continuation = json!({"request_key":id(),"command":{"scope":scope.id,"expected_revision":issued["revision"],"reporter_session":peer.id}});
+    let (status, _, _) = send(
+        &f.app,
+        request(
+            "POST",
+            "/api/v1/components/reporting/continue",
+            Some(&reader),
+            continuation.to_string(),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let (status, continued, _) = send(
+        &f.app,
+        request(
+            "POST",
+            "/api/v1/components/reporting/continue",
+            Some(&admin),
+            continuation.to_string(),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{continued}");
+    assert_eq!(
+        continued["scope"]["continuation"]["previous_scope"],
+        issued["scope"]["id"]
+    );
+    scope = serde_json::from_value(continued["scope"].clone()).unwrap();
     let instance = id();
     f.handle
         .call(Command::PublishResidentReport {

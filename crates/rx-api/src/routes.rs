@@ -266,6 +266,10 @@ fn build_router(
             post(resident_components::issue_reporting),
         )
         .route(
+            "/api/v1/components/reporting/continue",
+            post(resident_components::continue_reporting),
+        )
+        .route(
             "/api/v1/components/reporting/revoke",
             post(resident_components::revoke_reporting),
         )

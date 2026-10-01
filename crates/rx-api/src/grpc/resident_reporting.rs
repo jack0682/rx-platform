@@ -106,6 +106,26 @@ impl wire::resident_reporting_service_server::ResidentReportingService for Platf
         };
         payload("rx.resident-reporting-scope.v1", &scope)
     }
+    async fn head(
+        &self,
+        request: Request<wire::ReadHead>,
+    ) -> Result<Response<wire::Payload>, Status> {
+        let identity = self.reporter_identity(&request, &request.get_ref().session_id)?;
+        let input = request.into_inner();
+        check_binding(&input.binding_hash)?;
+        let Reply::ResidentReportHead(head) = self
+            .call(Command::ResidentReportHead {
+                identity,
+                scope: id(&input.scope_id)?,
+                instance: id(&input.instance_id)?,
+            })
+            .await?
+        else {
+            return Err(Status::internal("resident head reply"));
+        };
+        payload("rx.resident-report-head.v1", &head)
+    }
+
     async fn publish(
         &self,
         request: Request<wire::PublishReport>,

@@ -325,9 +325,10 @@ a.write()
 rr = Schema("rx.resident.reporting.v1", "rx/resident/reporting/v1/reporting.proto")
 rr.message("OpenReporter", "peer_id:Name#1 peer_boot:Id#2 installation_id:Id#3 store_generation:Id#4 shared_clock_id:string#5 release_digest:Digest#6 binding_hash:Digest#7")
 rr.message("InspectScope", "session_id:Id#1 scope_id:Id#2 binding_hash:Digest#3")
+rr.message("ReadHead", "session_id:Id#1 scope_id:Id#2 instance_id:Id#3 binding_hash:Digest#4")
 rr.message("PublishReport", "session_id:Id#1 request_key:Id#2 payload:bytes#3 payload_sha256:Digest#4 binding_hash:Digest#5")
 rr.message("Payload", "schema:string#1 data:bytes#2 sha256:Digest#3")
-rr.service("ResidentReporting", [("Open", "OpenReporter", "Payload"), ("Inspect", "InspectScope", "Payload"), ("Publish", "PublishReport", "Payload")])
+rr.service("ResidentReporting", [("Open", "OpenReporter", "Payload"), ("Inspect", "InspectScope", "Payload"), ("Head", "ReadHead", "Payload"), ("Publish", "PublishReport", "Payload")])
 rr.write()
 
 # Optional Host bootstrap/state read binding; no new native write surface.

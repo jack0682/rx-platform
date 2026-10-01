@@ -8,6 +8,16 @@ use rx_domain::types::*;
 use rx_ports::{Repository, StoreError};
 
 pub enum Command {
+    ContinueResidentReporting {
+        identity: Identity,
+        key: Id,
+        input: rx_application::resident_reporting::Continue,
+    },
+    ResidentReportHead {
+        identity: rx_application::resident_reporting::ReporterIdentity,
+        scope: Id,
+        instance: Id,
+    },
     ReadResidentReportingScope {
         identity: Identity,
         scope: Id,
@@ -846,6 +856,7 @@ pub enum Command {
     },
 }
 pub enum Reply {
+    ResidentReportHead(Box<rx_domain::resident_reporting::Head>),
     ResidentReporter(Box<rx_domain::resident_reporting::Peer>),
     ResidentReportingScope(Box<rx_domain::resident_reporting::Scope>),
     ResidentReportingScopeView(Box<rx_application::resident_reporting::ScopeView>),
@@ -1026,6 +1037,22 @@ impl<R: Repository + Send + 'static, C: Clock + 'static, A: QualificationAuthori
     }
     fn process(&mut self, command: Command) -> rx_ports::Result<Reply> {
         match command {
+            Command::ContinueResidentReporting {
+                identity,
+                key,
+                input,
+            } => self
+                .engine
+                .continue_resident_reporting(&identity, key.as_str(), input)
+                .map(|v| Reply::ResidentReportingScopeView(Box::new(v))),
+            Command::ResidentReportHead {
+                identity,
+                scope,
+                instance,
+            } => self
+                .engine
+                .resident_report_head(&identity, &scope, &instance)
+                .map(|v| Reply::ResidentReportHead(Box::new(v))),
             Command::ReadResidentReportingScope { identity, scope } => self
                 .engine
                 .inspect_resident_reporting(&identity, &scope)

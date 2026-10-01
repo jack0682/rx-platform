@@ -1,5 +1,5 @@
 use super::*;
-use crate::resident_reporting::{Issue, ReporterIdentity, Revoke, ScopeView};
+use crate::resident_reporting::{Continue, Issue, ReporterIdentity, Revoke, ScopeView};
 use rx_domain::{component::RegistrationState, resident_reporting::*};
 
 const PEER: &str = "rx.internal.resident-reporter.v1";
@@ -53,6 +53,20 @@ fn scoped(
         return reject(Reject::Forbidden);
     }
     Ok((peer, scope))
+}
+
+fn same_lineage(tx: &mut dyn Transaction, scope: &Scope, receipt: &Receipt) -> Result<()> {
+    let (_, origin): (_, Scope) = load(tx, "residentreportscope", &receipt.report.scope, SCOPE)?;
+    if origin.root_scope() != scope.root_scope()
+        || receipt.component != scope.component
+        || receipt.component_revision != scope.component_revision
+        || receipt.report.source.registration != scope.source_registration
+        || receipt.report.source.registration_revision != scope.source_revision
+        || receipt.report.source.catalog != scope.catalog
+    {
+        return reject(Reject::Forbidden);
+    }
+    Ok(())
 }
 
 impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
@@ -147,6 +161,7 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                 issued_by: principal.id,
                 issued_at: now,
                 active: true,
+                continuation: None,
             };
             let revision = save(tx, "residentreportscope", &scope.id, None, SCOPE, &scope)?;
             let view = ScopeView { revision, scope };
@@ -193,6 +208,93 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             event(tx, "rx.event.resident-reporting-revoked.v1", &view)?;
             remember(tx, &request, fingerprint, SCOPE_REPLY, &view)?;
             Ok(view)
+        })
+    }
+
+    /// Reauthorize metadata continuity only; old receipts retain their original peer/scope.
+    pub fn continue_resident_reporting(
+        &mut self,
+        identity: &Identity,
+        request_key: &str,
+        input: Continue,
+    ) -> Result<ScopeView> {
+        let meta = &self.installation;
+        let clock = &self.clock;
+        self.repository.transact(|tx| {
+            let now = clock.now();
+            let principal = resident_component::author(tx, identity, meta, &now)?;
+            let (revision, mut previous): (_, Scope) =
+                load(tx, "residentreportscope", &input.scope, SCOPE)?;
+            resident_component::owned(tx, &principal, meta, &previous.component)?;
+            let (request, fingerprint) = request(
+                meta,
+                &principal,
+                "Component.ContinueReporting",
+                request_key,
+                &(&principal.id, &input),
+            )?;
+            if let Some(old) = prior(tx, &request, fingerprint, SCOPE_REPLY)? {
+                return Ok(old);
+            }
+            lifecycle::require_serving(tx)?;
+            check_revision(revision, input.expected_revision)?;
+            // A revoked or already continued scope cannot branch into a second successor.
+            if !previous.active {
+                return reject(Reject::Forbidden);
+            }
+            let (_, peer): (_, Peer) =
+                load(tx, "residentpeersession", &input.reporter_session, PEER)?;
+            observer(tx, &peer.principal)?;
+            if !current_peer(tx, meta, &peer)? {
+                return reject(Reject::Unauthenticated);
+            }
+            let mut scope = previous.clone();
+            scope.id = id();
+            scope.reporter_session = peer.id;
+            scope.issued_by = principal.id;
+            scope.issued_at = now;
+            scope.continuation = Some(Continuation {
+                previous_scope: previous.id.clone(),
+                root_scope: previous.root_scope().clone(),
+            });
+            previous.active = false;
+            save(
+                tx,
+                "residentreportscope",
+                &previous.id,
+                Some(revision),
+                SCOPE,
+                &previous,
+            )?;
+            let revision = save(tx, "residentreportscope", &scope.id, None, SCOPE, &scope)?;
+            let view = ScopeView { revision, scope };
+            event(tx, "rx.event.resident-reporting-continued.v1", &view)?;
+            remember(tx, &request, fingerprint, SCOPE_REPLY, &view)?;
+            Ok(view)
+        })
+    }
+
+    pub fn resident_report_head(
+        &mut self,
+        identity: &ReporterIdentity,
+        scope_id: &Id,
+        instance: &Id,
+    ) -> Result<Head> {
+        let meta = &self.installation;
+        self.repository.transact(|tx| {
+            let (_, scope) = scoped(tx, meta, identity, scope_id)?;
+            let row = tx.get(&key("residentreport", (&scope.component, instance)))?;
+            let receipt = row
+                .map(|row| decode::<Receipt>(&row, RECEIPT))
+                .transpose()?;
+            if let Some(receipt) = &receipt {
+                same_lineage(tx, &scope, receipt)?;
+            }
+            Ok(Head {
+                scope: scope.id,
+                instance: instance.clone(),
+                receipt,
+            })
         })
     }
 
@@ -261,10 +363,8 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             let old = tx.get(&latest)?;
             if let Some(old) = &old {
                 let previous: Receipt = decode(old, RECEIPT)?;
-                if previous.report.scope != scope.id
-                    || previous.report.source != report.source
-                    || previous.reporter.id != peer.id
-                {
+                same_lineage(tx, &scope, &previous)?;
+                if previous.report.source != report.source {
                     return reject(Reject::Forbidden);
                 }
                 if previous.report.sequence.increment().map_err(domain_error)? != report.sequence {

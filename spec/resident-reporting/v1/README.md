@@ -1,4 +1,4 @@
-# Optional resident reporting binding, revision 1
+# Optional resident reporting binding, revision 2
 
 This optional service records attributed Supervisor registry snapshots. It does
 not open a frozen Host/Executor/Operator session, grant execution permission,
@@ -18,7 +18,7 @@ new reports. Browser credentials never authenticate this service.
 Publish carries canonical JSON for `rx-domain::resident_reporting::Report`, its
 SHA-256, a canonical UUID request key and binding hash. Payloads are limited to
 65536 bytes. Unknown/duplicate fields and noncanonical payload bytes are refused.
-Reports are ordered per scope/instance, starting at 1; same-key recovery returns
+Reports are ordered per diagnostic lineage/instance, starting at 1; same-key recovery returns
 the original receipt and conflicting reuse is rejected. The source binding is
 immutable for an instance. Declaration change or retirement does not erase the
 permission to record diagnostic history under an active scope; the owner read
@@ -57,4 +57,38 @@ binding. An explicit P scope relates it to the P component; this is a diagnostic
 relation, not silent import, alias replacement or migration of the old writer.
 The Rust client publishes exactly once per call. Keep its request key and report
 on response loss; retries are explicit. New reporting-process incarnations need
-new scopes, and existing-instance origin changes require later reconciliation.
+new scopes through the explicit continuation procedure below.
+
+Revision 2 adds owner-approved diagnostic continuation and scoped head reads.
+POST `/api/v1/components/reporting/continue` takes scope, expected_revision and
+reporter_session with the ordinary idempotent mutation envelope. It atomically
+revokes the predecessor and records a new scope with previous_scope/root_scope.
+Only an active predecessor can be continued, so it cannot branch after a commit.
+The original component/revision, source registration/revision and catalog remain
+fixed, even if the declaration was later changed or retired. This approval is
+for metadata continuity only; it cannot adopt a PID, restart a process or grant work.
+
+Head takes the current session, scope and instance and returns canonical
+`rx.resident-report-head.v1`. Its optional receipt is the latest stored report in
+that scope's diagnostic lineage. Unrelated scopes cannot read or append to it.
+An empty head means no record in the current store, not proof that an earlier
+store never accepted a request. Continuations retain sequence order across peers;
+old receipts remain immutable, and the old scope/session cannot publish again.
+No report can resurrect a terminal execution through continuation.
+
+The delivery outbox commits each request key, exact report and original peer
+before sending. It retries that request only within the same live reporting
+session/scope. After explicit owner continuation, an identical latest receipt
+can recover the prior acknowledgement. Otherwise the original request is retained
+as PRIOR_DELIVERY_UNRESOLVED; a new attributed snapshot does not rewrite its
+outcome. A recorded receipt regression requires explicit store reconciliation.
+Latest source snapshots may coalesce before a request is created. This service
+is not a lossless journal of every OS state transition.
+
+Compatibility: revision 1 binding hashes are refused by revision 2 peers.
+Old stored scopes decode with no continuation and become their own lineage root;
+no persisted source ID or old receipt is rewritten. Revision 1 binaries cannot
+read new continuation rows; transparent downgrade is not supported. Frozen base/cell contracts
+are unchanged. Reauthorization is an explicit owner action after P/reporter
+incarnation changes; a transport reconnect within the same process reuses its
+peer boot. New process starts must generate a new boot.

@@ -29,6 +29,14 @@ pub struct Revoke {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct Continue {
+    pub scope: Id,
+    pub expected_revision: Counter,
+    pub reporter_session: Id,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ScopeView {
     pub revision: Counter,
     pub scope: Scope,
