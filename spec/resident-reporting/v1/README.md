@@ -1,4 +1,4 @@
-# Optional resident reporting binding, revision 2
+# Optional resident reporting binding, revision 3
 
 This optional service records attributed Supervisor registry snapshots. It does
 not open a frozen Host/Executor/Operator session, grant execution permission,
@@ -92,3 +92,29 @@ read new continuation rows; transparent downgrade is not supported. Frozen base/
 are unchanged. Reauthorization is an explicit owner action after P/reporter
 incarnation changes; a transport reconnect within the same process reuses its
 peer boot. New process starts must generate a new boot.
+
+
+Revision 3 adds ReadAcceptance for the historical target receipt of an imported
+component. The request carries current reporter session, owner-issued reporting
+scope, source freeze ID and binding hash. P requires an active canonical scope
+(component ID equals source registration ID), the matching import origin and an
+Accepted transfer. A diagnostic alias or a report about an unimported component
+cannot authorize this query. No complete source history, configured path or
+credentials are exposed. The returned atomic transfer cut includes the original
+freeze record, target receipt digest and acceptance time, and identifies the
+current authenticated peer, scope and canonical component. This is metadata
+provenance within the owner's reporting scope, never operational authority.
+
+S checks the exact local source cut, target installation, current peer/scope and
+component before recording it under the still-sealed source. The original source
+freeze and registration namespaces remain immutable. Repeated reconciliation of
+the same target decision retains the first local evidence; a changed target
+receipt requires investigation and cannot overwrite it. The stored record is
+historical: it cannot extend a session, report scope, process lifetime or work
+permission. Reconciliation failure preserves the previous evidence and fences.
+
+Compatibility: revision 3 peers refuse revision 1/2 binding hashes. P and S must
+upgrade together and establish current reporting sessions/scopes. Existing
+reported observations, original IDs and scopes are not rewritten. Base/cell
+contracts are unchanged. This addition does not provide P execution assignment,
+package content acceptance or process ownership transfer.

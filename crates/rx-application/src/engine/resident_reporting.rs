@@ -41,7 +41,7 @@ fn authenticated(
     Ok(peer)
 }
 
-fn scoped(
+pub(super) fn scoped(
     tx: &mut dyn Transaction,
     meta: &Installation,
     identity: &ReporterIdentity,

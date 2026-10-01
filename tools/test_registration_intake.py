@@ -47,7 +47,7 @@ def main():
 
     run(solutions, "source-build", [
         "build", "-p", "rx-supervisor", "--features", "test-harness",
-        "--bin", "rx-registration-source-fixture", "--locked",
+        "--bin", "rx-registration-source-fixture", "--bin", "rx-registration-transfer", "--locked",
         "--target-dir", str(args.solutions_target.resolve()),
     ], {})
     run(root, "actual-intake", [
@@ -58,6 +58,7 @@ def main():
         "RX_REGISTRATION_SOURCE": str(source),
         "RX_REGISTRATION_SOURCE_FIXTURE": str(args.solutions_target.resolve() / "debug/rx-registration-source-fixture"),
         "RX_REGISTRATION_PRIOR_READER": str(prior_reader),
+        "RX_REGISTRATION_RECONCILER": str(args.solutions_target.resolve() / "debug/rx-registration-transfer"),
         "RX_REGISTRATION_INTAKE_EVIDENCE": str(evidence / "result.json"),
     })
     if before != inventory():
@@ -74,7 +75,7 @@ def main():
     (evidence / "scope.json").write_text(json.dumps({
         "sources": sources, "source_unchanged": True, "source_inventory": before,
         "prior_reader": prior,
-        "scope": "actual S source, no-Cell P writer and HTTP route; no process ownership or execution assignment",
+        "scope": "actual S source, no-Cell P writer/HTTP intake and scoped mTLS acceptance reconciliation; no execution authority",
     }, indent=2) + "\n")
     print(json.dumps({"status": "PASS_TARGET_INTAKE", "evidence": str(evidence)}))
 

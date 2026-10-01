@@ -57,10 +57,20 @@ as data and cannot create P work/control authority. Target materialization times
 are not claimed as original source timestamps. The source fence remains closed.
 
 This does not transfer live process ownership, verify package content, grant work
-permission, complete S acknowledgement or assign execution. The full contract is
-[registration transfer revision 2](https://github.com/jack0682/rx_docs/blob/develop/docs/contracts/registration-transfer/v1/README.md).
+permission, assign execution. The full contract is
+[registration transfer revision 3](https://github.com/jack0682/rx_docs/blob/develop/docs/contracts/registration-transfer/v1/README.md).
 Tests in transactions cover rollback, restart, current authorization, identity
 collisions, history consistency and alias isolation. The opt-in runner
 `tools/test_registration_intake.py --help` connects a real Supervisor source helper
 to the actual P writer and HTTP route using copied, quiescent source evidence and
 an independently preserved old reader. It never operates equipment.
+
+
+A current owner-issued reporter scope for an imported canonical component can
+read its historical target receipt through the optional reporting Acceptance RPC.
+The response binds the original freeze/cut and immutable receipt digest to the
+current peer/scope. Aliases, unrelated components, stale peers, revoked scopes and
+wrong freeze IDs are refused. No paths or full source history are exposed on that
+service. Supervisor's explicit reconciliation command checks and persists this
+provenance under the source fence; it does not reopen local declaration authority.
+Binding revision 3 requires a paired client/server upgrade and current scopes.
