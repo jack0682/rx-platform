@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build private snapshots and exercise P-assigned real software execution in a signed Linux runtime."""
+"""Exercise P-assigned execution and source investigation in a private signed Linux runtime."""
 import argparse
 import hashlib
 import json
@@ -72,17 +72,19 @@ PY
         "-v",str(evidence/"source/platform")+":/platform:ro","-v",str(evidence/"source/solutions")+":/solutions:ro",
         "-v",str(a.platform_target.resolve())+":/targets/platform","-v",str(a.solutions_target.resolve())+":/targets/solutions",
         "-v",str(a.registry_cache.resolve())+":/host-registry:ro","-v",str(out)+":/output",images["builder"]["id"],"-c",build])
-    for label,test in [("normal","actual_owner_preparation_grant_child_stop_and_reply_loss"),("outage","actual_p_outage_keeps_local_stop_and_unresolved_delivery")]:
+    for label,test in [("normal","actual_owner_preparation_grant_child_stop_and_reply_loss"),("outage","actual_p_outage_keeps_local_stop_and_unresolved_delivery"),("cold","actual_cold_manager_loss_preserves_live_original_processes")]:
         run(label,["docker","run","--rm","--name","rx-execution-"+label+"-"+token,"--network","none","--cap-drop=ALL","--security-opt","no-new-privileges","--read-only","--user","10001:10001",
             "--tmpfs","/var/lib/rx-solutions:rw,uid=10001,gid=10001,mode=0700","--tmpfs","/tmp:rw,mode=1777",
             "--entrypoint","/programs/resident-execution-test","-v",str(out)+":/programs:ro","-v",str(results)+":/evidence",
             "-e","RX_RESIDENT_EXECUTION_BIN=/programs/rx-solutionsd","-e",f"RX_RESIDENT_EXECUTION_EVIDENCE=/evidence/{label}.json",
             images["runtime"]["id"],test,"--ignored","--exact","--nocapture"])
         result=json.loads((results/(label+".json")).read_text())
-        if result["status"]!="PASS_P_ASSIGNED_ACTUAL_SOFTWARE_EXECUTION" or result["outage"]!=(label=="outage"):
+        if label=="cold":
+            if result["status"]!="PASS_COLD_SOURCE_INVESTIGATION":raise SystemExit("cold investigation result differs")
+        elif result["status"]!="PASS_P_ASSIGNED_ACTUAL_SOFTWARE_EXECUTION" or result["outage"]!=(label=="outage") or result.get("inspection_preserved_source_outbox_and_platform_outcomes") is not True:
             raise SystemExit("scene result differs")
-    (evidence/"scope.json").write_text(json.dumps({"images":images,"status":"PASS_P_ASSIGNED_SOFTWARE_NORMAL_AND_OUTAGE","source_snapshots":"sources.json","network":"container loopback only","runtime_user":"10001:10001","read_only_root":True,"physical_execution":"NOT_PERFORMED","limits":["Current source-built daemon; program content comes from the signed runtime image, not a newly released daemon package","P test server uses the actual writer/HTTP/mTLS and actual shared Linux clock, not a full platformd deployment","No work permission, physical completion or independent OS attestation","Active-unknown recovery and full RF01-RF14 remain open"]},indent=2)+"\n")
-    print(json.dumps({"status":"PASS_P_ASSIGNED_SOFTWARE_NORMAL_AND_OUTAGE","evidence":str(evidence)}))
+    (evidence/"scope.json").write_text(json.dumps({"images":images,"status":"PASS_SOFTWARE_EXECUTION_AND_SOURCE_INVESTIGATION","scenes":["normal exit inspection","outage exit inspection preserving pending delivery","cold manager loss with original children still present"],"source_snapshots":"sources.json","network":"container loopback only","runtime_user":"10001:10001","read_only_root":True,"physical_execution":"NOT_PERFORMED","limits":["Current source-built daemon; program content comes from the signed runtime image, not a newly released daemon package","P test server uses the actual writer/HTTP/mTLS and actual shared Linux clock, not a full platformd deployment","No work permission, physical completion or independent OS attestation","Source investigation does not release P claims or resume execution; original children in the cold scene are destroyed only with their private container","Active-unknown recovery and full RF01-RF14 remain open"]},indent=2)+"\n")
+    print(json.dumps({"status":"PASS_SOFTWARE_EXECUTION_AND_SOURCE_INVESTIGATION","evidence":str(evidence)}))
 
 
 if __name__=="__main__":main()

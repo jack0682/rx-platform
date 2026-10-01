@@ -146,14 +146,19 @@ async fn line(
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "tools/test_resident_execution.py supplies the signed Linux runtime and built daemon"]
 async fn actual_owner_preparation_grant_child_stop_and_reply_loss() {
-    actual_scenario(false).await;
+    actual_scenario(false, false).await;
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "tools/test_resident_execution.py supplies the signed Linux runtime and built daemon"]
 async fn actual_p_outage_keeps_local_stop_and_unresolved_delivery() {
-    actual_scenario(true).await;
+    actual_scenario(true, false).await;
 }
-async fn actual_scenario(outage: bool) {
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "tools/test_resident_execution.py supplies the private Linux container and built daemon"]
+async fn actual_cold_manager_loss_preserves_live_original_processes() {
+    actual_scenario(false, true).await;
+}
+async fn actual_scenario(outage: bool, cold: bool) {
     let executable = std::env::var("RX_RESIDENT_EXECUTION_BIN").unwrap();
     let temp = tempfile::tempdir().unwrap();
     let state_name = format!("execution-{}", id());
@@ -544,6 +549,73 @@ async fn actual_scenario(outage: bool) {
     };
     assert_eq!(current.assignment.phase, data::Phase::Running);
     assert!(current.claims_held);
+    if cold {
+        // Kill only the test-owned manager. Its original software children remain alive;
+        // the private container is destroyed by the runner when this scene returns.
+        child.0.start_kill().unwrap();
+        assert!(!child.0.wait().await.unwrap().success());
+        use rx_ports::Repository;
+        let registry_path = std::path::PathBuf::from("/var/lib/rx-solutions")
+            .join(&state_name)
+            .join("registration.db");
+        let mut registry = SqliteRepository::open(&registry_path).unwrap();
+        let before = registry.control_events_after(Counter(0), 128).unwrap();
+        registry.close().unwrap();
+        let output = Process::new(&executable)
+            .arg("platform-investigate")
+            .arg(&config)
+            .output()
+            .await
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "cold investigation: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let inspection: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert!(
+            inspection["nodes"]
+                .as_object()
+                .unwrap()
+                .values()
+                .all(|node| {
+                    node["finding"]["basis"] == "SCOPED_INVESTIGATION"
+                        && node["finding"]["outcome"]["state"] == "MATCHING_PROCESS_PRESENT"
+                        && node["recorded_outcome"] == "RUNNING"
+                }),
+            "{inspection}"
+        );
+        let mut registry = SqliteRepository::open(&registry_path).unwrap();
+        assert_eq!(
+            registry.control_events_after(Counter(0), 128).unwrap(),
+            before
+        );
+        registry.close().unwrap();
+        let Reply::ResidentExecution(after) = handle
+            .call(Command::GetResidentExecution {
+                identity: admin.clone(),
+                id: assignment.clone(),
+            })
+            .await
+            .unwrap()
+        else {
+            panic!()
+        };
+        assert_eq!(after.assignment, current.assignment);
+        assert!(after.claims_held);
+        if let Ok(path) = std::env::var("RX_RESIDENT_EXECUTION_EVIDENCE") {
+            std::fs::write(path, serde_json::to_vec_pretty(&serde_json::json!({
+                "status":"PASS_COLD_SOURCE_INVESTIGATION", "source_inspection":inspection,
+                "original_assignment_and_claims_unchanged":true, "source_history_unchanged":true,
+                "process_adoption_or_termination":"NOT_PERFORMED", "physical_execution":"NOT_PERFORMED"
+            })).unwrap()).unwrap();
+        }
+        handle.close();
+        handle.closed().await;
+        let _ = stop_server.send(());
+        let _ = server_task.await;
+        return;
+    }
     let local_stop_started = std::time::Instant::now();
     if outage {
         faults.stall.store(true, Ordering::SeqCst);
@@ -636,7 +708,7 @@ async fn actual_scenario(outage: bool) {
         .join("platform-runs")
         .join(assignment.as_str())
         .join("delivery.db");
-    let mut store = SqliteRepository::open(journal).unwrap();
+    let mut store = SqliteRepository::open(&journal).unwrap();
     let (_, rows) = store.snapshot().unwrap();
     store.close().unwrap();
     let delivery_row = rows
@@ -653,8 +725,71 @@ async fn actual_scenario(outage: bool) {
     );
     assert_eq!(final_view.assignment.intent, initial.assignment.intent);
     assert!(!faults.lose_observation.load(Ordering::SeqCst));
+    let inspection_output = Process::new(&executable)
+        .arg("platform-investigate")
+        .arg(&config)
+        .output()
+        .await
+        .unwrap();
+    assert!(
+        inspection_output.status.success(),
+        "source investigation: {}",
+        String::from_utf8_lossy(&inspection_output.stderr)
+    );
+    let inspection: serde_json::Value = serde_json::from_slice(&inspection_output.stdout).unwrap();
+    assert_eq!(
+        inspection["schema"],
+        "rx.resident-execution-source-inspection.v1"
+    );
+    assert_eq!(inspection["assignment"], assignment.to_string());
+    assert_ne!(
+        inspection["original_peer"]["id"],
+        inspection["current_peer"]["id"]
+    );
+    assert!(
+        inspection["nodes"]
+            .as_object()
+            .unwrap()
+            .values()
+            .all(|node| {
+                node["finding"]["basis"] == "RECORDED_DIRECT_CHILD_EXIT"
+                    && node["recorded_outcome"] == "EXITED"
+                    && !node["residuals"].as_array().unwrap().is_empty()
+            })
+    );
+    assert!(
+        inspection["operating_permission"]
+            .as_str()
+            .unwrap()
+            .starts_with("NOT_GRANTED")
+    );
+    let mut source = SqliteRepository::open(&registry_path).unwrap();
+    assert_eq!(
+        source.control_events_after(Counter(0), 128).unwrap(),
+        before
+    );
+    source.close().unwrap();
+    let mut store = SqliteRepository::open(&journal).unwrap();
+    assert_eq!(
+        store.snapshot().unwrap().1,
+        rows,
+        "inspection rewrote original delivery"
+    );
+    store.close().unwrap();
+    let Reply::ResidentExecution(after_inspection) = handle
+        .call(Command::GetResidentExecution {
+            identity: admin.clone(),
+            id: assignment.clone(),
+        })
+        .await
+        .unwrap()
+    else {
+        panic!()
+    };
+    assert_eq!(after_inspection.assignment, final_view.assignment);
+    assert_eq!(after_inspection.claims_held, final_view.claims_held);
     if let Ok(path) = std::env::var("RX_RESIDENT_EXECUTION_EVIDENCE") {
-        std::fs::write(path,serde_json::to_vec_pretty(&serde_json::json!({"status":"PASS_P_ASSIGNED_ACTUAL_SOFTWARE_EXECUTION","listing":listing,"prepared":prepared,"approved":approved,"running":running,"stopped":stopped,"final":final_view,"approval_reply_loss_recovered":true,"observation_reply_loss_recovered":true,"physical_execution":"NOT_PERFORMED","functional_work_permission":"NOT_GRANTED","outage":outage,"local_stop_ms":local_stop_ms,"original_assignment_restart_refused":true,"source_history_unchanged_after_replay_attempt":true,"delivery":delivery_row.document.value})).unwrap()).unwrap();
+        std::fs::write(path,serde_json::to_vec_pretty(&serde_json::json!({"status":"PASS_P_ASSIGNED_ACTUAL_SOFTWARE_EXECUTION","listing":listing,"prepared":prepared,"approved":approved,"running":running,"stopped":stopped,"final":final_view,"approval_reply_loss_recovered":true,"observation_reply_loss_recovered":true,"physical_execution":"NOT_PERFORMED","functional_work_permission":"NOT_GRANTED","outage":outage,"local_stop_ms":local_stop_ms,"original_assignment_restart_refused":true,"source_history_unchanged_after_replay_attempt":true,"delivery":delivery_row.document.value,"source_inspection":inspection,"inspection_preserved_source_outbox_and_platform_outcomes":true})).unwrap()).unwrap();
     }
     handle.close();
     handle.closed().await;
