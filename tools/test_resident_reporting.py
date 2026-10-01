@@ -33,10 +33,13 @@ run(solutions, 'build-reporter', ['build', '-p', 'rx-supervisor', '--features', 
     'rx-resident-report-fixture', '--locked', '--target-dir', str(targets[1])])
 executable = targets[1] / 'debug/rx-resident-report-fixture'
 run(root, 'actual-reporting', ['test', '-p', 'rx-api', '--test', 'resident_reporting',
-    'actual_supervisor_child_reports_running_and_owned_exit_through_the_scoped_client', '--locked',
-    '--target-dir', str(targets[0]), '--', '--ignored', '--exact'],
+    'actual_', '--locked',
+    '--target-dir', str(targets[0]), '--', '--ignored'],
     {'RX_RESIDENT_REPORT_FIXTURE': str(executable), 'RX_RESIDENT_REPORT_EVIDENCE': str(evidence / 'result.json')})
 result = json.loads((evidence / 'result.json').read_text())
+outage = json.loads((evidence / 'result.json.outage.json').read_text())
+if outage['status'] != 'PASS' or not outage['retained_during_outage'] or outage['local_stop_ms'] >= 2000:
+    raise SystemExit('Outage/restart scene did not pass')
 if result['status'] != 'PASS':
     raise SystemExit('Reporting scene did not pass')
 sources = {}
@@ -47,5 +50,6 @@ for label, repo in [('platform', root), ('solutions', solutions)]:
     'status': 'PASS_SCOPED_REPORTING', 'physical_execution': 'NOT_PERFORMED',
     'limits': ['Test-owned locally approved software child; not Platform-directed launch',
                'Attributed registry snapshots, not current OS ownership or work permission',
-               'Legacy registration migration and automatic daemon reporting are not exercised']}, indent=2) + '\n')
+               'Production reporting worker exercised; packaged rx-solutionsd command path is not exercised',
+               'Legacy registration migration, process ownership recovery and physical qualification remain open']}, indent=2) + '\n')
 print(json.dumps({'status': 'PASS_SCOPED_REPORTING', 'evidence': str(evidence)}))

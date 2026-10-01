@@ -13,7 +13,7 @@ sources = ['proto/rx/resident/reporting/v1/reporting.proto',
            'crates/rx-domain/src/resident_reporting.rs',
            'crates/rx-domain/src/component.rs', 'spec/resident-reporting/v1/README.md']
 value = {'schema': 'rx.resident-reporting-binding.v1', 'package': 'rx.resident.reporting.v1',
-         'revision': 1, 'max_payload_bytes': 65536,
+         'revision': 2, 'max_payload_bytes': 65536,
          'source_sha256': {p: hashlib.sha256((root / p).read_bytes()).hexdigest() for p in sources}}
 target = root / 'spec/resident-reporting/v1/binding.json'
 if args.check:

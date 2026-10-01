@@ -50,12 +50,20 @@ type App = Handle<Application<SqliteRepository, Clock, Deny>>;
 struct LostAck {
     handle: App,
     lose: AtomicBool,
+    stall: Arc<AtomicBool>,
 }
 impl ApplicationPort for LostAck {
     fn request(&self, command: Command) -> CallFuture<'_> {
         let lose = matches!(command, Command::PublishResidentReport { .. })
             && self.lose.swap(false, Ordering::SeqCst);
+        let stalled = matches!(
+            command,
+            Command::ResidentReportHead { .. } | Command::PublishResidentReport { .. }
+        ) && self.stall.load(Ordering::SeqCst);
         Box::pin(async move {
+            if stalled {
+                tokio::time::sleep(Duration::from_secs(10)).await;
+            }
             let reply = self.handle.call(command).await?;
             if lose {
                 Err(WriterError::Unavailable)
@@ -77,6 +85,7 @@ struct Fixture {
     ca: String,
     keys: BTreeMap<String, (String, String)>,
     release: Digest,
+    stall: Arc<AtomicBool>,
     stop: Option<tokio::sync::oneshot::Sender<()>>,
     task: Option<tokio::task::JoinHandle<Result<(), tonic::transport::Error>>>,
 }
@@ -243,10 +252,12 @@ async fn fixture() -> Fixture {
         keys.insert(who.to_string(), (cert.pem(), key.serialize_pem()));
     }
     let release = Digest::from_bytes([55; 32]);
+    let stall = Arc::new(AtomicBool::new(false));
     let ingress = PlatformIngress::new(
         Arc::new(LostAck {
             handle: handle.clone(),
             lose: AtomicBool::new(true),
+            stall: stall.clone(),
         }),
         Configuration {
             installation: installation.clone(),
@@ -280,6 +291,7 @@ async fn fixture() -> Fixture {
         ca: ca.pem(),
         keys,
         release,
+        stall,
         stop: Some(stop),
         task: Some(task),
     }
@@ -467,6 +479,16 @@ async fn mtls_reporter_is_scoped_and_cannot_become_a_host_or_author() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "tools/test_resident_reporting.py supplies the separately built real Supervisor fixture"]
 async fn actual_supervisor_child_reports_running_and_owned_exit_through_the_scoped_client() {
+    run_resident_scene(false).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "tools/test_resident_reporting.py supplies the separately built real Supervisor fixture"]
+async fn actual_reporter_outage_preserves_local_stop_and_owner_approved_restart() {
+    run_resident_scene(true).await;
+}
+
+async fn run_resident_scene(outage: bool) {
     let executable =
         std::env::var("RX_RESIDENT_REPORT_FIXTURE").expect("separate S fixture required");
     let f = fixture().await;
@@ -482,7 +504,7 @@ async fn actual_supervisor_child_reports_running_and_owned_exit_through_the_scop
     let config = f.dir.path().join("reporter.json");
     std::fs::write(&config,serde_json::to_vec(&serde_json::json!({"endpoint":f.endpoint,"ca":f.dir.path().join("ca.pem"),"certificate":f.dir.path().join("client.pem"),
         "key":f.dir.path().join("client.key"),"output":output,"installation":f.installation.id,"store_generation":f.installation.store_generation,
-        "clock":f.installation.clock_id,"release":f.release})).unwrap()).unwrap();
+        "clock":f.installation.clock_id,"release":f.release,"outage":outage})).unwrap()).unwrap();
     struct Child(std::process::Child);
     impl Drop for Child {
         fn drop(&mut self) {
@@ -496,7 +518,7 @@ async fn actual_supervisor_child_reports_running_and_owned_exit_through_the_scop
             .spawn()
             .unwrap(),
     );
-    let deadline = std::time::Instant::now() + Duration::from_secs(45);
+    let deadline = std::time::Instant::now() + Duration::from_secs(70);
     let ready = output.join("ready.json");
     while !ready.is_file() {
         assert!(
@@ -528,7 +550,44 @@ async fn actual_supervisor_child_reports_running_and_owned_exit_through_the_scop
         output.join("authorization.json"),
     )
     .unwrap();
+    let mut outage_started = false;
+    let mut continued = false;
     loop {
+        if outage && !outage_started && output.join("running.json").is_file() {
+            f.stall.store(true, Ordering::SeqCst);
+            std::fs::write(output.join("stop-approved.json"), b"{}").unwrap();
+            outage_started = true;
+        }
+        if outage && !continued && output.join("restart-ready.json").is_file() {
+            let restarted: Peer =
+                serde_json::from_slice(&std::fs::read(output.join("restart-ready.json")).unwrap())
+                    .unwrap();
+            f.stall.store(false, Ordering::SeqCst);
+            let Reply::ResidentReportingScopeView(successor) = f
+                .handle
+                .call(Command::ContinueResidentReporting {
+                    identity: f.admin.clone(),
+                    key: id(),
+                    input: rx_application::resident_reporting::Continue {
+                        scope: scope.scope.id.clone(),
+                        expected_revision: scope.revision,
+                        reporter_session: restarted.id,
+                    },
+                })
+                .await
+                .unwrap()
+            else {
+                panic!("continuation");
+            };
+            let bytes = serde_json::to_vec(&serde_json::json!({"scope":successor.scope.id,"component":successor.scope.component})).unwrap();
+            std::fs::write(output.join("authorization-restart.pending"), bytes).unwrap();
+            std::fs::rename(
+                output.join("authorization-restart.pending"),
+                output.join("authorization-restart.json"),
+            )
+            .unwrap();
+            continued = true;
+        }
         if let Some(exit) = child.0.try_wait().unwrap() {
             assert!(exit.success(), "S fixture exit: {exit}");
             break;
@@ -539,6 +598,11 @@ async fn actual_supervisor_child_reports_running_and_owned_exit_through_the_scop
     let result: serde_json::Value =
         serde_json::from_slice(&std::fs::read(output.join("result.json")).unwrap()).unwrap();
     assert_eq!(result["status"], "PASS");
+    if outage {
+        assert!(outage_started && continued);
+        assert!(result["local_stop_ms"].as_u64().unwrap() < 2000);
+        assert_eq!(result["retained_during_outage"], true);
+    }
     let stopped: Receipt = serde_json::from_value(result["stopped"].clone()).unwrap();
     let Reply::ResidentReportView(view) = f
         .handle
@@ -565,6 +629,11 @@ async fn actual_supervisor_child_reports_running_and_owned_exit_through_the_scop
     );
     assert_eq!(view.receipt.work_use_permission, WorkUse::NotEvaluated);
     if let Ok(path) = std::env::var("RX_RESIDENT_REPORT_EVIDENCE") {
+        let path = if outage {
+            format!("{path}.outage.json")
+        } else {
+            path
+        };
         std::fs::write(path, serde_json::to_vec_pretty(&result).unwrap()).unwrap();
     }
 }

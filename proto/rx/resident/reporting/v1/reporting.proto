@@ -18,6 +18,13 @@ message InspectScope {
   bytes binding_hash = 3;
 }
 
+message ReadHead {
+  string session_id = 1;
+  string scope_id = 2;
+  string instance_id = 3;
+  bytes binding_hash = 4;
+}
+
 message PublishReport {
   string session_id = 1;
   string request_key = 2;
@@ -35,5 +42,6 @@ message Payload {
 service ResidentReportingService {
   rpc Open (.rx.resident.reporting.v1.OpenReporter) returns (.rx.resident.reporting.v1.Payload);
   rpc Inspect (.rx.resident.reporting.v1.InspectScope) returns (.rx.resident.reporting.v1.Payload);
+  rpc Head (.rx.resident.reporting.v1.ReadHead) returns (.rx.resident.reporting.v1.Payload);
   rpc Publish (.rx.resident.reporting.v1.PublishReport) returns (.rx.resident.reporting.v1.Payload);
 }

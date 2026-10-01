@@ -660,5 +660,9 @@
   "rx.resident.reporting.v1.PublishReport.payload": "bytes",
   "rx.resident.reporting.v1.PublishReport.payload_sha256": "Digest",
   "rx.resident.reporting.v1.PublishReport.request_key": "Id",
-  "rx.resident.reporting.v1.PublishReport.session_id": "Id"
+  "rx.resident.reporting.v1.PublishReport.session_id": "Id",
+  "rx.resident.reporting.v1.ReadHead.binding_hash": "Digest",
+  "rx.resident.reporting.v1.ReadHead.instance_id": "Id",
+  "rx.resident.reporting.v1.ReadHead.scope_id": "Id",
+  "rx.resident.reporting.v1.ReadHead.session_id": "Id"
 }

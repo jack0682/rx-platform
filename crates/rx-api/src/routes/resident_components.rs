@@ -188,3 +188,24 @@ pub(super) async fn retire_component(
         _ => Err(mismatch()),
     }
 }
+
+pub(super) async fn continue_reporting(
+    State(s): State<ApiState>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Response, ApiError> {
+    let identity = identity(&s, &headers)?;
+    let value: Mutation<resident_reporting::Continue> = decode(&body)?;
+    match s
+        .runtime
+        .request(Command::ContinueResidentReporting {
+            identity,
+            key: value.request_key,
+            input: value.command,
+        })
+        .await?
+    {
+        Reply::ResidentReportingScopeView(view) => Ok(Json(view).into_response()),
+        _ => Err(mismatch()),
+    }
+}

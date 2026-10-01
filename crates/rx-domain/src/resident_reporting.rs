@@ -30,6 +30,33 @@ pub struct Scope {
     pub issued_by: Name,
     pub issued_at: TimePoint,
     pub active: bool,
+    /// Owner-approved diagnostic succession, never transfer of process ownership.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub continuation: Option<Continuation>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Continuation {
+    pub previous_scope: Id,
+    pub root_scope: Id,
+}
+
+impl Scope {
+    pub fn root_scope(&self) -> &Id {
+        self.continuation
+            .as_ref()
+            .map_or(&self.id, |c| &c.root_scope)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Head {
+    pub scope: Id,
+    pub instance: Id,
+    /// Latest recorded snapshot in this diagnostic lineage, not process liveness.
+    pub receipt: Option<Receipt>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
