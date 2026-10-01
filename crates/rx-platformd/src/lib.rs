@@ -337,6 +337,11 @@ pub async fn serve<C: Clock + 'static>(
             loaded.host_links.clone(),
         )?);
         recovery.register().await?;
+        handle
+            .call(Command::ConfigureResidentSupervisors(
+                config.resident_supervisors.clone(),
+            ))
+            .await?;
         let component_intake = rx_runtime::component_intake::Service::configure(
             Arc::new(handle.clone()),
             config.registration_sources.clone(),

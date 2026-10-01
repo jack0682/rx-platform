@@ -128,6 +128,7 @@ fn fixture() -> Fixture {
     let g = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let config = Config {
         registration_sources: Default::default(),
+        resident_supervisors: Default::default(),
         operator_ui: None,
         package_intake: None,
         host_links: vec![HostLink {

@@ -63,6 +63,14 @@ fn prefix_range(prefix: &str) -> Result<(&str, String)> {
 }
 
 impl SqliteRepository {
+    /// Actual on-disk location for an explicitly enrolled local runtime; not a remote attestation.
+    pub fn canonical_path(&self) -> Result<std::path::PathBuf> {
+        let path = self
+            .connection()?
+            .path()
+            .ok_or_else(|| integrity("on-disk database required"))?;
+        std::fs::canonicalize(path).map_err(unavailable)
+    }
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         Self::open_mode(path.as_ref(), false)
     }
@@ -99,7 +107,7 @@ impl SqliteRepository {
             let version: i64 = connection
                 .query_row("PRAGMA user_version", [], |r| r.get(0))
                 .map_err(unavailable)?;
-            if !matches!(version, 7 | 8) {
+            if !matches!(version, 7..=9) {
                 return Err(integrity("source is not a sealed reader format"));
             }
             sealing::verify(&connection)?;
@@ -131,7 +139,7 @@ impl SqliteRepository {
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .map_err(unavailable)?;
-        if version > 8 {
+        if version > 9 {
             return Err(StoreError::Unavailable(
                 "newer store schema: downgrade refused".into(),
             ));
@@ -166,7 +174,7 @@ impl SqliteRepository {
                 .execute_batch(include_str!("../migrations/0006.sql"))
                 .map_err(unavailable)?;
         }
-        if version == 7 || (version == 8 && sealing::present(connection)?) {
+        if version == 7 || (matches!(version, 8 | 9) && sealing::present(connection)?) {
             sealing::verify(connection)?;
         }
         Ok(())
@@ -442,11 +450,28 @@ struct SqliteTransaction<'a, 'b> {
     creator: u32,
 }
 impl SqliteTransaction<'_, '_> {
+    fn promote_reader(&self, minimum: i64) -> Result<()> {
+        self.check_process()?;
+        let current: i64 = self
+            .transaction
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .map_err(unavailable)?;
+        if !(6..=9).contains(&current) {
+            return Err(integrity("unsupported reader promotion"));
+        }
+        self.transaction
+            .pragma_update(None, "user_version", current.max(minimum))
+            .map_err(unavailable)
+    }
     fn check_process(&self) -> Result<()> {
         Ok(ownership::check_creator(self.creator)?)
     }
 }
 impl rx_ports::Transaction for SqliteTransaction<'_, '_> {
+    fn require_resident_execution_reader(&mut self) -> Result<()> {
+        self.promote_reader(9)
+    }
+
     fn insert_archive(&mut self, key: &Name, document: &Document) -> Result<Record> {
         self.put(key, None, document)
     }
@@ -486,10 +511,7 @@ impl rx_ports::Transaction for SqliteTransaction<'_, '_> {
             .collect()
     }
     fn require_component_intake_reader(&mut self) -> Result<()> {
-        self.check_process()?;
-        self.transaction
-            .pragma_update(None, "user_version", 8)
-            .map_err(unavailable)
+        self.promote_reader(8)
     }
     fn insert_revision(
         &mut self,

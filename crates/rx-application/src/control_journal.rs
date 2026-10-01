@@ -307,6 +307,9 @@ impl Tracking<'_> {
     }
 }
 impl Transaction for Tracking<'_> {
+    fn require_resident_execution_reader(&mut self) -> Result<()> {
+        self.tx.require_resident_execution_reader()
+    }
     fn scan_page(
         &mut self,
         prefix: &str,

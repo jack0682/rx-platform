@@ -332,6 +332,15 @@ rr.message("Payload", "schema:string#1 data:bytes#2 sha256:Digest#3")
 rr.service("ResidentReporting", [("Open", "OpenReporter", "Payload"), ("Inspect", "InspectScope", "Payload"), ("Head", "ReadHead", "Payload"), ("Publish", "PublishReport", "Payload"), ("Acceptance", "ReadAcceptance", "Payload")])
 rr.write()
 
+# Optional resident execution has its own Supervisor identity, not an Observer session.
+re_ = Schema("rx.resident.execution.v1", "rx/resident/execution/v1/execution.proto")
+re_.message("OpenSupervisor", "peer_id:Name#1 peer_boot:Id#2 installation_id:Id#3 store_generation:Id#4 shared_clock_id:string#5 release_digest:Digest#6 binding_hash:Digest#7 registry_binding:Digest#8")
+re_.message("InspectAssignment", "session_id:Id#1 assignment_id:Id#2 binding_hash:Digest#3")
+re_.message("Mutation", "session_id:Id#1 request_key:Id#2 payload:bytes#3 payload_sha256:Digest#4 binding_hash:Digest#5")
+re_.message("Payload", "schema:string#1 data:bytes#2 sha256:Digest#3")
+re_.service("ResidentExecution", [("Open","OpenSupervisor","Payload"),("Inspect","InspectAssignment","Payload"),("Prepare","Mutation","Payload"),("Observe","Mutation","Payload")])
+re_.write()
+
 # Optional Host bootstrap/state read binding; no new native write surface.
 h = Schema("rx.host.read.v1", "rx/host/read/v1/read.proto", ("rx/contract/v1/contract.proto", "rx/cell/v1/cell.proto"))
 h.message("InspectHost", "call:rx.cell.v1.CellCall#1 source_ids:Name[]#2 binding_hash:Digest#3")

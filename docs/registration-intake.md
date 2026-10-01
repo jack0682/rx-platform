@@ -51,14 +51,14 @@ session. Progress, receipt and paged original history are available at
 also accepts `after=<cursor>`. Failed validation leaves Receiving state for
 investigation; there is no implicit abort, rebind or rollback/unseal operation.
 
-Target intake explicitly sets reader schema 8; older readers refuse the target.
+Target intake requires at least reader schema 8 and preserves operational schema 9; older readers refuse the target.
 Ordinary stores stay at 6 and source-only freeze uses 7. Source history is archived
 as data and cannot create P work/control authority. Target materialization times
 are not claimed as original source timestamps. The source fence remains closed.
 
 This does not transfer live process ownership, verify package content, grant work
 permission, assign execution. The full contract is
-[registration transfer revision 3](https://github.com/jack0682/rx_docs/blob/develop/docs/contracts/registration-transfer/v1/README.md).
+[registration transfer revision 4](https://github.com/jack0682/rx_docs/blob/develop/docs/contracts/registration-transfer/v1/README.md).
 Tests in transactions cover rollback, restart, current authorization, identity
 collisions, history consistency and alias isolation. The opt-in runner
 `tools/test_registration_intake.py --help` connects a real Supervisor source helper

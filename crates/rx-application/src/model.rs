@@ -23,6 +23,7 @@ pub struct Identity {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum Role {
+    Supervisor,
     Observer,
     Operator,
     RecoveryLead,

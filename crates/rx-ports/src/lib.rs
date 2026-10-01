@@ -91,6 +91,13 @@ pub struct OutboxRecord {
 /// All methods participate in the caller's single atomic transaction.
 /// Implementations must not silently retry the callback: it can allocate command identities.
 pub trait Transaction {
+    /// Opt-in barrier for Supervisor role and authoritative resident execution records.
+    fn require_resident_execution_reader(&mut self) -> Result<()> {
+        Err(StoreError::Unavailable(
+            "resident execution reader barrier unsupported".into(),
+        ))
+    }
+
     /// Insert immutable source data without treating its schema as target control authority.
     fn insert_archive(&mut self, _key: &Name, _document: &Document) -> Result<Record> {
         Err(StoreError::Unavailable(

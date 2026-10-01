@@ -16,7 +16,8 @@ user_version to 7 does not create a valid sealed store. Target registration inta
 explicitly promotes only its target to schema 8, preserving any existing seals.
 This prevents older readers from using partially staged registrations. Schema 8
 may have no source seals; when present, their definitions are still verified.
-Schema 9+ is refused. `open_sealed_existing` additionally requires an existing
+Supervisor enrollment/operational records opt into schema 9. Intake promotion
+and later source seals preserve that higher floor; schema 10+ is refused. `open_sealed_existing` additionally requires an existing
 sealed source before initialization and never creates/upgrades an unsealed source.
 Frozen protocol manifests are unchanged; the generated SDK includes this adapter.
 

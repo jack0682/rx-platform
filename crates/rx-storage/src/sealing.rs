@@ -132,11 +132,11 @@ impl SqliteRepository {
         let version: i64 = transaction
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .map_err(unavailable)?;
-        if matches!(version, 6 | 8) && !present(transaction)? {
+        if matches!(version, 6 | 8 | 9) && !present(transaction)? {
             for (_, sql) in schema() {
                 transaction.execute_batch(&sql).map_err(unavailable)?;
             }
-        } else if !matches!(version, 7 | 8) {
+        } else if !matches!(version, 7..=9) {
             return Err(integrity("unsupported namespace fence source schema"));
         }
         for prefix in prefixes {
@@ -161,10 +161,10 @@ impl SqliteRepository {
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .map_err(unavailable)?;
-        if version == 6 || (version == 8 && !present(connection)?) {
+        if version == 6 || (matches!(version, 8 | 9) && !present(connection)?) {
             return Ok(vec![]);
         }
-        if !matches!(version, 7 | 8) {
+        if !matches!(version, 7..=9) {
             return Err(integrity("unsupported seal schema"));
         }
         verify(connection)?;

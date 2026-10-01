@@ -11,7 +11,7 @@ fn doc(schema: &str, value: &impl serde::Serialize) -> Document {
         value: serde_json::to_value(value).unwrap(),
     }
 }
-fn source(
+pub(super) fn source(
     target: &Id,
     count: usize,
 ) -> (
@@ -79,7 +79,7 @@ fn source_with(
         .unwrap();
     (dir, db, freeze, ids, original)
 }
-fn configure(f: &mut Fixture, freeze: &FreezeRecord) -> Submit {
+pub(super) fn configure(f: &mut Fixture, freeze: &FreezeRecord) -> Submit {
     let binding = SourceBinding {
         owner: f.admin.principal.clone(),
         location: Digest::from_bytes([77; 32]),
@@ -93,7 +93,7 @@ fn configure(f: &mut Fixture, freeze: &FreezeRecord) -> Submit {
         expected_binding: binding.fingerprint(&name("source")).unwrap(),
     }
 }
-fn reader(
+pub(super) fn reader(
     f: &mut Fixture,
     key: &Id,
     input: Submit,
@@ -108,7 +108,7 @@ fn reader(
     };
     Reader::open(*t, db).unwrap()
 }
-fn stage(f: &mut Fixture, reader: &mut Reader<SqliteRepository>) {
+pub(super) fn stage(f: &mut Fixture, reader: &mut Reader<SqliteRepository>) {
     let mut p = f.app.begin_component_intake(reader.begin()).unwrap();
     while p.declarations < p.expected_declarations {
         p = f

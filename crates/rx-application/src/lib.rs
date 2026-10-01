@@ -66,3 +66,5 @@ pub mod software_skill;
 pub mod host_binding_transition;
 
 pub mod component_intake;
+
+pub mod resident_execution;

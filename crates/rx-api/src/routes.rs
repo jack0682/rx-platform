@@ -3,6 +3,7 @@ mod device_binding;
 mod device_review;
 mod host_recovery;
 mod resident_components;
+mod resident_execution;
 mod settlement;
 use crate::{
     auth::{Auth, COOKIE, Credentials, SESSION_SECONDS},
@@ -113,6 +114,19 @@ fn build_router(
     };
     Ok(Router::new()
         .route("/api/v1/health", get(health))
+        .route(
+            "/api/v1/resident-executions",
+            post(resident_execution::propose),
+        )
+        .route("/api/v1/resident-execution", get(resident_execution::get))
+        .route(
+            "/api/v1/resident-executions/approve",
+            post(resident_execution::approve),
+        )
+        .route(
+            "/api/v1/resident-executions/stop",
+            post(resident_execution::stop),
+        )
         .route(
             "/api/v1/registration-source",
             get(component_intake::context),
