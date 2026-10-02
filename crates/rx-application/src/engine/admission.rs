@@ -201,7 +201,7 @@ pub(super) fn predecessors_done(
     Ok(())
 }
 
-pub(super) fn validate_configuration(c: &CellConfiguration) -> Result<()> {
+pub(crate) fn validate_configuration(c: &CellConfiguration) -> Result<()> {
     if let Some(process) = &c.process {
         rx_process_contract::validation::validate(process).map_err(StoreError::Invalid)?;
         if let Some(plan) = execution_configuration::plan(c)? {

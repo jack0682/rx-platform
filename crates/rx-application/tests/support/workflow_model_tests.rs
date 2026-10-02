@@ -543,8 +543,8 @@ fn execution_fixture() -> ExecutionFixture {
                 intent: Intent {
                     kind: Kind::FiniteAction,
                     target: name("device"),
-                    profile_digest: Digest::from_bytes([1; 32]),
-                    site_config_digest: Digest::from_bytes([2; 32]),
+                    profile_digest: rx_package::content_digest(br#"{"test_document":"profile"}"#),
+                    site_config_digest: rx_package::content_digest(b"site"),
                     calibration_digests: vec![],
                     resource_set: vec![name("resource")],
                     execution_timeout_ms: Counter(30000),
@@ -1167,5 +1167,326 @@ fn execution_publication_requires_exact_packages_and_rechecks_authority_after_ve
             f.app.commit_workflow_publication(prepared).is_err(),
             "{changed}"
         );
+    }
+}
+
+#[test]
+fn derived_qualification_recomputes_every_candidate_even_with_a_valid_signed_report() {
+    use ed25519_dalek::{Signer, SigningKey};
+    use rx_application::requalification as q;
+    use rx_process_contract::{
+        CompiledBody, CompiledNode, ResolvedProcess, SourceLocation, execution_v2 as v2,
+    };
+    fn blob(blobs: &mut BTreeMap<Digest, Vec<u8>>, schema: &str, bytes: Vec<u8>) -> ArtifactRef {
+        let r = ArtifactRef {
+            schema_id: name(schema),
+            sha256: rx_package::content_digest(&bytes),
+            size_bytes: Counter(bytes.len() as u64),
+        };
+        blobs.insert(r.sha256, bytes);
+        r
+    }
+    for corrupted in [false, true] {
+        let mut f = execution_fixture();
+        let input = f.preview_input();
+        let key = id();
+        let prepared = f.prepare_preview(&key, input);
+        let preview = f
+            .app
+            .save_execution_preview(&f.owner, &key, prepared)
+            .unwrap();
+        let (package, intake) = f.enroll_package();
+        let publish = f.publish_input(preview.reference.clone(), intake);
+        let mut publication = f.publish(&package, &id(), publish).unwrap();
+        let saved = f
+            .app
+            .execution_preview(&f.owner, &preview.reference)
+            .unwrap();
+        let mut policy = saved.policy().clone();
+        let inputs = f.snapshot.input_closure();
+        let mut index = v2::ReportIndex {
+            schema: name(v2::INDEX_SCHEMA),
+            entries: vec![],
+        };
+        for candidate in 0..2 {
+            for slot in 0..2 {
+                index.entries.push((
+                    candidate,
+                    slot,
+                    saved.report(candidate, slot).unwrap().report_digest(),
+                ));
+            }
+        }
+        if corrupted {
+            index.entries[3].2 = Digest::from_bytes([99; 32]);
+        }
+        let mut blobs = BTreeMap::new();
+        let input_ref = blob(
+            &mut blobs,
+            "rx.execution-input-closure.v2",
+            canonical::bytes(&inputs).unwrap(),
+        );
+        assert_eq!(input_ref, policy.definition_closure);
+        policy.report_index = blob(
+            &mut blobs,
+            v2::INDEX_SCHEMA,
+            canonical::bytes(&index).unwrap(),
+        );
+        let policy_ref = blob(
+            &mut blobs,
+            v2::POLICY_SCHEMA,
+            canonical::bytes(&policy).unwrap(),
+        );
+        publication.policy = policy_ref.clone();
+        publication.reference.digest = publication.digest().unwrap();
+        let publication_ref = blob(
+            &mut blobs,
+            "rx.workflow-publication.v2",
+            canonical::bytes(&publication).unwrap(),
+        );
+        let process_name = name("qualification/template");
+        let make = |label: &str, body| {
+            let source = SourceLocation {
+                flow: name("main"),
+                node: name(label),
+                instantiation: vec![],
+            };
+            let digest =
+                canonical::digest("RX-PROCESS-NODE-v1", &(&process_name, &source)).unwrap();
+            CompiledNode {
+                id: name(&format!("node/{digest}")),
+                source,
+                body,
+            }
+        };
+        let child = make(
+            "node",
+            CompiledBody::Operation {
+                binding: name("node"),
+            },
+        );
+        let child_id = child.id.clone();
+        let plan = v2::Plan {
+            schema: name(v2::PLAN_SCHEMA),
+            binding: v2::Binding {
+                schema: name(v2::BINDING_SCHEMA),
+                publication: publication.reference.clone(),
+                policy: policy_ref.clone(),
+                nodes: [(child_id.clone(), name("node"))].into(),
+            },
+            process: ResolvedProcess {
+                schema: name("rx.resolved-process.v1"),
+                package_digest: None,
+                source_digest: Digest::from_bytes([1; 32]),
+                process: process_name.clone(),
+                root: make(
+                    "root",
+                    CompiledBody::Sequence {
+                        children: vec![child],
+                    },
+                ),
+                bindings: policy.templates.clone(),
+                conditions: Default::default(),
+            },
+        };
+        let mut config = f
+            .app
+            .inspect_cell(&f.owner, &name("cell/a"))
+            .unwrap()
+            .1
+            .configuration;
+        config.execution = Some(Box::new(plan.binding.clone()));
+        config.process = Some(Box::new(plan.process.clone()));
+        config.recipe = blob(
+            &mut blobs,
+            v2::PLAN_SCHEMA,
+            canonical::bytes(&plan).unwrap(),
+        );
+        config.definition = blob(&mut blobs, "test.definition.v1", b"definition".to_vec());
+        config.envelope = blob(&mut blobs, "test.envelope.v1", b"envelope".to_vec());
+        let site = blob(&mut blobs, "test.site.v1", b"site".to_vec());
+        config.site_config_digest = site.sha256;
+        let action = &policy.templates[&name("node")];
+        config.steps.truncate(1);
+        config.steps[0].id = child_id;
+        config.steps[0].host = action.host.clone();
+        config.steps[0].intent = action.intent.clone();
+        config.steps[0].predecessors.clear();
+        config.hosts.push(action.host.clone());
+        let config_ref = blob(
+            &mut blobs,
+            config.schema(),
+            canonical::bytes(&config).unwrap(),
+        );
+        let mut dependencies = vec![
+            policy_ref,
+            input_ref,
+            policy.report_index.clone(),
+            publication_ref,
+            config.recipe.clone(),
+            site,
+        ];
+        for evidence in publication.packages.values() {
+            dependencies.extend(evidence.dependencies.clone());
+        }
+        for bytes in package.files.values() {
+            blobs.insert(rx_package::content_digest(bytes), bytes.clone());
+        }
+        blobs.insert(
+            rx_package::content_digest(&package.manifest),
+            package.manifest.clone(),
+        );
+        blobs.insert(
+            rx_package::content_digest(&package.signature),
+            package.signature.clone(),
+        );
+        dependencies.sort_by_key(|r| (r.sha256, r.schema_id.clone()));
+        dependencies.dedup();
+        let spec = blob(&mut blobs, "test.criteria.v1", b"criteria".to_vec());
+        let evidence = blob(&mut blobs, "test.evidence.v1", b"TEST_ONLY_PASS".to_vec());
+        let profile = q::Profile {
+            purposes: [name("PRODUCTION")].into(),
+            cell: config.id.clone(),
+            configuration: config_ref,
+            envelope: config.envelope.clone(),
+            definition: config.definition.clone(),
+            environment: Environment::Simulation,
+            acceptance_plan: spec.clone(),
+            limitations: spec.clone(),
+            dependencies,
+            criteria: [
+                q::Area::Software,
+                q::Area::Equipment,
+                q::Area::CellIntegration,
+                q::Area::Recovery,
+                q::Area::Protection,
+                q::Area::Operations,
+            ]
+            .into_iter()
+            .enumerate()
+            .map(|(i, area)| q::Criterion {
+                id: name(&format!("criterion/{i}")),
+                area,
+                specification: spec.clone(),
+                evidence_schema: evidence.schema_id.clone(),
+            })
+            .collect(),
+        };
+        let signer = SigningKey::from_bytes(&[73; 32]);
+        let validator = Digest::from_bytes([74; 32]);
+        let policy_q = q::Policy {
+            schema: name(q::DERIVED_POLICY),
+            profiles: vec![profile.clone()],
+            keys: vec![q::Key {
+                id: name("qualifier"),
+                public_key: Digest::from_bytes(signer.verifying_key().to_bytes()),
+                validators: [validator].into(),
+                environments: [name("SIMULATION")].into(),
+            }],
+        };
+        let request = q::Request {
+            schema: name("rx.requalification-request.v2"),
+            impact_digest: Some(Digest::from_bytes([4; 32])),
+            runtime_restrictions: vec![],
+            device_restrictions: vec![],
+            id: id(),
+            change: id(),
+            change_revision: Counter(1),
+            application_digest: Digest::from_bytes([5; 32]),
+            origin: config.id.clone(),
+            runtime_boot: id(),
+            policy_digest: policy_q.digest().unwrap(),
+            cells: vec![q::CellTarget {
+                profile: profile.clone(),
+                expected_revision: Counter(1),
+                epoch: Counter(1),
+                scopes: [(name("scope"), Counter(1))].into(),
+                blocks: vec![id()],
+            }],
+            fences: vec![],
+        };
+        let job = q::Job {
+            request: request.clone(),
+            requested_by: name("release-manager"),
+            terminal: name("test-terminal"),
+            requested_at: expiry(1000),
+        };
+        let report = q::Report {
+            schema: name("rx.requalification-report.v1"),
+            request,
+            validator,
+            checks: profile
+                .criteria
+                .iter()
+                .map(|c| q::Check {
+                    cell: config.id.clone(),
+                    criterion: c.id.clone(),
+                    verdict: q::Verdict::Pass,
+                    evidence: vec![evidence.clone()],
+                    note: "Test evidence, not physical qualification".into(),
+                })
+                .collect(),
+        };
+        let signature = rx_package::SignatureEnvelope {
+            key: name("qualifier"),
+            signature: signer
+                .sign(&report.signing_message(&name("qualifier")).unwrap())
+                .to_bytes()
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect(),
+        };
+        let mut legacy_policy = policy_q.clone();
+        legacy_policy.schema = name("rx.requalification-policy.v2");
+        assert!(
+            legacy_policy.digest().is_err(),
+            "legacy policy must not opt into v2 configuration"
+        );
+        let large_input = ArtifactRef {
+            schema_id: name("rx.execution-input-closure.v2"),
+            sha256: Digest::from_bytes([5; 32]),
+            size_bytes: Counter(16 * 1024 * 1024),
+        };
+        assert_eq!(legacy_policy.artifact_limit(&large_input), 8 * 1024 * 1024);
+        assert_eq!(policy_q.artifact_limit(&large_input), 16 * 1024 * 1024);
+        assert_eq!(legacy_policy.total_limit(), 32 * 1024 * 1024);
+        assert_eq!(policy_q.total_limit(), 128 * 1024 * 1024);
+        let mut physical = policy_q.clone();
+        physical.profiles[0].environment = Environment::Physical;
+        assert!(physical.digest().is_err());
+        if corrupted {
+            let mut failed = report.clone();
+            failed.checks[0].verdict = q::Verdict::Fail;
+            let signature = rx_package::SignatureEnvelope {
+                key: name("qualifier"),
+                signature: signer
+                    .sign(&failed.signing_message(&name("qualifier")).unwrap())
+                    .to_bytes()
+                    .iter()
+                    .map(|b| format!("{b:02x}"))
+                    .collect(),
+            };
+            assert!(
+                q::Verified::check(&job, &policy_q, failed, signature, blobs.clone())
+                    .unwrap()
+                    .derived()
+                    .is_empty(),
+                "failure report is recordable but has no successful derived proof"
+            );
+        }
+        let checked = q::Verified::check(&job, &policy_q, report, signature, blobs);
+        if corrupted {
+            let error = match checked {
+                Ok(_) => panic!("false final index entry was accepted"),
+                Err(error) => error,
+            };
+            assert!(error.contains("recomputed report"), "{error}");
+        } else {
+            let checked = checked.unwrap();
+            assert_eq!(checked.derived().len(), 1);
+            assert_eq!(checked.derived()[0].reports_checked, Counter(4));
+            assert_eq!(checked.derived()[0].candidates, Counter(2));
+            assert_eq!(checked.derived()[0].slots, Counter(2));
+        }
     }
 }

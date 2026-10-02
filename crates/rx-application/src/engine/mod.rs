@@ -97,6 +97,7 @@ mod workflow;
 mod workflow_publication;
 
 use access::*;
+pub(crate) use admission::validate_configuration;
 use admission::*;
 use invalidation::*;
 use requests::*;

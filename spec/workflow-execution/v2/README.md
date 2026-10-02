@@ -39,6 +39,46 @@ or visit meaning. New v2 admission still needs its durable actual-object/selecti
 records; the legacy refusal is not itself execution v2 implementation or case-2
 frozen-binary evidence.
 
+## Derived qualification verification
+
+`rx.requalification-policy.v3` is an explicit qualification-policy revision for
+SIMULATION profiles. It is not a rename of execution v2 or the v1.1 revision
+procedure. Policy v1/v2 retain their original 128-dependency, 8 MiB artifact,
+32 MiB total and 30-second ticket limits. V2 configuration targets require policy
+v3; its v2 profiles permit at most 1024 dependency references. Only the explicitly
+typed execution input closure may be 16 MiB; other individual artifacts remain
+limited to 8 MiB. The v3 bundle limit is 128 MiB. Its off-writer computation ticket
+is bounded at ten minutes, with all original current-context, rights, policy,
+configuration, fencing and revision checks repeated at commit. No operating permit
+or physical-profile lifetime is extended.
+
+The existing signed report and independent reviewer path remain mandatory. Before
+a report can be marked ready for review, P independently validates the v2
+configuration/plan/publication/policy links, all required configuration and package
+dependencies, signed template identities and input closure, then recomputes every
+candidate/slot and compares each result to the approved index. A valid report
+signature and internally consistent artifact hashes cannot excuse a false index.
+Definitions count toward the transitive dependency limit even though their bytes
+are already inside the verified closure. An omission or conflicting value blocks
+the derived verification. Existing non-PASS/NOT_RUN reports can still be recorded
+without a successful derived proof; they cannot be approved.
+
+The saved qualification version records `derived` results: exact configuration,
+publication, policy and index identities, materializer identity and verified
+candidate/slot/report/dependency counts. The field is omitted for legacy versions,
+whose version-digest calculation remains unchanged. Versions with derived evidence
+use a distinct digest domain. Reviewer verification repeats the computation and
+compares the derived record. P also rechecks current definitions and the complete
+package registration: persistent store identity, generation, policy fingerprint and
+policy-file digest. An ordinary restart can retain that registration; replacing the
+store or disabling/re-enabling its authority cannot reuse an old publication approval.
+
+This connects deterministic data verification to the existing qualification
+checker; reviewed application of the candidate, v2 Host qualification issuance and
+Run/Executor admission are still unfinished. A recorded successful computation is
+not activation, device completion or M3 acceptance. Full-domain timing must still
+be measured on the final release bundle, as required by the design decision.
+
 `execution_v2` adds closed data types for policy, exhaustive report index and
 run-bound selection. `Policy.templates` pins node -> host/normalized finite
 Program Intent; `node_contracts` pins the same node keys to implementation,

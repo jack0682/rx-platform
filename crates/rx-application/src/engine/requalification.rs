@@ -123,6 +123,7 @@ pub(super) fn current(tx: &mut dyn Transaction, meta: &Installation, j: &q::Job)
     device_restrictions::current(tx, meta, j)?;
     for t in &j.request.cells {
         let (rev, cell): (_, Cell) = load(tx, "cell", &t.profile.cell, CELL)?;
+        derived_current(tx, meta, &cell.configuration)?;
         if rev != t.expected_revision
             || cell.epoch != t.epoch
             || cell.scope_epochs != t.scopes
@@ -136,6 +137,36 @@ pub(super) fn current(tx: &mut dyn Transaction, meta: &Installation, j: &q::Job)
         }
     }
     Ok(())
+}
+fn derived_current(
+    tx: &mut dyn Transaction,
+    meta: &Installation,
+    configuration: &CellConfiguration,
+) -> Result<()> {
+    let Some(binding) = &configuration.execution else {
+        return Ok(());
+    };
+    execution_configuration::verify(tx, configuration)?;
+    let (_, publication): (_, crate::workflow_publication::Publication) = load(
+        tx,
+        "workflowpublication",
+        &binding.publication.id,
+        "rx.workflow-publication.v2",
+    )?;
+    let current = package_intake::current(tx, meta)?
+        .ok_or(StoreError::Rejected(Reject::QualificationRequired))?;
+    // Store identity persists across ordinary restarts; replacement/revocation is not continuity.
+    if current != publication.registration {
+        return reject(Reject::StaleRevision);
+    }
+    Ok(())
+}
+fn ticket_limit(policy: &q::Policy) -> u64 {
+    if policy.schema.as_str() == q::DERIVED_POLICY {
+        600_000_000_000
+    } else {
+        TICKET_TTL_NS
+    }
 }
 pub(super) fn fences_confirmed(tx: &mut dyn Transaction, j: &q::Job) -> Result<bool> {
     let acks = tx.scan("fenceack/")?;
@@ -171,6 +202,22 @@ pub(super) fn latest(tx: &mut dyn Transaction, id: &Id) -> Result<Option<q::Vers
         .transpose()
 }
 pub(super) fn version_digest(v: &q::Version) -> Result<Digest> {
+    if !v.derived.is_empty() {
+        return canonical::digest(
+            "RX-REQUALIFICATION-VERSION-v2",
+            &(
+                &v.review,
+                v.revision,
+                &v.report,
+                &v.signature,
+                v.ready_for_review,
+                &v.recorded_by,
+                &v.recorded_at,
+                &v.derived,
+            ),
+        )
+        .map_err(domain_error);
+    }
     canonical::digest(
         "RX-REQUALIFICATION-VERSION-v1",
         &(
@@ -185,8 +232,10 @@ pub(super) fn version_digest(v: &q::Version) -> Result<Digest> {
     )
     .map_err(domain_error)
 }
-const BLOBS: crate::artifact_storage::BlobStore =
-    crate::artifact_storage::BlobStore::new("qualification", q::MAX_ARTIFACT);
+const BLOBS: crate::artifact_storage::BlobStore = crate::artifact_storage::BlobStore::new(
+    "qualification",
+    rx_process_contract::execution_v2::MAX_DEFINITION_BYTES,
+);
 fn put_blob(tx: &mut dyn Transaction, hash: Digest, bytes: &[u8]) -> Result<()> {
     BLOBS.put(tx, hash, bytes)
 }
@@ -266,6 +315,7 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             let mut fences = Vec::new();
             for target in &a.cells {
                 let (rev, mut cell): (_, Cell) = load(tx, "cell", &target.cell, CELL)?;
+                derived_current(tx, meta, &cell.configuration)?;
                 check_revision(rev, input.expected_cells[&target.cell])?;
                 if process_change::config_ref(&cell.configuration)? != target.after
                     || cell.qualification.is_some()
@@ -412,7 +462,8 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                 return Ok(v);
             }
             current(tx, meta, &t.job)?;
-            if now.age_ns(&t.issued).is_none_or(|n| n >= TICKET_TTL_NS)
+            let limit = ticket_limit(&policy(tx, meta)?);
+            if now.age_ns(&t.issued).is_none_or(|n| n >= limit)
                 || p.verified.policy != t.policy
                 || latest(tx, &t.input.review)?.as_ref().map(|v| v.revision) != t.input.expected
             {
@@ -426,6 +477,7 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                 .expected
                 .map_or(Ok(Counter(1)), |r| r.increment().map_err(domain_error))?;
             let mut v = q::Version {
+                derived: p.verified.derived,
                 review: t.input.review.clone(),
                 revision: rev,
                 report: p.verified.report,
@@ -543,7 +595,8 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             }
             current(tx, meta, &t.job)?;
             let v = latest(tx, &t.input.review)?.ok_or(StoreError::Rejected(Reject::NotFound))?;
-            if now.age_ns(&t.issued).is_none_or(|a| a >= TICKET_TTL_NS)
+            let limit = ticket_limit(&policy(tx, meta)?);
+            if now.age_ns(&t.issued).is_none_or(|a| a >= limit)
                 || v.digest != t.version.digest
                 || v.revision != t.input.report_revision
                 || !v.ready_for_review
