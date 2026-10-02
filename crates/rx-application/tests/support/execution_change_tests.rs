@@ -69,6 +69,26 @@ fn v2_start_refuses_instance_revision_drift_during_arming() {
 fn v2_part_commit_refuses_instance_revision_drift_after_computation() {
     run_reviewed_change(10);
 }
+#[test]
+fn v2_node_admission_recovers_original_operation_and_preserves_frontier() {
+    run_reviewed_change(11);
+}
+#[test]
+fn v2_node_admission_rechecks_actual_instance_after_computation() {
+    run_reviewed_change(12);
+}
+#[test]
+fn v2_slot_consumption_requires_completed_released_operation() {
+    run_reviewed_change(13);
+}
+#[test]
+fn v2_first_emission_rechecks_actual_instance_and_preserves_unemitted_operation() {
+    run_reviewed_change(14);
+}
+#[test]
+fn v2_unknown_keeps_original_operation_resources_and_slot() {
+    run_reviewed_change(15);
+}
 #[path = "execution_qualification_activation_tests.rs"]
 mod qualification_tests;
 fn run_reviewed_change(stale_definition: u8) {

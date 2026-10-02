@@ -11,11 +11,7 @@ pub(super) fn process_view(
     cell: &Cell,
     visit: Counter,
 ) -> Result<(ProcessCheckpoint, ProgressView)> {
-    let process = cell
-        .configuration
-        .process
-        .as_ref()
-        .ok_or(StoreError::Rejected(Reject::UnsupportedSchema))?;
+    let process = execution_inventory::part_process(tx, run, cell, visit)?;
     let part = process_part(run, visit)?;
     let checkpoint = if let Some(row) = tx.get(&key("checkpoint", (&run.id, visit)))? {
         decode::<ProcessCheckpoint>(&row, CHECKPOINT)?
@@ -59,7 +55,7 @@ pub(super) fn process_view(
     }
     let view = ProgressView {
         run: run.id.clone(),
-        resolved_digest: frontier::resolved_digest(process).map_err(StoreError::Invalid)?,
+        resolved_digest: frontier::resolved_digest(&process).map_err(StoreError::Invalid)?,
         complete: true,
         operations,
         branches: checkpoint.branches.clone(),
@@ -96,11 +92,12 @@ pub(super) fn eligible_node(
     node: &Name,
     visit: Counter,
 ) -> Result<()> {
-    let Some(process) = &cell.configuration.process else {
+    if cell.configuration.process.is_none() {
         return Ok(());
-    };
+    }
+    let process = execution_inventory::part_process(tx, run, cell, visit)?;
     let (_, view) = process_view(tx, run, cell, visit)?;
-    let frontier = frontier::plan(process, &view).map_err(StoreError::Integrity)?;
+    let frontier = frontier::plan(&process, &view).map_err(StoreError::Integrity)?;
     if !frontier.operations.contains(node) {
         return reject(Reject::ConditionUnknown);
     }
@@ -261,14 +258,8 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             authorize_read(tx, identity, meta, &checked_at, &run.cell)?;
             let (cell_revision, cell): (_, Cell) = load(tx, "cell", &run.cell, CELL)?;
             let (checkpoint, view) = process_view(tx, &run, &cell, visit)?;
-            let frontier = frontier::plan(
-                cell.configuration
-                    .process
-                    .as_ref()
-                    .ok_or(StoreError::Rejected(Reject::UnsupportedSchema))?,
-                &view,
-            )
-            .map_err(StoreError::Integrity)?;
+            let actual_process = execution_inventory::part_process(tx, &run, &cell, visit)?;
+            let frontier = frontier::plan(&actual_process, &view).map_err(StoreError::Integrity)?;
             let admission_allowed = match active_run(tx, &cell, &run, identity, meta, &checked_at) {
                 Ok(()) => true,
                 Err(StoreError::Rejected(_)) => false,

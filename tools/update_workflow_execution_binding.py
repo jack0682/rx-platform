@@ -11,6 +11,7 @@ parser.add_argument('--check', action='store_true')
 args = parser.parse_args()
 sources = [
     'crates/rx-process-contract/src/execution_v2.rs',
+    'crates/rx-process-contract/src/execution_v2/operation.rs',
     'crates/rx-process-contract/src/execution_v2/materialize.rs',
     'crates/rx-process-contract/src/execution_v2/templates.rs',
     'crates/rx-process-contract/src/execution_v2/plan.rs',

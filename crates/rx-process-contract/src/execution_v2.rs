@@ -11,6 +11,8 @@ pub mod executor;
 pub mod host_configuration;
 pub mod host_qualification;
 mod materialize;
+mod operation;
+pub use operation::{OPERATION_SCHEMA, OperationBinding};
 mod plan;
 mod runtime_binding;
 pub use runtime_binding::{ObjectProjection, SlotResource};

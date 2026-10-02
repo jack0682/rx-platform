@@ -568,6 +568,12 @@ pub enum Command {
         request_key: String,
         command: StartRun,
     },
+    PrepareExecutionOperation {
+        identity: Identity,
+        key: Id,
+        command: rx_application::execution_inventory::SubmitNode,
+    },
+    CommitExecutionOperation(Box<rx_application::execution_inventory::PreparedOperation>),
     PrepareExecutionPart {
         identity: Identity,
         key: Id,
@@ -1190,6 +1196,7 @@ pub enum Reply {
     WorkflowResolutionPreparation(Box<rx_application::workflow_model::Preparation>),
     ExecutionObjectBinding(Box<rx_application::execution_inventory::ObjectBinding>),
     ExecutionSession(Box<rx_process_contract::execution_v2::executor::Session>),
+    ExecutionOperationPreparation(Box<rx_application::execution_inventory::OperationPreparation>),
     ExecutionPartPreparation(Box<rx_application::execution_inventory::PartPreparation>),
     ExecutionPart(Box<rx_process_contract::execution_v2::executor::Part>),
     ExecutionPartArtifact(Vec<u8>),
@@ -2181,6 +2188,18 @@ impl<R: Repository + Send + 'static, C: Clock + 'static, A: QualificationAuthori
                 .engine
                 .start_execution_run(&identity, &request_key, command)
                 .map(Reply::Attempt),
+            Command::PrepareExecutionOperation {
+                identity,
+                key,
+                command,
+            } => self
+                .engine
+                .prepare_execution_operation(&identity, &key, command)
+                .map(|v| Reply::ExecutionOperationPreparation(Box::new(v))),
+            Command::CommitExecutionOperation(prepared) => self
+                .engine
+                .commit_execution_operation(*prepared)
+                .map(|v| Reply::Work(Box::new(v))),
             Command::PrepareExecutionPart {
                 identity,
                 key,

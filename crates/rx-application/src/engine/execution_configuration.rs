@@ -154,3 +154,98 @@ pub(super) fn host_policy(
         packages,
     }))
 }
+
+/// Revalidate the immutable v2 selection immediately before a new emission.
+pub(super) fn operation_current(
+    tx: &mut dyn Transaction,
+    cell: &Cell,
+    run: &Run,
+    work: &Work,
+    permit: &Permit,
+    step: &StepBinding,
+) -> Result<()> {
+    let binding = work
+        .execution
+        .as_ref()
+        .ok_or(StoreError::Rejected(Reject::UnsupportedSchema))?;
+    binding.validate().map_err(StoreError::Integrity)?;
+    let domain =
+        domain(tx, &cell.configuration)?.ok_or(StoreError::Rejected(Reject::UnsupportedSchema))?;
+    let source = cell
+        .configuration
+        .execution
+        .as_ref()
+        .ok_or(StoreError::Rejected(Reject::UnsupportedSchema))?;
+    let selection = &binding.selection;
+    let (_, part): (_, v2::executor::PartBinding) = load(
+        tx,
+        "executionpart",
+        &selection.part,
+        v2::executor::PART_BINDING_SCHEMA,
+    )?;
+    part.validate().map_err(StoreError::Integrity)?;
+    if binding.operation != *work.operation.id()
+        || binding.mandate != permit.mandate
+        || run.mandate.as_ref() != Some(&binding.mandate)
+        || binding.publication != source.publication
+        || binding.policy != source.policy
+        || selection.run != work.run
+        || selection.run != run.id
+        || work.part.as_ref() != Some(&selection.part)
+        || part.run != run.id
+        || part.part != selection.part
+        || part.ordinal != selection.ordinal
+        || part.slot_ordinal != selection.slot_ordinal
+        || part.slot != selection.slot
+        || part.object != selection.object
+        || part.object_values_digest != selection.object_values_digest
+        || part.candidate != selection.candidate
+        || part.report != binding.report
+        || part.parameters.get(&selection.node) != Some(&selection.parameter)
+        || part.publication != binding.publication
+        || part.policy != binding.policy
+        || selection.configuration_digest
+            != cell
+                .configuration
+                .reference()
+                .map_err(StoreError::Invalid)?
+                .sha256
+        || part.configuration.sha256 != selection.configuration_digest
+        || selection.authority_generation != cell.epoch
+        || permit.epoch != cell.epoch
+        || permit.operation != *work.operation.id()
+        || permit.cell != work.cell
+        || permit.intent_digest != selection.intent_digest
+        || work.operation.intent_digest() != selection.intent_digest
+        || source.nodes.get(&step.id) != Some(&selection.node)
+    {
+        return reject(Reject::StaleRevision);
+    }
+    let actual =
+        definition_catalog::version(tx, &selection.object.catalog, &selection.object.id, None)?;
+    if actual.archived || actual.definition.reference != selection.object {
+        return reject(Reject::StaleRevision);
+    }
+    let projection = domain
+        .inputs
+        .object_projection(&domain.policy, &actual.definition)
+        .map_err(StoreError::Invalid)?;
+    if projection.candidate != selection.candidate
+        || projection.values_digest != selection.object_values_digest
+        || projection.model != part.model
+    {
+        return reject(Reject::StaleRevision);
+    }
+    let bytes = crate::artifact_storage::BlobStore::new("executionpart", v2::MAX_DEFINITION_BYTES)
+        .read(tx, &selection.parameter)?;
+    selection
+        .verify_request(
+            selection,
+            &domain.policy,
+            &domain.index,
+            &work.host,
+            &work.intent,
+            &bytes,
+        )
+        .map_err(StoreError::Invalid)
+}

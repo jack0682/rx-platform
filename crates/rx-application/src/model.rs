@@ -479,6 +479,8 @@ pub struct Activation {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Work {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution: Option<Box<rx_process_contract::execution_v2::OperationBinding>>,
     pub operation: Operation,
     pub intent: Intent,
     pub cell: Name,
@@ -669,6 +671,7 @@ pub struct PendingDelivery {
 }
 #[derive(Clone, Debug)]
 pub struct DeliveryPlan {
+    pub execution_parameters: Option<Vec<u8>>,
     pub message: Id,
     pub first_emission: bool,
     pub cell: Name,

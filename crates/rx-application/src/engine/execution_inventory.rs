@@ -3,6 +3,7 @@ use super::*;
 use crate::execution_inventory as data;
 use rx_domain::definition::Reference;
 use rx_process_contract::execution_v2 as v2;
+mod operations;
 mod parts;
 const POOL: &str = "rx.execution-slot-pool.v2";
 const BINDING: &str = "rx.execution-run-binding.v2";
@@ -571,4 +572,119 @@ pub(super) fn object_current(
         }
     }
     Ok(object)
+}
+
+/// A per-Part view for the existing frontier, never a replacement published configuration.
+pub(super) fn part_process(
+    tx: &mut dyn Transaction,
+    run: &Run,
+    cell: &Cell,
+    visit: Counter,
+) -> Result<rx_process_contract::ResolvedProcess> {
+    let mut process = (**cell
+        .configuration
+        .process
+        .as_ref()
+        .ok_or(StoreError::Rejected(Reject::UnsupportedSchema))?)
+    .clone();
+    let Some(execution) = &cell.configuration.execution else {
+        return Ok(process);
+    };
+    let index = visit
+        .0
+        .checked_sub(1)
+        .ok_or(StoreError::Rejected(Reject::InvalidInput))? as usize;
+    let part = run
+        .part_ids
+        .get(index)
+        .ok_or(StoreError::Rejected(Reject::InvalidInput))?;
+    let (_, binding): (_, v2::executor::PartBinding) =
+        load(tx, "executionpart", part, v2::executor::PART_BINDING_SCHEMA)?;
+    binding.validate().map_err(StoreError::Integrity)?;
+    if binding.run != run.id
+        || binding.part != *part
+        || binding.ordinal != visit
+        || binding.policy != execution.policy
+        || binding.publication != execution.publication
+    {
+        return Err(StoreError::Integrity("Part graph binding differs".into()));
+    }
+    let substitutions: Vec<_> = rx_process_contract::validation::nodes(&process)
+        .into_iter()
+        .filter_map(|node| {
+            if let rx_process_contract::CompiledBody::Operation { binding } = &node.body {
+                Some((node.id.clone(), binding.clone()))
+            } else {
+                None
+            }
+        })
+        .collect();
+    for (node, key) in substitutions {
+        let workflow_node = execution
+            .nodes
+            .get(&node)
+            .ok_or(StoreError::Rejected(Reject::InvalidInput))?;
+        let parameter = binding
+            .parameters
+            .get(workflow_node)
+            .ok_or(StoreError::Rejected(Reject::InvalidInput))?;
+        let action = process
+            .bindings
+            .get_mut(&key)
+            .ok_or(StoreError::Rejected(Reject::InvalidInput))?;
+        let rx_domain::intent::Body::Program(goal) = &mut action.intent.body else {
+            return reject(Reject::UnsupportedSchema);
+        };
+        goal.parameter_set = parameter.clone();
+    }
+    Ok(process)
+}
+
+/// Called only after the ordinary frontier and release checks prove full Part completion.
+pub(super) fn consume_part(
+    tx: &mut dyn Transaction,
+    cell: &Cell,
+    run: &Run,
+    part: &PartAttempt,
+) -> Result<()> {
+    if cell.configuration.execution.is_none() {
+        return Ok(());
+    }
+    let (_, binding): (_, data::RunBinding) = load(tx, "executionrun", &run.id, BINDING)?;
+    let (_, selected): (_, v2::executor::PartBinding) = load(
+        tx,
+        "executionpart",
+        &part.id,
+        v2::executor::PART_BINDING_SCHEMA,
+    )?;
+    if selected.run != run.id
+        || selected.part != part.id
+        || selected.ordinal != part.ordinal
+        || binding.configuration != selected.configuration
+    {
+        return reject(Reject::ContinuityUnproven);
+    }
+    for pin in &binding.pools {
+        let (revision, mut pool) = load_pool(tx, &pin.resource)?;
+        if pool.cell != run.cell
+            || pool.generation != pin.generation
+            || pool.layout.layout_digest != pin.layout_digest
+        {
+            return reject(Reject::ContinuityUnproven);
+        }
+        let hold = pool
+            .holds
+            .get_mut(&selected.slot)
+            .ok_or(StoreError::Rejected(Reject::ContinuityUnproven))?;
+        if hold.run != run.id
+            || hold.ordinal != part.ordinal
+            || hold.part.as_ref() != Some(&part.id)
+            || hold.slot_ordinal != selected.slot_ordinal
+        {
+            return reject(Reject::ContinuityUnproven);
+        }
+        hold.consumed = true;
+        tx.put(&pool_key(&pin.resource), Some(revision), &doc(POOL, &pool)?)?;
+    }
+    event(tx, "rx.event.execution-slot-consumed.v2", &selected)
 }

@@ -18,6 +18,16 @@ message BeginExecutionPart {
   bytes binding_hash = 5;
 }
 
+message SubmitExecutionNode {
+  rx.cell.v1.CellCall call = 1;
+  string run_id = 2;
+  string part_id = 3;
+  string node = 4;
+  string mandate_id = 5;
+  uint64 expected_run = 6;
+  bytes binding_hash = 7;
+}
+
 message ReadExecutionPart {
   rx.contract.v1.CallContext context = 1;
   string run_id = 2;
@@ -39,6 +49,7 @@ message ExecutionPayload {
 }
 
 service ExecutionControlService {
+  rpc SubmitNode (.rx.executor.execution.v2.SubmitExecutionNode) returns (.rx.executor.execution.v2.ExecutionPayload);
   rpc Negotiate (.rx.executor.execution.v2.NegotiateExecution) returns (.rx.executor.execution.v2.ExecutionPayload);
   rpc BeginPart (.rx.executor.execution.v2.BeginExecutionPart) returns (.rx.executor.execution.v2.ExecutionPayload);
   rpc GetPart (.rx.executor.execution.v2.ReadExecutionPart) returns (.rx.executor.execution.v2.ExecutionPayload);

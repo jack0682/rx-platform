@@ -136,10 +136,11 @@ pub(super) fn complete_part_transition(
     if part.disposition != PartDisposition::InProgress {
         return reject(Reject::ConditionUnknown);
     }
-    if let Some(process) = &cell.configuration.process {
+    if cell.configuration.process.is_some() {
+        let process = execution_inventory::part_process(tx, run, cell, part.ordinal)?;
         let (_, view) = super::process::process_view(tx, run, cell, part.ordinal)?;
         let next =
-            rx_process_contract::frontier::plan(process, &view).map_err(StoreError::Integrity)?;
+            rx_process_contract::frontier::plan(&process, &view).map_err(StoreError::Integrity)?;
         if next.state != rx_process_contract::frontier::State::Completed {
             return reject(Reject::ConditionUnknown);
         }
@@ -164,6 +165,7 @@ pub(super) fn complete_part_transition(
             }
         }
     }
+    execution_inventory::consume_part(tx, cell, run, part)?;
     part.disposition = PartDisposition::ConfirmedCompleted;
     let revision = save(tx, "part", &part.id, Some(part_revision), PART, &part)?;
     let mut all_done = true;

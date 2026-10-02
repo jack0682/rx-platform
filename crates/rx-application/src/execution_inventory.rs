@@ -138,3 +138,58 @@ impl PreparedPart {
         })
     }
 }
+
+/// Node intent and values are selected by P, never supplied by the Executor.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SubmitNode {
+    pub cell: Name,
+    pub run: Id,
+    pub part: Id,
+    pub node: Name,
+    pub mandate: Id,
+    pub expected_cell: Counter,
+    pub expected_run: Counter,
+}
+pub enum OperationPreparation {
+    Recorded(Box<crate::Work>),
+    Compute(Box<OperationTicket>),
+}
+pub struct OperationTicket {
+    pub(crate) identity: crate::Identity,
+    pub(crate) key: Id,
+    pub(crate) command: SubmitNode,
+    pub(crate) part: rx_process_contract::execution_v2::executor::PartBinding,
+    pub(crate) policy: rx_process_contract::execution_v2::Policy,
+    pub(crate) inputs: rx_process_contract::execution_v2::InputClosure,
+    pub(crate) index: rx_process_contract::execution_v2::ValidatedIndex,
+    pub(crate) boot: Id,
+    pub(crate) issued: TimePoint,
+}
+pub struct PreparedOperation {
+    pub(crate) ticket: OperationTicket,
+    pub(crate) materialized: rx_process_contract::execution_v2::Materialized,
+}
+impl PreparedOperation {
+    pub fn prepare(ticket: OperationTicket) -> Result<Self, String> {
+        let materialized = rx_process_contract::execution_v2::materialize(
+            &ticket.policy,
+            &ticket.inputs,
+            ticket.part.candidate,
+            ticket.part.slot,
+        )?;
+        materialized.verify_index(
+            &ticket.policy,
+            &ticket.index,
+            ticket.part.candidate,
+            ticket.part.slot,
+        )?;
+        if materialized.report_digest() != ticket.part.report.sha256 {
+            return Err("operation report differs from immutable Part".into());
+        }
+        Ok(Self {
+            ticket,
+            materialized,
+        })
+    }
+}

@@ -74,3 +74,22 @@ Host validation remain required. Completion/UNKNOWN settlement uses existing evi
 and the approved same-slot retry/next-slot rules. No native Host or UI implementation
 is claimed from protocol fixtures; frozen-v1 cases and the final single-bundle M3
 acceptance remain mandatory.
+
+## SubmitNode
+
+`SubmitNode` requires an idempotency key and expected Cell/Run revisions. Its body
+names only Cell, Run, Part, compiled node and mandate. P selects the published
+workflow node, immutable Part report/parameter and reserved slot. A private 30-second
+computation ticket re-materializes the approved report outside the writer; the commit
+rechecks current instance/definitions/authority/frontier before the existing operation
+and permit transaction. The bounded reply is `rx.execution-work.v2`, carrying Work and
+its explicit immutable execution binding. Original-key/occupied-node recovery returns
+the original operation without granting new authority. No caller Intent or parameter
+reference is accepted. The per-Part graph substitutes only saved parameter references;
+frontier completion still needs actual released operation evidence.
+
+P sends such Work only through `rx.host.execution.v2`; receipt and evidence replies must
+pin the original operation-binding digest. Full completion consumes the reserved slot;
+abandonment, UNKNOWN and materialization alone cannot consume or replenish it. The
+same-slot retry extension remains a separate acceptance requirement, not established by
+these admission/transport tests.

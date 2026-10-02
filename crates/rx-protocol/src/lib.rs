@@ -17,6 +17,11 @@ pub mod rx {
         }
     }
     pub mod host {
+        pub mod execution {
+            pub mod v2 {
+                tonic::include_proto!("rx.host.execution.v2");
+            }
+        }
         pub mod qualification {
             pub mod v1 {
                 tonic::include_proto!("rx.host.qualification.v1");
@@ -105,3 +110,5 @@ pub use rx::host::configuration::v2 as host_execution_configuration;
 pub use rx::host::qualification::v2 as host_execution_qualification;
 
 pub use rx::executor::execution::v2 as execution_v2;
+
+pub use rx::host::execution::v2 as host_execution;

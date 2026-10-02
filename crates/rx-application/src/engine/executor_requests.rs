@@ -193,6 +193,7 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             let work = super::dispatch::submit_transition(
                 tx,
                 super::dispatch::DispatchState {
+                    execution: None,
                     activation: &mut activation,
                     activation_revision,
                     run: &mut run,

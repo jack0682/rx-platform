@@ -298,6 +298,10 @@ pub(super) fn exercise(
             .is_err(),
         "unfinished Part cannot advance to another slot"
     );
+    if case >= 11 {
+        operation_tests::exercise(f, target, &part, case);
+        return;
+    }
     revise(f, &actual);
     assert_eq!(
         f.app
@@ -319,3 +323,6 @@ pub(super) fn exercise(
         bytes
     );
 }
+
+#[path = "execution_operation_tests.rs"]
+mod operation_tests;

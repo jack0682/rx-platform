@@ -32,6 +32,77 @@ fn encoded<T: serde::Serialize>(
 }
 #[tonic::async_trait]
 impl wire::execution_control_service_server::ExecutionControlService for PlatformIngress {
+    async fn submit_node(
+        &self,
+        request: Request<wire::SubmitExecutionNode>,
+    ) -> Result<Response<wire::ExecutionPayload>, Status> {
+        let identity = self
+            .validated_executor_identity(
+                &request,
+                request
+                    .get_ref()
+                    .call
+                    .as_ref()
+                    .and_then(|c| c.context.as_ref()),
+            )
+            .await?;
+        let value = request.into_inner();
+        binding(&value.binding_hash)?;
+        let call = value
+            .call
+            .ok_or_else(|| Status::invalid_argument("cell call required"))?;
+        let context = call
+            .context
+            .ok_or_else(|| Status::invalid_argument("context required"))?;
+        if context.expected_revision.is_some()
+            || value.expected_run == 0
+            || call.expected_cell_revision.is_none_or(|r| r == 0)
+        {
+            return Err(Status::invalid_argument("body revisions required"));
+        }
+        let key = id(context
+            .request_key
+            .as_deref()
+            .ok_or_else(|| Status::invalid_argument("request key required"))?)?;
+        let command = rx_application::execution_inventory::SubmitNode {
+            cell: rx_protocol_adapter::name(&call.cell_id)?,
+            run: id(&value.run_id)?,
+            part: id(&value.part_id)?,
+            node: rx_protocol_adapter::name(&value.node)?,
+            mandate: id(&value.mandate_id)?,
+            expected_cell: Counter(call.expected_cell_revision.unwrap()),
+            expected_run: Counter(value.expected_run),
+        };
+        let Reply::ExecutionOperationPreparation(preparation) = self
+            .call(Command::PrepareExecutionOperation {
+                identity,
+                key,
+                command,
+            })
+            .await?
+        else {
+            return Err(Status::internal("node preparation reply"));
+        };
+        let ticket = match *preparation {
+            rx_application::execution_inventory::OperationPreparation::Recorded(work) => {
+                return encoded("rx.execution-work.v2", &work);
+            }
+            rx_application::execution_inventory::OperationPreparation::Compute(ticket) => ticket,
+        };
+        let prepared = tokio::task::spawn_blocking(move || {
+            rx_application::execution_inventory::PreparedOperation::prepare(*ticket)
+        })
+        .await
+        .map_err(|_| Status::unavailable("node computation unavailable"))?
+        .map_err(Status::failed_precondition)?;
+        let Reply::Work(work) = self
+            .call(Command::CommitExecutionOperation(Box::new(prepared)))
+            .await?
+        else {
+            return Err(Status::internal("node commit reply"));
+        };
+        encoded("rx.execution-work.v2", &work)
+    }
     async fn negotiate(
         &self,
         request: Request<wire::NegotiateExecution>,
