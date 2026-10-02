@@ -667,3 +667,24 @@ pub(super) fn consume_part(
     }
     event(tx, "rx.event.execution-slot-consumed.v2", &selected)
 }
+
+pub(super) fn production_current(
+    tx: &mut dyn Transaction,
+    context: ProcessingContext<'_>,
+    cell: &Cell,
+    run: &Run,
+) -> Result<()> {
+    if cell.configuration.execution.is_none() {
+        return Ok(());
+    }
+    let (_, binding): (_, data::RunBinding) = load(tx, "executionrun", &run.id, BINDING)?;
+    start_current(
+        tx,
+        context.meta,
+        context.now,
+        run,
+        cell,
+        &context.identity.session,
+        Counter(binding.slots.len() as u64),
+    )
+}

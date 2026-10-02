@@ -333,4 +333,44 @@ fn complete(f: &mut Fixture, target: &CellConfiguration, part: &wire::Part, work
             .policy,
         part.binding.policy
     );
+    let waiting = f
+        .app
+        .production_view(&f.executor, &part.binding.run)
+        .unwrap();
+    assert!(
+        !waiting.admission_allowed,
+        "must wait for explicit next-object binding"
+    );
+    assert_eq!(waiting.run.run.state, RunState::Executing);
+    let actual = put(
+        &mut f.app,
+        &f.admin,
+        save(
+            &part.binding.model.catalog,
+            Body::ObjectInstance {
+                base: part.binding.model.clone(),
+                values: BTreeMap::new(),
+            },
+        ),
+    )
+    .version
+    .definition
+    .reference;
+    f.app
+        .bind_execution_object(
+            &f.operator,
+            &id(),
+            inventory::BindObject {
+                run: part.binding.run.clone(),
+                ordinal: Counter(2),
+                object: actual,
+            },
+        )
+        .unwrap();
+    assert!(
+        f.app
+            .production_view(&f.executor, &part.binding.run)
+            .unwrap()
+            .admission_allowed
+    );
 }
