@@ -851,3 +851,118 @@ fn point_patterns_are_versioned_data_with_inheritance_and_bounded_paging() {
 
 #[path = "workflow_model_tests.rs"]
 mod workflow_model_tests;
+
+#[test]
+fn object_instance_catalog_history_is_pinned_and_original_save_recovers_after_loss() {
+    let (directory, mut app, owner, failure) = standalone();
+    let catalog = app
+        .save_definition_catalog(&owner, &id(), catalog_save())
+        .unwrap();
+    let field = put(
+        &mut app,
+        &owner,
+        save(&catalog.id, property(Category::Object, false)),
+    )
+    .version
+    .definition
+    .reference;
+    let typ = put(
+        &mut app,
+        &owner,
+        save(
+            &catalog.id,
+            Body::ObjectType {
+                parent: None,
+                fields: [(
+                    name("width"),
+                    Field {
+                        property: field,
+                        required: true,
+                    },
+                )]
+                .into(),
+            },
+        ),
+    )
+    .version
+    .definition
+    .reference;
+    let model = put(
+        &mut app,
+        &owner,
+        save(
+            &catalog.id,
+            Body::ObjectModel {
+                object_type: typ,
+                values: [(name("width"), number(45.0))].into(),
+            },
+        ),
+    )
+    .version
+    .definition
+    .reference;
+    let input = save(
+        &catalog.id,
+        Body::ObjectInstance {
+            base: model.clone(),
+            values: Default::default(),
+        },
+    );
+    let key = id();
+    failure.store(2, Ordering::SeqCst);
+    assert!(
+        app.save_definition(&owner, &key, Prepared::prepare(input.clone()).unwrap())
+            .is_err()
+    );
+    let original = app
+        .save_definition(&owner, &key, Prepared::prepare(input.clone()).unwrap())
+        .unwrap();
+    assert_eq!(original.effective.values[&name("width")].declared_by, model);
+    let mut changed = input.clone();
+    changed.expected = Some(Counter(1));
+    changed.body = Body::ObjectInstance {
+        base: model,
+        values: [(name("width"), number(40.0))].into(),
+    };
+    let current = put(&mut app, &owner, changed);
+    assert_eq!(
+        current.effective.values[&name("width")].declared_by,
+        current.version.definition.reference
+    );
+    let history = app
+        .definition(&owner, &catalog.id, &input.id, Some(Counter(1)))
+        .unwrap();
+    assert_eq!(
+        rx_domain::canonical::bytes(&history).unwrap(),
+        rx_domain::canonical::bytes(&original).unwrap()
+    );
+    let installation = app.installation.id.clone();
+    drop(app);
+    let mut app = Engine::open(
+        FaultRepository {
+            inner: SqliteRepository::open(directory.path().join("definitions.db")).unwrap(),
+            mode: failure,
+        },
+        ManualClock(Arc::new(AtomicU64::new(1000))),
+        SimulationAuthority,
+        installation,
+        principal("owner", &[Role::AccountAdmin]),
+    )
+    .unwrap();
+    let session = app
+        .authenticated_session(&name("owner"), id(), expiry(100000))
+        .unwrap();
+    let owner = Identity {
+        session: session.id,
+        ..owner
+    };
+    assert_eq!(
+        app.definition(&owner, &catalog.id, &input.id, None)
+            .unwrap()
+            .version
+            .definition
+            .reference
+            .revision,
+        Counter(2)
+    );
+}

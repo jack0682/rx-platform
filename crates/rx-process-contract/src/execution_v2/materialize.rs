@@ -73,7 +73,10 @@ impl InputClosure {
             size_bytes: Counter(bytes.len() as u64),
         })
     }
-    fn verify(&self, policy: &Policy) -> Result<BTreeMap<Reference, Definition>, String> {
+    pub(super) fn verify(
+        &self,
+        policy: &Policy,
+    ) -> Result<BTreeMap<Reference, Definition>, String> {
         if self.schema.as_str() != "rx.execution-input-closure.v2"
             || self.workflow != policy.workflow
             || self.requests.len() != policy.candidates.len()

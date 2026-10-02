@@ -109,6 +109,9 @@ impl<'a> Resolver<'a> {
                 resource_type,
                 values,
             } => self.model(d, resource_type, Kind::ResourceType, values)?,
+            Body::ObjectInstance { base, values } => {
+                self.model(d, base, Kind::ObjectModel, values)?
+            }
             Body::ResourceInstance { base, values } => {
                 let kind = self
                     .dependencies

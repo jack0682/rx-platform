@@ -495,3 +495,37 @@ fn qualification_v2_receipt_cannot_relabel_acceptance_or_grant_on_rejection() {
     rejected.policies.clear();
     rejected.validate().unwrap();
 }
+
+#[test]
+fn run_part_ordinal_does_not_reset_the_publication_slot_ordinal() {
+    let p = policy(1, 2);
+    let idx = ReportIndex::decode(&canonical::bytes(&index(1, 2)).unwrap(), &p).unwrap();
+    let (mut selected, intent, bytes) = fixture::selected(&p);
+    selected.ordinal = Counter(1); // First Part of a later Run.
+    selected.slot_ordinal = Counter(2); // First physical slot was already consumed.
+    selected.slot = 1;
+    selected
+        .verify_request(&selected, &p, &idx, &n("host"), &intent, &bytes)
+        .unwrap();
+    let mut impossible = selected.clone();
+    impossible.ordinal = Counter(2);
+    impossible.slot_ordinal = Counter(1);
+    impossible.slot = 0;
+    assert!(
+        impossible
+            .verify_request(&impossible, &p, &idx, &n("host"), &intent, &bytes)
+            .is_err()
+    );
+    let mut reset = selected.clone();
+    reset.slot_ordinal = Counter(1);
+    assert!(
+        reset
+            .verify_request(&reset, &p, &idx, &n("host"), &intent, &bytes)
+            .is_err()
+    );
+    assert!(
+        selected
+            .verify_request(&reset, &p, &idx, &n("host"), &intent, &bytes)
+            .is_err()
+    );
+}

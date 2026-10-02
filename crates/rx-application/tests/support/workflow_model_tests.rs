@@ -1567,3 +1567,6 @@ fn qualification_case(mut f: ExecutionFixture, corrupted: bool, timing: bool) {
 
 #[path = "execution_change_tests.rs"]
 mod execution_change_tests;
+
+#[path = "execution_runtime_binding_tests.rs"]
+mod execution_runtime_binding_tests;

@@ -362,6 +362,9 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                     .is_some_and(|v| v.definition.body == input.body);
             let deps = dependencies(tx, &definition, !archiving_existing)?;
             let effective = definition::resolve(&definition, &deps).map_err(StoreError::Invalid)?;
+            if definition.body.kind() == definition::Kind::ObjectInstance {
+                tx.require_workflow_execution_reader()?;
+            }
             let value = Version {
                 definition,
                 archived: input.archived,

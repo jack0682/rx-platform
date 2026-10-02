@@ -14,6 +14,10 @@ sources = [
     'crates/rx-process-contract/src/execution_v2/materialize.rs',
     'crates/rx-process-contract/src/execution_v2/templates.rs',
     'crates/rx-process-contract/src/execution_v2/plan.rs',
+    'crates/rx-process-contract/src/execution_v2/runtime_binding.rs',
+    'crates/rx-domain/src/definition.rs',
+    'crates/rx-domain/src/definition/validation.rs',
+    'crates/rx-domain/src/definition/pattern.rs',
     'spec/workflow-execution/v2/README.md',
 ]
 value = {

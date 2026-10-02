@@ -11,6 +11,8 @@ pub mod host_configuration;
 pub mod host_qualification;
 mod materialize;
 mod plan;
+mod runtime_binding;
+pub use runtime_binding::{ObjectProjection, SlotResource};
 mod templates;
 pub use materialize::{
     InputClosure, Materialized, NodeContract, ParameterContract, compiler_digest, context_digest,
@@ -268,6 +270,7 @@ pub struct Selection {
     pub run: Id,
     pub part: Id,
     pub ordinal: Counter,
+    pub slot_ordinal: Counter,
     pub object: Reference,
     pub object_values_digest: Digest,
     pub candidate: u8,
@@ -296,9 +299,12 @@ impl Selection {
             || self.object.revision.0 == 0
             || self.ordinal.0 == 0
             || self.ordinal.0 > policy.slot_order.len() as u64
+            || self.slot_ordinal.0 == 0
+            || self.slot_ordinal.0 < self.ordinal.0
+            || self.slot_ordinal.0 > policy.slot_order.len() as u64
             || policy
                 .slot_order
-                .get((self.ordinal.0 - 1) as usize)
+                .get((self.slot_ordinal.0 - 1) as usize)
                 .copied()
                 != Some(self.slot)
             || self.object.catalog != policy.workflow.catalog

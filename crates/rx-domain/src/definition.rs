@@ -17,6 +17,7 @@ pub enum Kind {
     Property,
     ObjectType,
     ObjectModel,
+    ObjectInstance,
     ResourceType,
     ResourceModel,
     ResourceInstance,
@@ -196,6 +197,10 @@ pub enum Body {
         object_type: Reference,
         values: BTreeMap<Name, Value>,
     },
+    ObjectInstance {
+        base: Reference,
+        values: BTreeMap<Name, Value>,
+    },
     ResourceModel {
         resource_type: Reference,
         values: BTreeMap<Name, Value>,
@@ -227,6 +232,7 @@ impl Body {
             Self::Property { .. } => Kind::Property,
             Self::ObjectType { .. } => Kind::ObjectType,
             Self::ObjectModel { .. } => Kind::ObjectModel,
+            Self::ObjectInstance { .. } => Kind::ObjectInstance,
             Self::ResourceType { .. } => Kind::ResourceType,
             Self::ResourceModel { .. } => Kind::ResourceModel,
             Self::ResourceInstance { .. } => Kind::ResourceInstance,
@@ -245,7 +251,7 @@ impl Body {
                 .collect(),
             Self::ObjectModel { object_type, .. } => vec![object_type],
             Self::ResourceModel { resource_type, .. } => vec![resource_type],
-            Self::ResourceInstance { base, .. } => vec![base],
+            Self::ResourceInstance { base, .. } | Self::ObjectInstance { base, .. } => vec![base],
             Self::PropertySet { values } => values.values().map(|v| &v.property).collect(),
             Self::Task {
                 slots, properties, ..
@@ -273,6 +279,7 @@ impl Body {
             }
             Self::ObjectType { fields, .. } | Self::ResourceType { fields, .. } => fields.len(),
             Self::ObjectModel { values, .. }
+            | Self::ObjectInstance { values, .. }
             | Self::ResourceModel { values, .. }
             | Self::ResourceInstance { values, .. } => values.len(),
             Self::PropertySet { values } => values.len(),

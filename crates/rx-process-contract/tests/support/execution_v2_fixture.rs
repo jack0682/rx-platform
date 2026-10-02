@@ -110,6 +110,7 @@ pub(super) fn selected(p: &Policy) -> (Selection, Intent, Vec<u8>) {
             run: id(4),
             part: id(5),
             ordinal: Counter(1),
+            slot_ordinal: Counter(1),
             object: reference(),
             object_values_digest: digest(8),
             candidate: 0,

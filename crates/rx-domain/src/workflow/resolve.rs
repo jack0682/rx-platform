@@ -56,7 +56,7 @@ fn accepts(d: &Definition, typ: &Reference, all: &BTreeMap<Reference, Definition
         let parent = match &cursor.body {
             Body::ObjectModel { object_type, .. } => Some(object_type),
             Body::ResourceModel { resource_type, .. } => Some(resource_type),
-            Body::ResourceInstance { base, .. } => Some(base),
+            Body::ResourceInstance { base, .. } | Body::ObjectInstance { base, .. } => Some(base),
             Body::ObjectType { parent, .. } | Body::ResourceType { parent, .. } => parent.as_ref(),
             _ => None,
         };
@@ -214,7 +214,9 @@ pub fn resolve(
             let result = (|| {
                 let d = definition(all, &r)?;
                 let kind = match slot.kind {
-                    SlotKind::Object => matches!(d.body.kind(), Kind::ObjectModel),
+                    SlotKind::Object => {
+                        matches!(d.body.kind(), Kind::ObjectModel | Kind::ObjectInstance)
+                    }
                     SlotKind::Resource => {
                         matches!(d.body.kind(), Kind::ResourceModel | Kind::ResourceInstance)
                     }

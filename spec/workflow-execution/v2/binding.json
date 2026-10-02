@@ -4,11 +4,15 @@
   "report_schema": "rx.execution-report.v2",
   "schema": "rx.workflow-execution-data-binding.v2",
   "source_sha256": {
-    "crates/rx-process-contract/src/execution_v2.rs": "b31c273047b774eb610f551f2440fa8a0b8c396113aa42bb203254bfcccc17e2",
-    "crates/rx-process-contract/src/execution_v2/materialize.rs": "af7c35ef3806d92aa7a9a48d9b51c43283f658fdd6c38943ba4eb2bc628d520c",
+    "crates/rx-domain/src/definition.rs": "ac5c3b37f3c75aba364f4ebe21e3154e2c3edafd6ee6158f398ef8ce726a647d",
+    "crates/rx-domain/src/definition/pattern.rs": "8f16ca2d1e4556e811c58d9811f3de545beacda35dfbb563df576e4f46b029a9",
+    "crates/rx-domain/src/definition/validation.rs": "e1bde7cedd67c0434c75bf3b77978160062d8f232c01d5239ef1536a02b6e1c7",
+    "crates/rx-process-contract/src/execution_v2.rs": "a964a3e879093cd5b57631d6e01d25008e3deee8359ed57a672d832a7ed985a7",
+    "crates/rx-process-contract/src/execution_v2/materialize.rs": "e438a54de80b31d9242d10bcfa367053886f1a4970251f367a9f3249c9697dbb",
     "crates/rx-process-contract/src/execution_v2/plan.rs": "3f24ac9c63b73a8808e854f408ebb6d91af7e7227a57f203daa0c8cff97cc94a",
+    "crates/rx-process-contract/src/execution_v2/runtime_binding.rs": "dcf90aa10960502cbd51d3beed0d45872d8fbba2dfc1ff39305ab1ec8cfec748",
     "crates/rx-process-contract/src/execution_v2/templates.rs": "d835981c76e5c3f2722051350fd4f5f8f336989e32a20831d25dac95ab9166cb",
-    "spec/workflow-execution/v2/README.md": "f7f5249e0ce34f4e6fe4f4c6d879624d728c1907c6648255aad0313b5af11dfb"
+    "spec/workflow-execution/v2/README.md": "4bb17b8b9c7de77df18c05f477faa33f9a0bab08705cf4e2d34390017e84ed4c"
   },
   "transport": "NOT_ENABLED"
 }

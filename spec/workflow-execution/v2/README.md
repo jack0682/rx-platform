@@ -277,3 +277,27 @@ reads). Wrong current policy suspends qualification; definition revision drift r
 readiness even when values match. A qualified v2 configuration still cannot create a
 legacy Run. These tests do not establish native Host/Executor effects, Linux latency,
 frozen-v1 compatibility, or M3 acceptance.
+
+
+## Actual-instance and slot binding primitives
+
+`OBJECT_INSTANCE` is distinct from ObjectModel/ResourceInstance and inherits one
+ObjectModel with checked fields and explicit value provenance. Catalog persistence
+requires reader10. InputClosure.object_projection checks the full effective schema
+and values against exactly one approved model; equal-value instance overrides keep
+their provenance without expanding the domain. A model alone, changed value or an
+ambiguous candidate is refused. These pure checks grant no operating authority.
+
+InputClosure.slot_resources discovers Pattern sources on active Task properties
+from the saved input closure, validates explicit geometry and actual ResourceInstance
+identity across candidates, and deduplicates repeated contexts. Layout identity pins
+resource/pattern revisions, capacity and resolver identity. No cell-specific context
+name is used. Missing/ambiguous subjects, competing layouts, invalid geometry and
+capacity outside1..2400 fail closed. Runtime pool ownership/initialization/reservation
+must still be connected before these primitives can admit a Run.
+
+Selection.ordinal is the Run-local one-based Part ordinal. The mandatory
+slot_ordinal is the one-based rank in the complete publication slot order and maps
+to the zero-based slot; an earlier Run's consumption cannot be hidden by resetting
+its Part ordinal. The authority must supply the reserved rank and check every field;
+this DTO does not allocate slots or authorize caller-selected indices.
