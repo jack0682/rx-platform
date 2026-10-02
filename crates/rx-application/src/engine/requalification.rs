@@ -138,7 +138,7 @@ pub(super) fn current(tx: &mut dyn Transaction, meta: &Installation, j: &q::Job)
     }
     Ok(())
 }
-fn derived_current(
+pub(super) fn derived_current(
     tx: &mut dyn Transaction,
     meta: &Installation,
     configuration: &CellConfiguration,

@@ -191,6 +191,7 @@ fn prepare(
             admin,
             &id(),
             process_change::Create {
+                execution_configuration: None,
                 mode: process_change::Mode::Replace,
                 id: id(),
                 cell: cfg.id.clone(),

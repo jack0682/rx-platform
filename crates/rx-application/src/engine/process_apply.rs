@@ -134,6 +134,9 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             {
                 return reject(Reject::StaleRevision);
             }
+            if c.execution_configuration.is_some() {
+                return reject(Reject::UnsupportedSchema);
+            }
             proofs(tx, meta, &c, &now, reads)?;
             let (job, version, decision, resolved) =
                 process_change::review(tx, meta, &input.cell, &c.review)?;
@@ -141,6 +144,12 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                 StoreError::Unavailable("package verifier unavailable".into()),
             )?;
             Ok(Preflight::Verify(Box::new(Ticket {
+                execution_configuration: process_change::execution_target(
+                    tx,
+                    meta,
+                    &input.cell,
+                    &c.execution_configuration,
+                )?,
                 mode: c.mode,
                 action: Action::Apply(input),
                 identity: identity.clone(),
@@ -199,6 +208,9 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                 return Err(StoreError::Integrity(
                     "Applied target differs from reviewed plan".into(),
                 ));
+            }
+            if c.execution_configuration.is_some() {
+                return reject(Reject::UnsupportedSchema);
             }
             let host_proofs = proofs(tx, meta, &c, &now, reads)?;
             // Freeze legacy Run references before publishing any changed selection.

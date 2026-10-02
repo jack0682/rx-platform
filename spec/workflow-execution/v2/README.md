@@ -228,3 +228,28 @@ older barrier call. Existing version-9-or-earlier binaries must refuse the store
 Sealed transfer of version-10 stores is unsupported and fails closed; existing
 sealed-store semantics are not expanded by this revision. This source-level
 barrier test does not replace frozen-binary counterexample 2.
+
+## Reviewed configuration decoration (in progress)
+
+The existing process-change request accepts optional `execution_configuration`, an
+exact stored v2 configuration artifact reference. P validates its publication,
+current definitions and package registration before preparing a change ticket.
+The existing signed process review still supplies the graph, host/resource set,
+conditions, completion rules and budgets. Removing only the v2 execution binding
+and restoring the reviewed template recipe must make the candidate byte-identical
+to that reviewed target; changes to any other field are refused. This reuses the
+review as component evidence and does not turn a fixed-input approval into a
+variable-input execution grant.
+
+The reference is retained in the immutable change plan and checked again for
+proposal/staging. Existing impact review, reviewer separation and resource/run
+blockers remain in force. Legacy requests omit the new field and preserve their
+serialization/digest calculation. The builder source identity changes, so older
+unapplied plans must be reproposed rather than silently treated as current.
+
+A v2 target never produces a v1 Host binding plan. It currently reports
+`EXECUTION_V2_HOST_BINDING_REQUIRED`; preparation dispatch and application refuse
+until explicit v2 Host binding/acknowledgement is connected. Thus this unit connects
+reviewed candidate planning, not successful v2 application. Tests of the exact-delta
+guard and legacy change regressions do not establish an end-to-end v2 change or
+frozen-binary compatibility. Those remain first-gate work.

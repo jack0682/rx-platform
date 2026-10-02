@@ -8497,6 +8497,7 @@ fn change_proposal(
     change_id: Id,
 ) -> process_change::Prepared {
     let input = process_change::Create {
+        execution_configuration: None,
         mode: process_change::Mode::Replace,
         id: change_id,
         cell: job.request.cell.clone(),
@@ -8625,6 +8626,7 @@ fn process_change_proposal_failure_is_atomic_and_lost_reply_recovers_original_pl
         f.failure.store(failure, Ordering::SeqCst);
         assert!(f.app.commit_process_change(prepared).is_err());
         let input = process_change::Create {
+            execution_configuration: None,
             mode: process_change::Mode::Replace,
             id: cid.clone(),
             cell: job.request.cell.clone(),
@@ -8780,6 +8782,7 @@ fn process_change_shared_host_closure_requires_rights_for_every_affected_cell() 
         Err(StoreError::Rejected(Rejection::Forbidden))
     ));
     let create = process_change::Create {
+        execution_configuration: None,
         mode: process_change::Mode::Replace,
         id: id(),
         cell: c.cell,

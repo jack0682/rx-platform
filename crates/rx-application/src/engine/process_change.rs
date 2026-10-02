@@ -47,6 +47,28 @@ pub(super) fn read_config(tx: &mut dyn Transaction, r: &ArtifactRef) -> Result<C
     }
     Ok(c)
 }
+pub(super) fn execution_target(
+    tx: &mut dyn Transaction,
+    meta: &Installation,
+    cell: &Name,
+    reference: &Option<ArtifactRef>,
+) -> Result<Option<CellConfiguration>> {
+    reference
+        .as_ref()
+        .map(|r| {
+            if r.schema_id.as_str() != "rx.cell-configuration.v2" {
+                return reject(Reject::UnsupportedSchema);
+            }
+            let target = read_config(tx, r)?;
+            if &target.id != cell || target.execution.is_none() {
+                return reject(Reject::InvalidInput);
+            }
+            validate_configuration(&target)?;
+            requalification::derived_current(tx, meta, &target)?;
+            Ok(target)
+        })
+        .transpose()
+}
 fn impact(tx: &mut dyn Transaction, origin: &Name) -> Result<Impact> {
     prospective_impact(tx, origin, &BTreeSet::new(), &BTreeSet::new())
 }
@@ -232,6 +254,20 @@ fn plan_digest(v: &Change) -> Result<Digest> {
     } else {
         base
     };
+    let base = if let Some(reference) = &v.execution_configuration {
+        if reference != &v.after
+            || reference.schema_id.as_str() != "rx.cell-configuration.v2"
+            || v.host_binding_plan.is_some()
+        {
+            return Err(StoreError::Integrity(
+                "execution change binding differs".into(),
+            ));
+        }
+        canonical::digest("RX-PROCESS-EXECUTION-CHANGE-PLAN-v2", &(base, reference))
+            .map_err(domain_error)?
+    } else {
+        base
+    };
     if let Some(plan) = &v.host_binding_plan {
         if plan.cell != v.cell
             || plan.before_configuration != v.before
@@ -385,6 +421,12 @@ pub(super) fn check_prepared(
         }
         revalidation_root_available(tx, &t.job.request.cell, &before, own_change.as_ref())?;
     }
+    if let Some(target) = &t.execution_configuration {
+        if config_ref(&p.target)? != config_ref(target)? {
+            return reject(Reject::StaleRevision);
+        }
+        requalification::derived_current(tx, meta, target)?;
+    }
     validate_configuration(&p.target)
 }
 impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
@@ -441,7 +483,13 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             let registration = package_intake::current(tx, meta)?.ok_or(
                 StoreError::Unavailable("package verifier unavailable".into()),
             )?;
+            let execution_configuration =
+                execution_target(tx, meta, &input.cell, &input.execution_configuration)?;
+            if job.configuration.execution.is_some() && execution_configuration.is_none() {
+                return reject(Reject::UnsupportedSchema);
+            }
             Ok(Preflight::Verify(Box::new(Ticket {
+                execution_configuration,
                 mode: input.mode,
                 action: Action::Propose(input),
                 identity: identity.clone(),
@@ -492,6 +540,7 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             let before = store_config(tx, &t.job.configuration)?;
             let after = store_config(tx, &p.target)?;
             let mut c = Change {
+                execution_configuration: input.execution_configuration.clone(),
                 mode: input.mode,
                 host_binding_plan: p.host_binding_plan,
                 qualification_activation: None,
@@ -615,7 +664,10 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             let registration = package_intake::current(tx, meta)?.ok_or(
                 StoreError::Unavailable("package verifier unavailable".into()),
             )?;
+            let execution_configuration =
+                execution_target(tx, meta, &input.cell, &c.execution_configuration)?;
             Ok(Preflight::Verify(Box::new(Ticket {
+                execution_configuration,
                 mode: c.mode,
                 action: Action::Stage(input),
                 identity: identity.clone(),
@@ -720,6 +772,9 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             )?;
             if let Some(c) = prior(tx, &scope, fp, CHANGE)? {
                 return Ok(c);
+            }
+            if c.execution_configuration.is_some() {
+                return reject(Reject::UnsupportedSchema);
             }
             if c.state != State::Staged
                 || c.revision != input.target.expected
@@ -836,6 +891,9 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             };
             if matches!(c.state, State::AppliedUnqualified | State::QualifiedActive) {
                 return process_apply::detail(tx, meta, c, before, after);
+            }
+            if c.execution_configuration.is_some() {
+                add(Blocker::ExecutionV2HostBindingRequired);
             }
             if c.host_binding_plan.is_some() {
                 // A binding change proceeds like any other change once every plan Host runs

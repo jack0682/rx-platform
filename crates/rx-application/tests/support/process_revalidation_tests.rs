@@ -26,6 +26,7 @@ fn input(
     mode: Mode,
 ) -> Create {
     Create {
+        execution_configuration: None,
         mode,
         id: id(),
         cell: job.request.cell.clone(),

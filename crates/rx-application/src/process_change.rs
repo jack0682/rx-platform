@@ -30,6 +30,8 @@ impl Mode {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Create {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_configuration: Option<ArtifactRef>,
     #[serde(default, skip_serializing_if = "Mode::is_replace")]
     pub mode: Mode,
     pub id: Id,
@@ -156,6 +158,8 @@ pub struct ApplicationRecord {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Change {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_configuration: Option<ArtifactRef>,
     #[serde(default, skip_serializing_if = "Mode::is_replace")]
     pub mode: Mode,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -185,6 +189,7 @@ pub struct Change {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum Blocker {
+    ExecutionV2HostBindingRequired,
     HostBindingChangeRequired,
     HostBindingBaselineRequired { host: Name },
     HostBindingCommitUnconfirmed { host: Name },
@@ -220,6 +225,7 @@ pub enum Action {
     Apply(Transition),
 }
 pub struct Ticket {
+    pub(crate) execution_configuration: Option<CellConfiguration>,
     pub(crate) mode: Mode,
     pub(crate) action: Action,
     pub(crate) identity: Identity,
@@ -308,6 +314,9 @@ impl Prepared {
             size_bytes: Counter(bytes.len() as u64),
         };
         target.process = Some(Box::new(resolved.clone()));
+        if let Some(execution) = &ticket.execution_configuration {
+            target = execution_wrapper(&target, execution)?;
+        }
         if canonical::bytes(&target).map_err(|e| e.to_string())?.len() > 1_048_576 {
             return Err("expanded cell configuration exceeds1MiB".into());
         }
@@ -322,7 +331,11 @@ impl Prepared {
             }
             _ => {}
         }
-        let host_binding_plan = host_binding_plan(&ticket, &target)?;
+        let host_binding_plan = if target.execution.is_some() {
+            None
+        } else {
+            host_binding_plan(&ticket, &target)?
+        };
         Ok(Self {
             ticket,
             verified,
@@ -332,6 +345,31 @@ impl Prepared {
         })
     }
 }
+fn execution_wrapper(
+    reviewed: &CellConfiguration,
+    candidate: &CellConfiguration,
+) -> Result<CellConfiguration, String> {
+    if candidate.execution.is_none()
+        || candidate.recipe.schema_id.as_str() != rx_process_contract::execution_v2::PLAN_SCHEMA
+    {
+        return Err("explicit v2 execution candidate required".into());
+    }
+    let mut base = reviewed.clone();
+    base.execution = None;
+    let mut plain = candidate.clone();
+    plain.execution = None;
+    plain.recipe = base.recipe.clone();
+    if canonical::bytes(&plain).map_err(|e| e.to_string())?
+        != canonical::bytes(&base).map_err(|e| e.to_string())?
+    {
+        return Err(
+            "v2 candidate differs from the reviewed configuration beyond its execution binding"
+                .into(),
+        );
+    }
+    Ok(candidate.clone())
+}
+
 pub fn builder_digest() -> Digest {
     rx_package::content_digest(
         concat!(
@@ -423,4 +461,74 @@ fn host_binding_plan(
     };
     result.validate()?;
     Ok(Some(result))
+}
+
+#[cfg(test)]
+mod execution_tests {
+    use super::*;
+    #[test]
+    fn execution_decoration_cannot_smuggle_resource_conditions_or_budget_changes() {
+        // Tests the exact delta guard; full configuration/publication validation occurs in P.
+        let n = |s: &str| Name::new(s).unwrap();
+        let id = || Id::new("00000000-0000-4000-8000-000000000001").unwrap();
+        let reference = |schema: &str| ArtifactRef {
+            schema_id: n(schema),
+            sha256: Digest::from_bytes([1; 32]),
+            size_bytes: Counter(1),
+        };
+        let base = CellConfiguration {
+            execution: None,
+            process: None,
+            id: n("cell/a"),
+            environment: crate::Environment::Simulation,
+            definition: reference("definition"),
+            envelope: reference("envelope"),
+            recipe: reference("rx.resolved-process.v1"),
+            site_config_digest: Digest::from_bytes([2; 32]),
+            scopes: vec![n("scope")],
+            hosts: vec![n("host")],
+            executor: n("executor"),
+            maximum_budget: Counter(10),
+            permit_ttl_ns: Counter(100),
+            start_timeout_ns: Counter(200),
+            start_conditions: vec![],
+            steps: vec![],
+            maintained_conditions: vec![],
+            fact_specs: vec![],
+        };
+        let mut candidate = base.clone();
+        candidate.recipe = reference(rx_process_contract::execution_v2::PLAN_SCHEMA);
+        candidate.execution = Some(Box::new(rx_process_contract::execution_v2::Binding {
+            schema: n(rx_process_contract::execution_v2::BINDING_SCHEMA),
+            publication: rx_domain::definition::Reference {
+                catalog: id(),
+                id: id(),
+                revision: Counter(1),
+                digest: Digest::from_bytes([3; 32]),
+            },
+            policy: reference(rx_process_contract::execution_v2::POLICY_SCHEMA),
+            nodes: [(n("compiled"), n("workflow"))].into(),
+        }));
+        assert_eq!(
+            canonical::bytes(&execution_wrapper(&base, &candidate).unwrap()).unwrap(),
+            canonical::bytes(&candidate).unwrap()
+        );
+        let mut changed = candidate.clone();
+        changed.maximum_budget = Counter(11);
+        assert!(execution_wrapper(&base, &changed).is_err());
+        let mut changed = candidate.clone();
+        changed.hosts.push(n("new-host"));
+        assert!(execution_wrapper(&base, &changed).is_err());
+        let mut changed = candidate.clone();
+        changed.scopes.push(n("new-scope"));
+        assert!(execution_wrapper(&base, &changed).is_err());
+        let mut changed = candidate.clone();
+        changed
+            .start_conditions
+            .push(rx_domain::condition::Condition::All { children: vec![] });
+        assert!(execution_wrapper(&base, &changed).is_err());
+        let mut changed = candidate;
+        changed.execution = None;
+        assert!(execution_wrapper(&base, &changed).is_err());
+    }
 }
