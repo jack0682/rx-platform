@@ -63,6 +63,38 @@ durable Run/Part selection, explicit P/Executor v2 negotiation/admission and fro
 deployed-v1 injection. Existing v1 source/wire/binding manifests remain unchanged.
 No Host/UI v2 implementation is authorized by these pure/preparation tests alone.
 
+## Explicit signed template declaration
+
+The declaration schema is `rx.execution-template-catalog.v2`, stored at
+`execution-template-catalog.json` inside a signed `rx.package.v2`
+`DEVICE_REFERENCE` package. A v1 fixed-operation catalog never implies permission
+to substitute its parameter artifact. The declaration pins installation/cell,
+SIMULATION environment, at most 16 named templates (host/normalized finite Program
+Intent and exact NodeContract), and the family/profile/adapter source documents.
+It has a 128 KiB bound. The initial profile is self-contained; locked package
+dependencies and physical declarations are not accepted by this checker.
+
+`VerifiedTemplates` consumes a package already reverified from the registered store
+owner under the exact verification-policy fingerprint. It checks the new declaration,
+source path/bytes/size, manifest asset declarations, present program/default-parameter
+bytes, and exact installation/cell. A workflow template must match both its full
+action and parameter contract. This is distinct from selecting a concrete runtime
+parameter: only the qualified v2 publication/Run policy can approve that selection.
+
+Qualification dependency extraction retains the manifest, signature, all declared
+assets and **every signed file**, including files not used by a selected template.
+The 1024-identity bound is checked here; the eventual combined publication closure
+must also enforce the total bound across definitions, implementations and packages.
+Canonical metadata aliases are retained; conflicting metadata is rejected.
+
+This code establishes signed declaration integrity, not software review, source
+semantic consistency, physical qualification or runtime admission. It is not yet
+mandatory in the publication HTTP path. The remaining connection must require fresh
+store verification and review evidence at publication, preserve reviewer separation
+and recheck policy/current context on commit. The preexisting v1 device-review
+checker and its hashes are unchanged; a v1 approval cannot be relabelled as a v2
+variable-input review. Do not close the P/Executor gate based on these checks alone.
+
 ## Saved Preview and publication
 
 `POST /api/v1/workflow-executions/preview` accepts the existing request-key mutation

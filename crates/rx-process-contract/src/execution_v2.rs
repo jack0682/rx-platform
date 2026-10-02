@@ -8,9 +8,13 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 mod materialize;
+mod templates;
 pub use materialize::{
     InputClosure, Materialized, NodeContract, ParameterContract, compiler_digest, context_digest,
     materialize,
+};
+pub use templates::{
+    TEMPLATE_CATALOG_SCHEMA, TemplateCatalog, TemplateDeclaration, TemplateDocument,
 };
 
 pub const POLICY_SCHEMA: &str = "rx.execution-policy.v2";

@@ -12,6 +12,7 @@ args = parser.parse_args()
 sources = [
     'crates/rx-process-contract/src/execution_v2.rs',
     'crates/rx-process-contract/src/execution_v2/materialize.rs',
+    'crates/rx-process-contract/src/execution_v2/templates.rs',
     'spec/workflow-execution/v2/README.md',
 ]
 value = {
