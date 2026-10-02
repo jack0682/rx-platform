@@ -571,6 +571,15 @@ fn register_hosts(
     hosts: &[Identity],
     c: &CellConfiguration,
 ) -> Vec<HostRegistration> {
+    register_hosts_with_grant(app, hosts, c, expiry(50000), Counter(1))
+}
+fn register_hosts_with_grant(
+    app: &mut App,
+    hosts: &[Identity],
+    c: &CellConfiguration,
+    valid_until: TimePoint,
+    ttl_ms: Counter,
+) -> Vec<HostRegistration> {
     let (_, cell) = app.inspect_cell(&hosts[0], &c.id).unwrap();
     hosts
         .iter()
@@ -599,8 +608,8 @@ fn register_hosts(
                         .flat_map(|s| s.intent.resource_set.clone())
                         .collect(),
                     owner: name(app.installation.id.as_str()),
-                    valid_until: expiry(50000),
-                    ttl_ms: Counter(1),
+                    valid_until: valid_until.clone(),
+                    ttl_ms,
                 },
             };
             app.register_host(h, r.clone()).unwrap();

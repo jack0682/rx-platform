@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 pub mod host_configuration;
+pub mod host_qualification;
 mod materialize;
 mod plan;
 mod templates;

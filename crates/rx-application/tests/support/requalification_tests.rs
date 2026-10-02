@@ -1,7 +1,7 @@
 use super::*;
 use rx_application::requalification as q;
 #[path = "requalification_fixture.rs"]
-mod qsupport;
+pub(crate) mod qsupport;
 fn setup() -> (Fixture, Identity, process_change::Change, qsupport::Fixture) {
     let (f, r, c, q, _p) = setup_sources();
     (f, r, c, q)
@@ -46,7 +46,11 @@ fn setup_sources_count(
         .unwrap();
     (f, release, applied, proof, p)
 }
-fn begin_input(f: &mut Fixture, c: &process_change::Change, p: &qsupport::Fixture) -> q::Begin {
+pub(crate) fn begin_input(
+    f: &mut Fixture,
+    c: &process_change::Change,
+    p: &qsupport::Fixture,
+) -> q::Begin {
     q::Begin {
         runtime_restrictions: BTreeMap::new(),
         device_restrictions: BTreeMap::new(),
@@ -63,7 +67,7 @@ fn begin_input(f: &mut Fixture, c: &process_change::Change, p: &qsupport::Fixtur
         policy_digest: p.policy.digest().unwrap(),
     }
 }
-fn ack(f: &mut Fixture, j: &q::Job) {
+pub(crate) fn ack(f: &mut Fixture, j: &q::Job) {
     for (i, v) in j.request.fences.iter().enumerate() {
         let who = f.hosts.iter().find(|h| h.principal == v.host).unwrap();
         let registered = f.registrations.iter().find(|h| h.id == v.host).unwrap();
@@ -85,7 +89,7 @@ fn ack(f: &mut Fixture, j: &q::Job) {
             .unwrap();
     }
 }
-fn prepared_report(
+pub(crate) fn prepared_report(
     f: &mut Fixture,
     j: &q::Job,
     p: &qsupport::Fixture,
@@ -109,7 +113,7 @@ fn prepared_report(
     };
     q::Prepared::new(*t, q::Verified::check(j, &p.policy, r, s, b).unwrap()).unwrap()
 }
-fn decision(v: &q::Version, j: &q::Job) -> q::Decide {
+pub(crate) fn decision(v: &q::Version, j: &q::Job) -> q::Decide {
     q::Decide {
         review: j.request.id.clone(),
         cell: j.request.origin.clone(),
@@ -434,4 +438,4 @@ fn requalification_large_evidence_is_chunked_atomically_and_restored_exactly() {
 }
 
 #[path = "qualification_activation_tests.rs"]
-mod qualification_activation_tests;
+pub(crate) mod qualification_activation_tests;

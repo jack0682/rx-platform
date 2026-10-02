@@ -79,8 +79,18 @@ pub(super) fn verify(tx: &mut dyn Transaction, c: &CellConfiguration) -> Result<
         .collect::<Vec<_>>();
     plan.verify_policy(&policy, &order)
         .map_err(StoreError::Invalid)?;
-    let current =
-        workflow_model::current_snapshot(tx, &inputs.requests, policy.slot_order.len() as u16)?;
+    let current = match workflow_model::current_snapshot(
+        tx,
+        &inputs.requests,
+        policy.slot_order.len() as u16,
+    ) {
+        // Authoring retains detailed reference diagnostics; eligibility exposes a stale revision
+        // so historical qualification views remain readable with current=false.
+        Err(StoreError::Invalid(detail)) if detail.starts_with("STALE_EXECUTION_REFERENCE ") => {
+            return reject(Reject::StaleRevision);
+        }
+        result => result?,
+    };
     if canonical::bytes(&current.input_closure()).map_err(domain_error)?
         != canonical::bytes(&inputs).map_err(domain_error)?
     {

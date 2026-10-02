@@ -633,6 +633,7 @@ pub mod configuration;
 pub mod configuration_worker;
 
 pub mod qualification;
+pub mod qualification_v2;
 
 pub mod qualification_worker;
 

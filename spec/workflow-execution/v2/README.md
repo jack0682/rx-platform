@@ -259,3 +259,21 @@ the original result; current definition drift blocks new apply without preventin
 original-request lookup. These are application-transaction tests, not native Host
 execution or frozen-binary compatibility. Host qualification/recovery v2 adapters,
 Run/Executor and M3 acceptance remain first-gate/subsequent milestone work as applicable.
+
+
+## Qualification of the derived domain
+
+The [execution-v2 Host qualification contract](../../host-qualification/v2/README.md)
+binds issuance and acknowledgement to the original v2 configuration request/receipt,
+publication and policy. P retains separate durable v1/v2 tasks and fresh Host-read
+checks. Explicit policy-v3 issuance/activation repeats and compares the saved derived
+proof; its computation tickets expire at600seconds, while legacy tickets keep30seconds.
+Definition drift blocks readiness without preventing historical qualification views.
+
+P transaction tests cover report/independent decision/issuance/activation with simulated
+Host acknowledgements, lost activation replies, acceptance at599seconds and rejection
+at exactly600seconds (valid actor sessions/grants and independently refreshed Host
+reads). Wrong current policy suspends qualification; definition revision drift removes
+readiness even when values match. A qualified v2 configuration still cannot create a
+legacy Run. These tests do not establish native Host/Executor effects, Linux latency,
+frozen-v1 compatibility, or M3 acceptance.

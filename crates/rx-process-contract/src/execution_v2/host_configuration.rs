@@ -124,6 +124,10 @@ pub struct Receipt {
     pub policies: BTreeMap<Name, AppliedPolicy>,
 }
 impl Receipt {
+    pub fn digest(&self) -> Result<Digest, String> {
+        self.validate()?;
+        canonical::digest("RX-HOST-CONFIGURATION-RECEIPT-v2", self).map_err(|e| e.to_string())
+    }
     pub fn validate(&self) -> Result<(), String> {
         self.context.validate()?;
         if self.schema.as_str() != RECEIPT_SCHEMA

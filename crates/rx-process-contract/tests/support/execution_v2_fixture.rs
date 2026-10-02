@@ -253,3 +253,148 @@ pub(super) fn host_v2_observation() -> host_configuration::Observation {
         activation_authorized: false,
     }
 }
+
+pub(super) fn qualification_v2_observation()
+-> (host_qualification::Observation, host_configuration::Receipt) {
+    use host_qualification as q;
+    use rx_domain::host_qualification as old;
+    let configured = host_v2_observation();
+    let source = configured.receipt.unwrap();
+    let cell = n("cell");
+    let c = &source.context.request.cells[0];
+    let policy = &source.request.policies[&cell];
+    let mut dependencies = std::collections::BTreeSet::from([
+        c.after_configuration,
+        c.definition,
+        c.envelope,
+        policy.reference.sha256,
+        policy.policy.definition_closure.sha256,
+        policy.policy.report_index.sha256,
+    ]);
+    for p in policy.packages.values() {
+        dependencies.extend([p.manifest, p.signature, p.catalog.sha256]);
+    }
+    for action in policy.policy.templates.values() {
+        let Body::Program(program) = &action.intent.body else {
+            panic!()
+        };
+        dependencies.extend([
+            program.program.sha256,
+            program.parameter_set.sha256,
+            action.intent.profile_digest,
+            action.intent.site_config_digest,
+        ]);
+    }
+    let binding = q::PolicyBinding {
+        publication: policy.publication.clone(),
+        policy: policy.reference.clone(),
+        configuration_request: source.request_digest,
+        configuration_receipt: source.digest().unwrap(),
+    };
+    let context = old::Request {
+        schema: n("rx.host-qualification-request.v1"),
+        id: id(20),
+        host: source.context.request.host.clone(),
+        expected_host_boot: source.context.host_boot.clone(),
+        delivery_journal: source.context.journal.clone(),
+        binding_digest: source.context.request.binding_digest,
+        change: source.context.request.change.clone(),
+        review: id(21),
+        review_revision: Counter(1),
+        review_digest: digest(21),
+        decision_revision: Counter(1),
+        policy_digest: digest(22),
+        application_digest: digest(23),
+        cells: vec![old::CellTarget {
+            cell: cell.clone(),
+            configuration: c.after_configuration,
+            context_request: source.context.request.id.clone(),
+            context_sequence: source.context.sequence,
+            definition: c.definition,
+            envelope: c.envelope,
+            environment: c.environment.clone(),
+            qualification: id(22),
+            qualification_revision: Counter(1),
+            dependencies: dependencies.into_iter().collect(),
+            limitations: artifact("test.limitations.v1", b"simulation only"),
+            allowed_intents: c.required_intents.clone(),
+            purposes: vec![n("PRODUCTION")],
+            epoch: Counter(2),
+            scopes: [(n("scope"), Counter(2))].into(),
+            fence_request: id(23),
+            required_blocks: vec![id(24)],
+        }],
+    };
+    let request = q::Request {
+        schema: n(q::REQUEST_SCHEMA),
+        context: context.clone(),
+        policies: [(cell.clone(), binding.clone())].into(),
+    };
+    let policies: BTreeMap<_, _> = [(
+        cell.clone(),
+        q::AcceptedPolicy {
+            binding,
+            qualification: id(22),
+            qualification_revision: Counter(1),
+            request: context.id.clone(),
+            acceptance_sequence: Counter(2),
+        },
+    )]
+    .into();
+    let receipt = q::Receipt {
+        schema: n(q::RECEIPT_SCHEMA),
+        request_digest: request.digest().unwrap(),
+        request,
+        context: old::Receipt {
+            schema: n("rx.host-qualification-receipt.v1"),
+            request_digest: context.digest().unwrap(),
+            request: context,
+            host_boot: source.context.host_boot.clone(),
+            journal: source.context.journal.clone(),
+            sequence: Counter(2),
+            status: old::Status::Accepted,
+            reason: None,
+            quiescence: source.context.quiescence.clone(),
+            recorded_at: source.context.recorded_at.clone(),
+        },
+        policies: policies.clone(),
+    };
+    let mut snapshot = configured.snapshot;
+    snapshot.cells[0].epoch = Counter(2);
+    snapshot.cells[0].scopes = [(n("scope"), Counter(2))].into();
+    snapshot.cells[0].blocked = vec![id(24)];
+    let applied = snapshot.cells[0].applied.as_ref().unwrap();
+    let accepted = vec![old::AcceptedCell {
+        cell: cell.clone(),
+        request: id(20),
+        qualification: id(22),
+        qualification_revision: Counter(1),
+        acceptance_sequence: Counter(2),
+        host_boot: snapshot.host_boot.clone(),
+        epoch: Counter(2),
+        scopes: snapshot.cells[0].scopes.clone(),
+        configuration: applied.configuration,
+        context_request: applied.request.clone(),
+        context_sequence: applied.receipt_sequence,
+        binding_digest: snapshot.binding_digest,
+    }];
+    let observation = q::Observation {
+        schema: n(q::OBSERVATION_SCHEMA),
+        snapshot,
+        configured: [(
+            cell.clone(),
+            q::ConfiguredPolicy {
+                context: source.policies[&cell].clone(),
+                request_digest: source.request_digest,
+                receipt_digest: source.digest().unwrap(),
+            },
+        )]
+        .into(),
+        accepted,
+        policies,
+        receipt: Some(receipt),
+        receipt_matches_current_host: true,
+        activation_authorized: false,
+    };
+    (observation, source)
+}

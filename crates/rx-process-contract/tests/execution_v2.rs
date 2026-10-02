@@ -368,3 +368,130 @@ fn host_v2_request_rejects_missing_policy_foreign_host_and_missing_package() {
     wrong.context.cells[0].required_intents.clear();
     assert!(wrong.validate().is_err());
 }
+
+#[test]
+fn qualification_v2_binds_original_config_and_complete_local_domain() {
+    let (observation, configuration) = qualification_v2_observation();
+    observation.validate().unwrap();
+    assert!(observation.current());
+    let request = &observation.receipt.as_ref().unwrap().request;
+    request.matches_configuration(&configuration).unwrap();
+    for kind in 0..8 {
+        let mut changed = request.clone();
+        match kind {
+            0 => changed.policies.clear(),
+            1 => {
+                changed
+                    .policies
+                    .get_mut(&n("cell"))
+                    .unwrap()
+                    .configuration_request = digest(99)
+            }
+            2 => {
+                changed
+                    .policies
+                    .get_mut(&n("cell"))
+                    .unwrap()
+                    .configuration_receipt = digest(99)
+            }
+            3 => changed.policies.get_mut(&n("cell")).unwrap().publication.id = id(99),
+            4 => changed.context.cells[0].allowed_intents.clear(),
+            5 => changed.context.cells[0].dependencies.retain(|d| {
+                *d != configuration.request.policies[&n("cell")]
+                    .policy
+                    .report_index
+                    .sha256
+            }),
+            6 => changed.context.cells[0].context_request = id(99),
+            _ => changed.context.cells[0].definition = digest(99),
+        }
+        assert!(
+            changed.matches_configuration(&configuration).is_err(),
+            "mutation {kind}"
+        );
+    }
+    let mut changed = configuration.clone();
+    changed.context.recorded_at.ticks_ns = Counter(1001);
+    changed.validate().unwrap();
+    assert!(
+        request.matches_configuration(&changed).is_err(),
+        "another receipt for same request is not interchangeable"
+    );
+}
+
+#[test]
+fn qualification_v2_currentness_requires_configured_and_qualified_policy_stamps() {
+    let (observation, _) = qualification_v2_observation();
+    for kind in 0..5 {
+        let mut stale = observation.clone();
+        match kind {
+            0 => stale.configured.clear(),
+            1 => stale.policies.clear(),
+            2 => stale.configured.get_mut(&n("cell")).unwrap().receipt_digest = digest(99),
+            3 => stale.configured.get_mut(&n("cell")).unwrap().request_digest = digest(99),
+            _ => {
+                stale
+                    .policies
+                    .get_mut(&n("cell"))
+                    .unwrap()
+                    .binding
+                    .policy
+                    .sha256 = digest(99)
+            }
+        }
+        assert!(!stale.current());
+        assert!(
+            stale.validate().is_err(),
+            "a false currentness claim must fail"
+        );
+        stale.receipt_matches_current_host = false;
+        stale.validate().unwrap(); // Historical facts remain readable without granting current rights.
+    }
+    assert!(
+        canonical::decode_json::<rx_domain::host_qualification::Request>(
+            &canonical::bytes(&observation.receipt.as_ref().unwrap().request).unwrap()
+        )
+        .is_err()
+    );
+    assert!(
+        canonical::decode_json::<rx_domain::host_qualification::Observation>(
+            &canonical::bytes(&observation).unwrap()
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn qualification_v2_receipt_cannot_relabel_acceptance_or_grant_on_rejection() {
+    let (observation, _) = qualification_v2_observation();
+    let receipt = observation.receipt.unwrap();
+    for kind in 0..4 {
+        let mut changed = receipt.clone();
+        match kind {
+            0 => changed.policies.get_mut(&n("cell")).unwrap().request = id(99),
+            1 => {
+                changed
+                    .policies
+                    .get_mut(&n("cell"))
+                    .unwrap()
+                    .qualification_revision = Counter(2)
+            }
+            2 => {
+                changed
+                    .policies
+                    .get_mut(&n("cell"))
+                    .unwrap()
+                    .acceptance_sequence = Counter(99)
+            }
+            _ => changed.request_digest = changed.context.request_digest,
+        }
+        assert!(changed.validate().is_err());
+    }
+    let mut rejected = receipt;
+    rejected.context.status = rx_domain::host_qualification::Status::NotAccepted;
+    rejected.context.reason = Some(n("NOT_READY"));
+    rejected.context.quiescence = None;
+    assert!(rejected.validate().is_err());
+    rejected.policies.clear();
+    rejected.validate().unwrap();
+}

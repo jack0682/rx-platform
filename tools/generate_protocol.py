@@ -374,5 +374,14 @@ g.message("QualificationPayload", "reference:base.ArtifactRef#1 payload:bytes#2"
 g.service("HostQualification", [("Inspect", "InspectQualification", "QualificationPayload"),("Accept", "AcceptQualification", "QualificationPayload"),("Lookup", "LookupQualification", "QualificationPayload")])
 g.write()
 
+# Explicit v2 qualification of a configured derived input domain.
+g = Schema("rx.host.qualification.v2", "rx/host/qualification/v2/qualification.proto", ("rx/contract/v1/contract.proto", "rx/cell/v1/cell.proto"))
+g.message("InspectQualification", "context:base.CallContext#1 binding_hash:Digest#2")
+g.message("AcceptQualification", "call:rx.cell.v1.CellCall#1 binding_hash:Digest#2 reference:base.ArtifactRef#3 payload:bytes#4")
+g.message("LookupQualification", "context:base.CallContext#1 request_id:Id#2 binding_hash:Digest#3")
+g.message("QualificationPayload", "reference:base.ArtifactRef#1 payload:bytes#2")
+g.service("HostExecutionQualification", [("Inspect", "InspectQualification", "QualificationPayload"),("Accept", "AcceptQualification", "QualificationPayload"),("Lookup", "LookupQualification", "QualificationPayload")])
+g.write()
+
 (OUT / "semantic_fields.json").write_text(json.dumps(RULES, sort_keys=True, indent=2) + "\n")
 print(f"Wrote base/cell and optional executor schemas and {len(RULES)} semantic field mappings")

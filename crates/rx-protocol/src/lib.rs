@@ -21,6 +21,9 @@ pub mod rx {
             pub mod v1 {
                 tonic::include_proto!("rx.host.qualification.v1");
             }
+            pub mod v2 {
+                tonic::include_proto!("rx.host.qualification.v2");
+            }
         }
         pub mod configuration {
             pub mod v2 {
@@ -93,3 +96,5 @@ pub use rx::resident::reporting::v1 as resident_reporting;
 pub use rx::resident::execution::v1 as resident_execution;
 
 pub use rx::host::configuration::v2 as host_execution_configuration;
+
+pub use rx::host::qualification::v2 as host_execution_qualification;

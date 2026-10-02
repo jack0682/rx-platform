@@ -244,7 +244,7 @@ pub enum Command {
     BindQualificationRequest {
         identity: Identity,
         task: Id,
-        observation: Box<rx_domain::host_qualification::Observation>,
+        observation: Box<rx_application::qualification_activation::Observation>,
         read_started: TimePoint,
     },
     EnterQualificationSend {
@@ -260,7 +260,7 @@ pub enum Command {
     RecordQualificationObservation {
         identity: Identity,
         task: Id,
-        observation: Box<rx_domain::host_qualification::Observation>,
+        observation: Box<rx_application::qualification_activation::Observation>,
         read_started: TimePoint,
     },
 

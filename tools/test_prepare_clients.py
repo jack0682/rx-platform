@@ -29,10 +29,11 @@ class PreparationBoundary(unittest.TestCase):
             expected={p.relative_to(ROOT/'proto'):p.read_bytes() for p in (ROOT/'proto/rx').rglob('*.proto')}
             actual={p.relative_to(root/'proto'):p.read_bytes() for p in (root/'proto/rx').rglob('*.proto')}
             self.assertEqual(actual,expected)
-            self.assertEqual(len(actual),12)
+            self.assertEqual(len(actual),13)
             self.assertIn(Path('rx/resident/reporting/v1/reporting.proto'),actual)
             self.assertIn(Path('rx/resident/execution/v1/execution.proto'),actual)
             self.assertIn(Path('rx/host/configuration/v2/configuration.proto'),actual)
+            self.assertIn(Path('rx/host/qualification/v2/qualification.proto'),actual)
             self.assertEqual((root/'proto/semantic_fields.json').read_bytes(),
                              (ROOT/'proto/semantic_fields.json').read_bytes())
 

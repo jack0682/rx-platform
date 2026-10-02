@@ -12,7 +12,7 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             let p = authorize(tx, identity, meta, &clock.now(), None, Role::Host, false)?;
             let mut tasks = Vec::new();
             for row in tx.scan("qualificationtask/")? {
-                let t: a::Task = decode(&row, TASK)?;
+                let t = decode_task(tx, &row)?;
                 if t.host != p.id
                     || t.cells.iter().any(|c| !p.cells.contains(c))
                     || after.is_some_and(|id| &t.id <= id)
@@ -36,9 +36,10 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
         &mut self,
         identity: &Identity,
         id: &Id,
-        observation: host::Observation,
+        observation: impl Into<a::Observation>,
         started: TimePoint,
     ) -> Result<a::Task> {
+        let observation = observation.into();
         observation.validate().map_err(StoreError::Invalid)?;
         let meta = &self.installation;
         let clock = &self.clock;
@@ -46,12 +47,15 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             let now = clock.now();
             let (rev, mut t) = task(tx, id)?;
             host_access(tx, meta, &now, identity, &t)?;
+            if observation.is_v2() != !t.execution_policies.is_empty() {
+                return reject(Reject::UnsupportedSchema);
+            }
             let b = batch(tx, &t.batch)?;
             sender(tx, meta, &now, &b, &t)?;
             if t.request.is_some() {
                 return Ok(t);
             }
-            let s = &observation.snapshot;
+            let s = &observation.snapshot();
             if now.age_ns(&started).is_none_or(|age| age > 3_000_000_000)
                 || s.host != t.host
                 || s.host_boot != t.host_boot
@@ -108,7 +112,6 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                         != cell.blocks.iter().map(|b| &b.id).collect()
                     || context.change != b.change
                     || context.request != source.task
-                    || source_receipt.is_v2()
                     || context.receipt_sequence != source_receipt.context().sequence
                     || context.configuration != target.configuration.sha256
                     || context.binding_digest != s.binding_digest
@@ -175,6 +178,44 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                 application_digest: b.job.request.application_digest,
                 cells: targets,
             };
+            let request: a::Request = if t.execution_policies.is_empty() {
+                if source_receipt.is_v2() {
+                    return reject(Reject::UnsupportedSchema);
+                }
+                request.into()
+            } else {
+                let crate::configuration_dispatch::Receipt::V2(configuration) = source_receipt
+                else {
+                    return reject(Reject::UnsupportedSchema);
+                };
+                let request = rx_process_contract::execution_v2::host_qualification::Request {
+                    schema: name(
+                        rx_process_contract::execution_v2::host_qualification::REQUEST_SCHEMA,
+                    ),
+                    context: request,
+                    policies: t.execution_policies.clone(),
+                };
+                request
+                    .matches_configuration(configuration)
+                    .map_err(StoreError::Invalid)?;
+                let a::Observation::V2(observed) = &observation else {
+                    return reject(Reject::UnsupportedSchema);
+                };
+                for (cell, binding) in &t.execution_policies {
+                    let configured = observed
+                        .configured
+                        .get(cell)
+                        .ok_or(StoreError::Rejected(Reject::HostNotPrepared))?;
+                    if configured.context.publication != binding.publication
+                        || configured.context.policy != binding.policy
+                        || configured.request_digest != binding.configuration_request
+                        || configured.receipt_digest != binding.configuration_receipt
+                    {
+                        return reject(Reject::ContinuityUnproven);
+                    }
+                }
+                request.into()
+            };
             t.digest = Some(request.digest().map_err(StoreError::Invalid)?);
             t.request = Some(request);
             t.phase = Phase::Prepared;
@@ -196,7 +237,10 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             let (rev, mut t) = task(tx, id)?;
             host_access(tx, meta, &now, identity, &t)?;
             if t.phase == Phase::SendEntered && !retry {
-                return Ok(a::Emission::Lookup { request: t.id });
+                return Ok(a::Emission::Lookup {
+                    request: t.id,
+                    execution_v2: !t.execution_policies.is_empty(),
+                });
             }
             let b = batch(tx, &t.batch)?;
             sender(tx, meta, &now, &b, &t)?;
@@ -240,9 +284,10 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
         &mut self,
         identity: &Identity,
         id: &Id,
-        observation: host::Observation,
+        observation: impl Into<a::Observation>,
         started: TimePoint,
     ) -> Result<a::Task> {
+        let observation = observation.into();
         observation.validate().map_err(StoreError::Invalid)?;
         let meta = &self.installation;
         let clock = &self.clock;
@@ -250,12 +295,15 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             let now = clock.now();
             let (rev, mut t) = task(tx, id)?;
             host_access(tx, meta, &now, identity, &t)?;
-            if t.phase != Phase::SendEntered || observation.snapshot.host != t.host {
+            if observation.is_v2() != !t.execution_policies.is_empty() {
+                return reject(Reject::UnsupportedSchema);
+            }
+            if t.phase != Phase::SendEntered || observation.snapshot().host != t.host {
                 return reject(Reject::InvalidInput);
             }
             let before = canonical::bytes(&t).map_err(domain_error)?;
-            if let Some(r) = &observation.receipt {
-                if Some(r.request_digest) != t.digest {
+            if let Some(r) = &observation.receipt() {
+                if Some(r.request_digest()) != t.digest {
                     return reject(Reject::InvalidInput);
                 }
                 if let Some(old) = &t.receipt {
@@ -267,16 +315,18 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                 } else {
                     t.receipt = Some(r.clone());
                 }
-            } else if t.receipt.is_some() || observation.accepted.iter().any(|a| a.request == t.id)
+            } else if t.receipt.is_some()
+                || observation.accepted().iter().any(|a| a.request == t.id)
             {
                 t.disputed = true;
             }
             let b = batch(tx, &t.batch)?;
             let expected = t.request.as_ref().is_some_and(|r| {
-                observation.snapshot.binding_digest == r.binding_digest
-                    && observation.snapshot.cells.len() == r.cells.len()
+                let r = r.context();
+                observation.snapshot().binding_digest == r.binding_digest
+                    && observation.snapshot().cells.len() == r.cells.len()
                     && r.cells.iter().all(|c| {
-                        observation.snapshot.cells.iter().any(|s| {
+                        observation.snapshot().cells.iter().any(|s| {
                             s.cell == c.cell
                                 && s.epoch == c.epoch
                                 && s.scopes == c.scopes
@@ -296,19 +346,19 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             });
             t.issue = if t.disputed {
                 Some(Issue::ObservationMismatch)
-            } else if observation.snapshot.host_boot != t.host_boot
-                || observation.snapshot.delivery_journal != t.journal
+            } else if observation.snapshot().host_boot != t.host_boot
+                || observation.snapshot().delivery_journal != t.journal
             {
                 Some(Issue::HostGenerationChanged)
             } else if !expected {
                 Some(Issue::ObservationMismatch)
-            } else if observation.receipt.is_none() {
+            } else if observation.receipt().is_none() {
                 Some(Issue::ReceiptMissing)
             } else if observation
-                .receipt
+                .receipt()
                 .as_ref()
-                .is_some_and(|r| r.status == host::Status::Accepted)
-                && !observation.receipt_matches_current_host
+                .is_some_and(|r| r.context().status == host::Status::Accepted)
+                && !observation.receipt_matches_current_host()
             {
                 Some(Issue::ObservationMismatch)
             } else {
@@ -338,11 +388,7 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
         if now.age_ns(&started).is_some_and(|age| age <= 3_000_000_000) {
             self.qualification_reads.insert(
                 id.clone(),
-                (
-                    started,
-                    canonical::digest("RX-QUALIFICATION-OBSERVATION-v1", &observation)
-                        .map_err(domain_error)?,
-                ),
+                (started, observation.digest().map_err(StoreError::Invalid)?),
             );
         }
         Ok(result)

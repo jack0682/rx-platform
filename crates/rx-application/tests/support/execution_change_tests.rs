@@ -37,15 +37,67 @@ fn reviewed_v2_change_refuses_current_definition_drift_after_host_acceptance() {
 fn reviewed_v2_change_rechecks_definition_drift_after_apply_preflight() {
     run_reviewed_change(2);
 }
+#[test]
+fn reviewed_v2_domain_can_be_issued_and_activated_with_exact_host_policy() {
+    run_reviewed_change(3);
+}
+#[test]
+fn reviewed_v2_domain_rejects_issue_and_activation_at_exact_ticket_expiry() {
+    run_reviewed_change(4);
+}
+#[test]
+fn reviewed_v2_domain_loses_readiness_on_definition_drift_after_activation() {
+    run_reviewed_change(5);
+}
+#[path = "execution_qualification_activation_tests.rs"]
+mod qualification_tests;
 fn run_reviewed_change(stale_definition: u8) {
     let mut action = execution_fixture().policy.templates[&name("node")].clone();
     action.host = name("host/0");
     action.intent.resource_set = vec![name("controller/0")];
-    let mut f = fixture_configured((1, false, false, true, None, false, true), |mut cfg| {
-        cfg.site_config_digest = action.intent.site_config_digest;
-        cfg.steps[0].intent = action.intent.clone();
-        cfg
-    });
+    let mut f = fixture_configured(
+        (1, false, false, true, None, false, stale_definition < 3),
+        |mut cfg| {
+            cfg.definition = signed_package::artifact("test.definition.v1", b"definition");
+            cfg.envelope = signed_package::artifact("test.envelope.v1", b"envelope");
+            cfg.site_config_digest = action.intent.site_config_digest;
+            cfg.steps[0].intent = action.intent.clone();
+            cfg
+        },
+    );
+    if stale_definition >= 3 {
+        // Valid actor sessions and native grants outlive the ticket boundary under test.
+        for who in std::iter::once(&mut f.admin).chain(f.hosts.iter_mut()) {
+            who.session = f
+                .app
+                .authenticated_session(&who.principal, id(), expiry(2_000_000_000_000))
+                .unwrap()
+                .id;
+        }
+        f.operator.session = f
+            .app
+            .authenticated_terminal_user_session(
+                &f.operator.principal,
+                id(),
+                Counter(2_000_000_000_000),
+                Digest::from_bytes([77; 32]),
+            )
+            .unwrap()
+            .id;
+        f.registrations = register_hosts_with_grant(
+            &mut f.app,
+            &f.hosts,
+            &f.configuration,
+            expiry(2_000_000_000_000),
+            Counter(2_000_000),
+        );
+        report_ready(
+            &mut f.app,
+            &f.hosts[0],
+            &f.configuration,
+            &f.registrations[0],
+        );
+    }
     let mut e = execution_fixture_in((f._directory, f.app, f.admin.clone(), f.failure.clone()));
     e.policy.templates.insert(name("node"), action);
     let mut p = review_support::fixture_sequence(&f.configuration, Digest::from_bytes([71; 32]));
@@ -135,7 +187,7 @@ fn run_reviewed_change(stale_definition: u8) {
         .app
         .save_execution_preview(&e.owner, &key, prepared)
         .unwrap();
-    let input = e.publish_input(preview.reference, intake_id.clone());
+    let input = e.publish_input(preview.reference.clone(), intake_id.clone());
     let publication::PublishPreparation::Verify(ticket) = e
         .app
         .prepare_workflow_publication(&e.owner, &id(), input)
@@ -149,7 +201,8 @@ fn run_reviewed_change(stale_definition: u8) {
     )
     .unwrap();
     let published = e.app.commit_workflow_publication(prepared).unwrap();
-    let dependency = e.snapshot.input_closure().definitions[0].clone();
+    let inputs = e.snapshot.input_closure();
+    let dependency = inputs.definitions[0].clone();
     let catalog = e.catalog;
     f.app = e.app;
     f._directory = e.directory;
@@ -336,6 +389,7 @@ fn run_reviewed_change(stale_definition: u8) {
             .record_host_configuration_observation(&f.hosts[0], &task.id, wrong)
             .is_err()
     );
+    let configuration_receipt = accepted.receipt.clone().unwrap();
     f.app
         .record_host_configuration_read(&f.hosts[0], &task.id, accepted, f.clock.now())
         .unwrap();
@@ -403,6 +457,21 @@ fn run_reviewed_change(stale_definition: u8) {
             .unwrap()
             .activation_authorized
     );
+    if stale_definition >= 3 {
+        qualification_tests::activate_domain(
+            &mut f,
+            &release,
+            &done,
+            &p,
+            &target,
+            &published,
+            &inputs,
+            &device,
+            &configuration_receipt,
+            stale_definition,
+        );
+        return;
+    }
     // A changed current definition blocks new effects but never original-key apply recovery.
     revise(&mut f, "Changed after original apply");
     assert!(matches!(

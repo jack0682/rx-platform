@@ -7,6 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 pub const MAX_ARTIFACT: u64 = 8 * 1024 * 1024;
 pub const MAX_TOTAL: u64 = 32 * 1024 * 1024;
 pub const DERIVED_POLICY: &str = "rx.requalification-policy.v3";
+pub const DERIVED_TICKET_TTL_NS: u64 = 600_000_000_000;
 pub const MAX_DERIVED_TOTAL: u64 = 128 * 1024 * 1024;
 fn hash(domain: &str, v: &impl Serialize) -> Result<Digest, String> {
     canonical::digest(domain, v).map_err(|e| e.to_string())

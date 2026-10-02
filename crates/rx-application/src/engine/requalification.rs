@@ -161,9 +161,9 @@ pub(super) fn derived_current(
     }
     Ok(())
 }
-fn ticket_limit(policy: &q::Policy) -> u64 {
+pub(super) fn ticket_limit(policy: &q::Policy) -> u64 {
     if policy.schema.as_str() == q::DERIVED_POLICY {
-        600_000_000_000
+        q::DERIVED_TICKET_TTL_NS
     } else {
         TICKET_TTL_NS
     }
@@ -726,4 +726,25 @@ fn make_decision(
     )?;
     event(tx, "rx.event.requalification-decision.v1", &d)?;
     Ok(d)
+}
+
+#[cfg(test)]
+mod computation_deadline_tests {
+    use super::*;
+    #[test]
+    fn derived_ticket_extension_never_changes_legacy_deadlines() {
+        for (schema, expected) in [
+            ("rx.requalification-policy.v1", 30_000_000_000),
+            ("rx.requalification-policy.v2", 30_000_000_000),
+            (q::DERIVED_POLICY, 600_000_000_000),
+        ] {
+            // Selector-only unit test; issuance/activation tests exercise valid full policies.
+            let policy = q::Policy {
+                schema: name(schema),
+                profiles: vec![],
+                keys: vec![],
+            };
+            assert_eq!(ticket_limit(&policy), expected);
+        }
+    }
 }
