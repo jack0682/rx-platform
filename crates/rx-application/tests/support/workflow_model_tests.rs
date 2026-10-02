@@ -456,6 +456,11 @@ struct ExecutionFixture {
     snapshot: wm::ExecutionSnapshot,
 }
 fn execution_fixture() -> ExecutionFixture {
+    execution_fixture_in(standalone())
+}
+fn execution_fixture_in(
+    parts: (tempfile::TempDir, App, Identity, Arc<AtomicU8>),
+) -> ExecutionFixture {
     use rx_domain::intent::{Body as IntentBody, Intent, Kind, ProgramGoal};
     use rx_process_contract::{ActionBinding, execution_v2 as v2};
     let artifact = |schema: &str, bytes: &[u8]| ArtifactRef {
@@ -463,7 +468,7 @@ fn execution_fixture() -> ExecutionFixture {
         sha256: rx_package::content_digest(bytes),
         size_bytes: Counter(bytes.len() as u64),
     };
-    let (directory, mut app, owner, failure) = standalone();
+    let (directory, mut app, owner, failure) = parts;
     let catalog = app
         .save_definition_catalog(&owner, &id(), catalog_save())
         .unwrap();
@@ -1559,3 +1564,6 @@ fn qualification_case(mut f: ExecutionFixture, corrupted: bool, timing: bool) {
         }
     }
 }
+
+#[path = "execution_change_tests.rs"]
+mod execution_change_tests;

@@ -71,9 +71,8 @@ impl Request {
                 .iter()
                 .filter(|(_, t)| t.host == self.context.host)
                 .collect::<BTreeMap<_, _>>();
-            if local.is_empty()
-                || local.keys().copied().collect::<BTreeSet<_>>()
-                    != input.packages.keys().collect::<BTreeSet<_>>()
+            if local.keys().copied().collect::<BTreeSet<_>>()
+                != input.packages.keys().collect::<BTreeSet<_>>()
             {
                 return Err("v2 Host template/package scope differs".into());
             }

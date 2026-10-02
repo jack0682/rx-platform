@@ -108,7 +108,8 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                         != cell.blocks.iter().map(|b| &b.id).collect()
                     || context.change != b.change
                     || context.request != source.task
-                    || context.receipt_sequence != source_receipt.sequence
+                    || source_receipt.is_v2()
+                    || context.receipt_sequence != source_receipt.context().sequence
                     || context.configuration != target.configuration.sha256
                     || context.binding_digest != s.binding_digest
                 {

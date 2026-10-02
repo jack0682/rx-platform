@@ -8,7 +8,7 @@
     "crates/rx-process-contract/src/execution_v2/materialize.rs": "af7c35ef3806d92aa7a9a48d9b51c43283f658fdd6c38943ba4eb2bc628d520c",
     "crates/rx-process-contract/src/execution_v2/plan.rs": "3f24ac9c63b73a8808e854f408ebb6d91af7e7227a57f203daa0c8cff97cc94a",
     "crates/rx-process-contract/src/execution_v2/templates.rs": "d835981c76e5c3f2722051350fd4f5f8f336989e32a20831d25dac95ab9166cb",
-    "spec/workflow-execution/v2/README.md": "23b22f0088d27475a0c5f0ce82574c9ee209d7df366837819b35ce6af8b531c7"
+    "spec/workflow-execution/v2/README.md": "5cc498c0abe66ede8ec058ca10bf39f45a9672cdf0aa99909c5e18dac2fa65ab"
   },
   "transport": "NOT_ENABLED"
 }

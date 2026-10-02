@@ -333,6 +333,7 @@ pub(super) fn record(
     event(tx, "rx.event.process-change-recorded.v1", c)
 }
 pub(super) fn current(tx: &mut dyn Transaction, meta: &Installation, c: &Change) -> Result<()> {
+    execution_target(tx, meta, &c.cell, &c.execution_configuration)?;
     if c.builder_digest != builder_digest()
         || fingerprint(&change_impact(tx, c)?)? != fingerprint(&c.impact)?
     {
@@ -773,9 +774,6 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             if let Some(c) = prior(tx, &scope, fp, CHANGE)? {
                 return Ok(c);
             }
-            if c.execution_configuration.is_some() {
-                return reject(Reject::UnsupportedSchema);
-            }
             if c.state != State::Staged
                 || c.revision != input.target.expected
                 || c.plan_digest != input.target.plan_digest
@@ -891,9 +889,6 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             };
             if matches!(c.state, State::AppliedUnqualified | State::QualifiedActive) {
                 return process_apply::detail(tx, meta, c, before, after);
-            }
-            if c.execution_configuration.is_some() {
-                add(Blocker::ExecutionV2HostBindingRequired);
             }
             if c.host_binding_plan.is_some() {
                 // A binding change proceeds like any other change once every plan Host runs

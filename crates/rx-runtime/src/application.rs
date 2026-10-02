@@ -336,7 +336,7 @@ pub enum Command {
     BindHostConfiguration {
         identity: Identity,
         task: Id,
-        observation: Box<rx_domain::host_configuration::Observation>,
+        observation: Box<rx_application::configuration_dispatch::Observation>,
         read_started: TimePoint,
     },
     EnterHostConfigurationSend {
@@ -353,7 +353,7 @@ pub enum Command {
         identity: Identity,
         task: Id,
         read_started: TimePoint,
-        observation: Box<rx_domain::host_configuration::Observation>,
+        observation: Box<rx_application::configuration_dispatch::Observation>,
     },
     PrepareProcessChange {
         identity: Identity,

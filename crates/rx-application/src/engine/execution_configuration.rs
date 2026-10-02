@@ -88,3 +88,46 @@ pub(super) fn verify(tx: &mut dyn Transaction, c: &CellConfiguration) -> Result<
     }
     tx.require_workflow_execution_reader()
 }
+pub(super) fn host_policy(
+    tx: &mut dyn Transaction,
+    c: &CellConfiguration,
+    host: &Name,
+) -> Result<Option<v2::host_configuration::CellPolicy>> {
+    let Some(binding) = &c.execution else {
+        return Ok(None);
+    };
+    verify(tx, c)?;
+    let (_, p): (_, crate::workflow_publication::Publication) = load(
+        tx,
+        "workflowpublication",
+        &binding.publication.id,
+        "rx.workflow-publication.v2",
+    )?;
+    let policy = v2::Policy::decode(&BLOBS.read(tx, &p.policy)?).map_err(StoreError::Integrity)?;
+    let mut packages = BTreeMap::new();
+    for (node, _) in policy.templates.iter().filter(|(_, a)| &a.host == host) {
+        let source = p
+            .bindings
+            .get(node)
+            .ok_or(StoreError::Rejected(Reject::InvalidInput))?;
+        let package = p
+            .packages
+            .get(&source.intake)
+            .ok_or(StoreError::Rejected(Reject::InvalidInput))?;
+        packages.insert(
+            node.clone(),
+            v2::host_configuration::Package {
+                manifest: package.object.manifest,
+                signature: package.object.signature,
+                catalog: package.catalog.clone(),
+                template: source.template.clone(),
+            },
+        );
+    }
+    Ok(Some(v2::host_configuration::CellPolicy {
+        publication: p.reference,
+        reference: p.policy,
+        policy,
+        packages,
+    }))
+}

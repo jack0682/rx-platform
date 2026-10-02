@@ -1,5 +1,6 @@
 //! P-owned durable Host configuration exchange. Receipt facts and current applicability are separate.
 use crate::Identity;
+pub use crate::configuration_exchange::{Observation, Receipt, Request};
 use rx_domain::{host_configuration as wire, types::*};
 use serde::{Deserialize, Serialize};
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -56,6 +57,11 @@ pub struct CellProjection {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Task {
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub execution_policies: std::collections::BTreeMap<
+        Name,
+        rx_process_contract::execution_v2::host_configuration::CellPolicy,
+    >,
     pub id: Id,
     pub change: Id,
     pub origin: Name,
@@ -68,10 +74,10 @@ pub struct Task {
     pub runtime_boot: Id,
     pub cells: Vec<CellProjection>,
     pub phase: Phase,
-    pub request: Option<wire::Request>,
+    pub request: Option<Request>,
     pub request_digest: Option<Digest>,
-    pub receipt: Option<wire::Receipt>,
-    pub observation: Option<wire::Observation>,
+    pub receipt: Option<Receipt>,
+    pub observation: Option<Observation>,
     pub issue: Option<Issue>,
     pub integrity_disputed: bool,
     pub(crate) sender: Sender,
@@ -87,8 +93,14 @@ pub struct Batch {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "action", rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum Emission {
-    Send { request: Box<wire::Request> },
-    Lookup { request: Id },
+    Send {
+        request: Box<Request>,
+    },
+    Lookup {
+        request: Id,
+        #[serde(default, skip_serializing_if = "is_false")]
+        execution_v2: bool,
+    },
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct HostStatus {
@@ -109,4 +121,8 @@ pub struct Summary {
     pub all_hosts_acknowledged: bool,
     pub revalidation_required_before_platform_apply: bool,
     pub platform_configuration_applied: bool,
+}
+
+fn is_false(value: &bool) -> bool {
+    !value
 }

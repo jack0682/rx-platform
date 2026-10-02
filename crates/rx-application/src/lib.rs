@@ -44,6 +44,7 @@ pub mod process_review;
 pub mod process_change;
 
 pub mod configuration_dispatch;
+mod configuration_exchange;
 
 pub mod requalification;
 

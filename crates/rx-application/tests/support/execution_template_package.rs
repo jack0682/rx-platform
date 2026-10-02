@@ -42,6 +42,13 @@ pub(super) fn fixture(
     change: impl FnOnce(&mut TemplateCatalog),
     omit_declaration: bool,
 ) -> Fixture {
+    fixture_contracts(change, omit_declaration, None)
+}
+pub(super) fn fixture_contracts(
+    change: impl FnOnce(&mut TemplateCatalog),
+    omit_declaration: bool,
+    contracts: Option<ContractSet>,
+) -> Fixture {
     let mut files = BTreeMap::from([
         (path("program.json"), b"program".to_vec()),
         (path("template.json"), b"template".to_vec()),
@@ -125,11 +132,11 @@ pub(super) fn fixture(
     if !omit_declaration {
         files.insert(path(CATALOG_PATH), catalog_bytes);
     }
-    let contracts = ContractSet {
+    let contracts = contracts.unwrap_or(ContractSet {
         base: Digest::from_bytes([3; 32]),
         cell: Digest::from_bytes([4; 32]),
         package_abi: n("rx.package-abi.v2"),
-    };
+    });
     let target = Target {
         os: OperatingSystem::Linux,
         architecture: Architecture::Arm64,

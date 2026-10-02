@@ -247,9 +247,15 @@ blockers remain in force. Legacy requests omit the new field and preserve their
 serialization/digest calculation. The builder source identity changes, so older
 unapplied plans must be reproposed rather than silently treated as current.
 
-A v2 target never produces a v1 Host binding plan. It currently reports
-`EXECUTION_V2_HOST_BINDING_REQUIRED`; preparation dispatch and application refuse
-until explicit v2 Host binding/acknowledgement is connected. Thus this unit connects
-reviewed candidate planning, not successful v2 application. Tests of the exact-delta
-guard and legacy change regressions do not establish an end-to-end v2 change or
-frozen-binary compatibility. Those remain first-gate work.
+A v2 target never produces a v1 Host binding plan. Its P-side dispatch now uses the
+[v2 Host contract](../../host-configuration/v2/README.md), with durable original
+requests, policy-aware receipts and current-read evidence. The temporary blanket
+v2 application refusal is removed; unchanged review/fence/resource/generation
+gates plus explicit v2 evidence govern applicability. A v1 reply cannot satisfy
+those gates. P integration tests now exercise signed package intake/publication,
+process and impact reviews, registered Host identities, fences and simulated v2
+acknowledgement through atomic unqualified application. Lost apply responses recover
+the original result; current definition drift blocks new apply without preventing
+original-request lookup. These are application-transaction tests, not native Host
+execution or frozen-binary compatibility. Host qualification/recovery v2 adapters,
+Run/Executor and M3 acceptance remain first-gate/subsequent milestone work as applicable.
