@@ -28,6 +28,13 @@ message SubmitExecutionNode {
   bytes binding_hash = 7;
 }
 
+message ReadExecutionSnapshot {
+  rx.contract.v1.CallContext context = 1;
+  string run_id = 2;
+  uint64 visit = 3;
+  bytes binding_hash = 4;
+}
+
 message ReadExecutionPart {
   rx.contract.v1.CallContext context = 1;
   string run_id = 2;
@@ -49,6 +56,7 @@ message ExecutionPayload {
 }
 
 service ExecutionControlService {
+  rpc GetSnapshot (.rx.executor.execution.v2.ReadExecutionSnapshot) returns (.rx.executor.execution.v2.ExecutionPayload);
   rpc SubmitNode (.rx.executor.execution.v2.SubmitExecutionNode) returns (.rx.executor.execution.v2.ExecutionPayload);
   rpc Negotiate (.rx.executor.execution.v2.NegotiateExecution) returns (.rx.executor.execution.v2.ExecutionPayload);
   rpc BeginPart (.rx.executor.execution.v2.BeginExecutionPart) returns (.rx.executor.execution.v2.ExecutionPayload);

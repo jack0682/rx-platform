@@ -580,6 +580,11 @@ pub enum Command {
         command: rx_application::BeginPartRequest,
     },
     CommitExecutionPart(Box<rx_application::execution_inventory::PreparedPart>),
+    GetExecutionSnapshotV2 {
+        identity: Identity,
+        run: Id,
+        visit: Counter,
+    },
     GetExecutionPart {
         identity: Identity,
         run: Id,
@@ -1196,6 +1201,7 @@ pub enum Reply {
     WorkflowResolutionPreparation(Box<rx_application::workflow_model::Preparation>),
     ExecutionObjectBinding(Box<rx_application::execution_inventory::ObjectBinding>),
     ExecutionSession(Box<rx_process_contract::execution_v2::executor::Session>),
+    ExecutionSnapshotV2(Box<rx_process_contract::execution_v2::snapshot::Snapshot>),
     ExecutionOperationPreparation(Box<rx_application::execution_inventory::OperationPreparation>),
     ExecutionPartPreparation(Box<rx_application::execution_inventory::PartPreparation>),
     ExecutionPart(Box<rx_process_contract::execution_v2::executor::Part>),
@@ -2212,6 +2218,14 @@ impl<R: Repository + Send + 'static, C: Clock + 'static, A: QualificationAuthori
                 .engine
                 .commit_execution_part(*prepared)
                 .map(|v| Reply::ExecutionPart(Box::new(v))),
+            Command::GetExecutionSnapshotV2 {
+                identity,
+                run,
+                visit,
+            } => self
+                .engine
+                .execution_snapshot_v2(&identity, &run, visit)
+                .map(|v| Reply::ExecutionSnapshotV2(Box::new(v))),
             Command::GetExecutionPart {
                 identity,
                 run,

@@ -197,6 +197,40 @@ impl wire::execution_control_service_server::ExecutionControlService for Platfor
         };
         encoded(data::PART_SCHEMA, &part)
     }
+    async fn get_snapshot(
+        &self,
+        request: Request<wire::ReadExecutionSnapshot>,
+    ) -> Result<Response<wire::ExecutionPayload>, Status> {
+        let identity = self
+            .validated_executor_identity(&request, request.get_ref().context.as_ref())
+            .await?;
+        let value = request.into_inner();
+        binding(&value.binding_hash)?;
+        if value.visit == 0
+            || value
+                .context
+                .as_ref()
+                .is_some_and(|c| c.expected_revision.is_some() || c.request_key.is_some())
+        {
+            return Err(Status::invalid_argument(
+                "read context and actual visit required",
+            ));
+        }
+        let Reply::ExecutionSnapshotV2(snapshot) = self
+            .call(Command::GetExecutionSnapshotV2 {
+                identity,
+                run: id(&value.run_id)?,
+                visit: Counter(value.visit),
+            })
+            .await?
+        else {
+            return Err(Status::internal("v2 snapshot reply"));
+        };
+        encoded(
+            rx_process_contract::execution_v2::snapshot::SNAPSHOT_SCHEMA,
+            &snapshot,
+        )
+    }
     async fn get_part(
         &self,
         request: Request<wire::ReadExecutionPart>,

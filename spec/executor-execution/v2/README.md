@@ -93,3 +93,21 @@ pin the original operation-binding digest. Full completion consumes the reserved
 abandonment, UNKNOWN and materialization alone cannot consume or replenish it. The
 same-slot retry extension remains a separate acceptance requirement, not established by
 these admission/transport tests.
+
+## GetSnapshot
+
+`GetSnapshot` is a registered/negotiated v2 read at one P control cut for an existing
+Part visit. The bounded `rx.execution-snapshot.v2` reply contains the immutable Plan2,
+configuration reference, PartBinding and fact fields tagged `rx.execution-context.v2`.
+The Run/recipe reference still identifies Plan2. Progress identifies the deterministic
+Part-specific graph obtained by substituting only saved parameter references. The
+validator checks both identities, complete current operation/activation coverage,
+Run/Part ownership, epoch, P sequence and the existing 100 ms freshness bound.
+
+Neither the v1 snapshot service nor the v1 validator accepts this representation.
+The v2 read does not relabel or overwrite a Run recipe to make it appear executable
+as v1. Currentness failure disables admission while original Part/history remains
+readable. The Executor must also validate authenticated peer/session/installation,
+monotonic positions and its own receipt-time bound before using this read; it is not
+a permit. Concrete `Plan::instantiate` is a pure view used by P and v2 clients, not an
+installed fallback recipe.

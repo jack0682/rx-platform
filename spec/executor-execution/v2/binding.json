@@ -3,12 +3,14 @@
   "package": "rx.executor.execution.v2",
   "schema": "rx.executor-execution-binding.v2",
   "source_sha256": {
-    "crates/rx-process-contract/src/execution_v2.rs": "348f3f96a5ed968b5219a2c5b28fa3121546826d0af95546e30b2bb221d17eb3",
+    "crates/rx-process-contract/src/execution_v2.rs": "76c533e9368eb882df22e22c035931c72a38b0f1411acac90c8ff661dc7be1c3",
     "crates/rx-process-contract/src/execution_v2/executor.rs": "896a16e538a9fb01767512f17ccaad4bce9ade075e41ebc8ef90d51e1ce7603b",
     "crates/rx-process-contract/src/execution_v2/materialize.rs": "e438a54de80b31d9242d10bcfa367053886f1a4970251f367a9f3249c9697dbb",
     "crates/rx-process-contract/src/execution_v2/operation.rs": "8dd55a26707b437f7bc97f4bd30843b00d0df5a3e067edbabb5d331f34081c0d",
+    "crates/rx-process-contract/src/execution_v2/plan.rs": "1bbd6fa6e423be82b451afb11cc0a8e4b3b1b2fd1032226297653bf7caa849b1",
     "crates/rx-process-contract/src/execution_v2/runtime_binding.rs": "dcf90aa10960502cbd51d3beed0d45872d8fbba2dfc1ff39305ab1ec8cfec748",
-    "proto/rx/executor/execution/v2/execution.proto": "70ecc409160026442d7e434b71b1f23d8aee103482408a15a4f2a0a6d5183513",
-    "spec/executor-execution/v2/README.md": "d5d8ac0a567036926873ae8e7de308e449129d9fd29f9fbe4b031a02858d871b"
+    "crates/rx-process-contract/src/execution_v2/snapshot.rs": "ce40623cb4c909584757556fcd5ca2866fe6f5e998d90a762772dfc8f6b86c9c",
+    "proto/rx/executor/execution/v2/execution.proto": "f7241255bbe5348cdb02f7741b22c8c46e7600d3a16700501ba00240881120af",
+    "spec/executor-execution/v2/README.md": "e6833cdd474263f1d2605839f78761c96269f2a6277e4ba1790546f5b4da0766"
   }
 }

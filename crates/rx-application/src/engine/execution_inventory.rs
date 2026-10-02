@@ -5,6 +5,7 @@ use rx_domain::definition::Reference;
 use rx_process_contract::execution_v2 as v2;
 mod operations;
 mod parts;
+mod snapshot;
 const POOL: &str = "rx.execution-slot-pool.v2";
 const BINDING: &str = "rx.execution-run-binding.v2";
 fn pool_key(resource: &Reference) -> Name {
@@ -581,7 +582,7 @@ pub(super) fn part_process(
     cell: &Cell,
     visit: Counter,
 ) -> Result<rx_process_contract::ResolvedProcess> {
-    let mut process = (**cell
+    let process = (**cell
         .configuration
         .process
         .as_ref()
@@ -609,35 +610,13 @@ pub(super) fn part_process(
     {
         return Err(StoreError::Integrity("Part graph binding differs".into()));
     }
-    let substitutions: Vec<_> = rx_process_contract::validation::nodes(&process)
-        .into_iter()
-        .filter_map(|node| {
-            if let rx_process_contract::CompiledBody::Operation { binding } = &node.body {
-                Some((node.id.clone(), binding.clone()))
-            } else {
-                None
-            }
-        })
-        .collect();
-    for (node, key) in substitutions {
-        let workflow_node = execution
-            .nodes
-            .get(&node)
-            .ok_or(StoreError::Rejected(Reject::InvalidInput))?;
-        let parameter = binding
-            .parameters
-            .get(workflow_node)
-            .ok_or(StoreError::Rejected(Reject::InvalidInput))?;
-        let action = process
-            .bindings
-            .get_mut(&key)
-            .ok_or(StoreError::Rejected(Reject::InvalidInput))?;
-        let rx_domain::intent::Body::Program(goal) = &mut action.intent.body else {
-            return reject(Reject::UnsupportedSchema);
-        };
-        goal.parameter_set = parameter.clone();
+    v2::Plan {
+        schema: name(v2::PLAN_SCHEMA),
+        binding: (**execution).clone(),
+        process,
     }
-    Ok(process)
+    .instantiate(&binding)
+    .map_err(StoreError::Integrity)
 }
 
 /// Called only after the ordinary frontier and release checks prove full Part completion.

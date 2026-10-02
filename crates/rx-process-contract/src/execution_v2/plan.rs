@@ -70,6 +70,36 @@ impl Plan {
             size_bytes: Counter(bytes.len() as u64),
         })
     }
+    /// Derive a Part-specific view without changing the immutable template plan.
+    pub fn instantiate(
+        &self,
+        part: &super::executor::PartBinding,
+    ) -> Result<ResolvedProcess, String> {
+        self.validate()?;
+        part.validate()?;
+        if part.publication != self.binding.publication
+            || part.policy != self.binding.policy
+            || self.binding.nodes.values().collect::<BTreeSet<_>>()
+                != part.parameters.keys().collect()
+        {
+            return Err("Part and published plan differ".into());
+        }
+        let mut process = self.process.clone();
+        let CompiledBody::Sequence { children } = &process.root.body else {
+            unreachable!("validated sequence");
+        };
+        for child in children {
+            let CompiledBody::Operation { binding } = &child.body else {
+                unreachable!("validated operation");
+            };
+            let action = process.bindings.get_mut(binding).ok_or("missing binding")?;
+            let Body::Program(goal) = &mut action.intent.body else {
+                return Err("Program required".into());
+            };
+            goal.parameter_set = part.parameters[&self.binding.nodes[&child.id]].clone();
+        }
+        Ok(process)
+    }
     pub fn verify_policy(&self, policy: &Policy, order: &[Name]) -> Result<(), String> {
         self.validate()?;
         policy.validate()?;

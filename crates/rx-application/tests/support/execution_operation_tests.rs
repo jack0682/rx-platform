@@ -19,6 +19,30 @@ pub(super) fn exercise(f: &mut Fixture, target: &CellConfiguration, part: &wire:
         expected_cell: f.app.inspect_cell(&f.operator, &target.id).unwrap().0,
         expected_run: revision,
     };
+    let snapshot = f
+        .app
+        .execution_snapshot_v2(&f.executor, &run.id, part.binding.ordinal)
+        .unwrap();
+    snapshot.validate().unwrap();
+    assert_eq!(snapshot.context.resolved.sha256, run.recipe_digest);
+    assert!(
+        f.app
+            .execution_snapshot(&f.executor, &run.id, part.binding.ordinal)
+            .is_err()
+    );
+    assert!(
+        rx_process_contract::execution_validation::validate(
+            &snapshot.context,
+            &snapshot.plan.process
+        )
+        .is_err()
+    );
+    let mut tampered = snapshot.clone();
+    tampered.part.run = id();
+    assert!(tampered.validate().is_err());
+    let mut tampered = snapshot.clone();
+    tampered.context.progress.resolved_digest = run.recipe_digest;
+    assert!(tampered.validate().is_err());
     let key = id();
     let mut wrong = request.clone();
     wrong.part = id();
@@ -186,6 +210,14 @@ pub(super) fn exercise(f: &mut Fixture, target: &CellConfiguration, part: &wire:
     };
     assert_eq!(same.operation.id(), work.operation.id());
     assert_eq!(same.permit, work.permit);
+    let historical = f
+        .app
+        .execution_snapshot_v2(&f.executor, &run.id, part.binding.ordinal)
+        .unwrap();
+    historical.validate().unwrap();
+    assert!(!historical.context.request_admission_allowed);
+    assert_eq!(historical.part.object, part.binding.object);
+    assert_eq!(historical.context.resolved.sha256, run.recipe_digest);
 }
 
 fn complete(f: &mut Fixture, target: &CellConfiguration, part: &wire::Part, work: &Work) {

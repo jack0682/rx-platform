@@ -12,6 +12,8 @@ files = [
     'proto/rx/executor/execution/v2/execution.proto',
     'crates/rx-process-contract/src/execution_v2.rs',
     'crates/rx-process-contract/src/execution_v2/operation.rs',
+    'crates/rx-process-contract/src/execution_v2/snapshot.rs',
+    'crates/rx-process-contract/src/execution_v2/plan.rs',
     'crates/rx-process-contract/src/execution_v2/executor.rs',
     'crates/rx-process-contract/src/execution_v2/materialize.rs',
     'crates/rx-process-contract/src/execution_v2/runtime_binding.rs',

@@ -344,3 +344,5 @@ impl Selection {
         Ok(())
     }
 }
+
+pub mod snapshot;
