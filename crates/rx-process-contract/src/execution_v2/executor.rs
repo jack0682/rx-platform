@@ -108,3 +108,28 @@ impl Part {
         Ok(())
     }
 }
+
+pub const ADMISSION_SCHEMA: &str = "rx.execution-admission.v2";
+/// Public receipt projection; excludes P's internal Work/Host bookkeeping fields.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Admission {
+    pub schema: Name,
+    pub binding: OperationBinding,
+    pub operation: rx_domain::operation::Operation,
+    pub activation: Id,
+    pub permit: Id,
+    pub host: Name,
+}
+impl Admission {
+    pub fn validate(&self) -> Result<(), String> {
+        self.binding.validate()?;
+        if self.schema.as_str() != ADMISSION_SCHEMA
+            || self.binding.operation != *self.operation.id()
+            || self.binding.selection.intent_digest != self.operation.intent_digest()
+        {
+            return Err("execution admission identity differs".into());
+        }
+        Ok(())
+    }
+}

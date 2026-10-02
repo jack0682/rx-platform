@@ -529,3 +529,43 @@ fn run_part_ordinal_does_not_reset_the_publication_slot_ordinal() {
             .is_err()
     );
 }
+
+#[test]
+fn public_admission_roundtrips_without_p_work_and_rejects_foreign_operation() {
+    let p = policy(1, 2);
+    let (selection, intent, _) = selected(&p);
+    let mut publication = reference();
+    publication.id = selection.publication.clone();
+    let operation = rx_domain::operation::Operation::admitted(id(40), intent.digest().unwrap());
+    let receipt = executor::Admission {
+        schema: n(executor::ADMISSION_SCHEMA),
+        activation: id(41),
+        permit: id(42),
+        host: n("host"),
+        operation,
+        binding: OperationBinding {
+            schema: n(OPERATION_SCHEMA),
+            operation: id(40),
+            mandate: id(43),
+            publication,
+            policy: artifact(POLICY_SCHEMA, &canonical::bytes(&p).unwrap()),
+            report: ArtifactRef {
+                schema_id: n("rx.execution-report.v2"),
+                sha256: selection.report_digest,
+                size_bytes: Counter(10),
+            },
+            selection_digest: selection.digest().unwrap(),
+            selection,
+        },
+    };
+    receipt.validate().unwrap();
+    let bytes = canonical::bytes(&receipt).unwrap();
+    let decoded: executor::Admission = canonical::decode_json(&bytes).unwrap();
+    decoded.validate().unwrap();
+    let mut wrong = decoded;
+    wrong.binding.operation = id(44);
+    assert!(wrong.validate().is_err());
+    let mut wrong = receipt;
+    wrong.schema = n("rx.execution-work.v2");
+    assert!(wrong.validate().is_err());
+}

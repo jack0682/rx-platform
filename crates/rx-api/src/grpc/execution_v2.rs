@@ -30,6 +30,22 @@ fn encoded<T: serde::Serialize>(
         canonical::bytes(value).map_err(|_| Status::internal("execution encode"))?,
     )
 }
+fn admitted(work: &rx_application::Work) -> Result<Response<wire::ExecutionPayload>, Status> {
+    let value = data::Admission {
+        schema: rx_protocol_adapter::name(data::ADMISSION_SCHEMA)?,
+        binding: work
+            .execution
+            .as_deref()
+            .ok_or_else(|| Status::internal("v2 admission binding missing"))?
+            .clone(),
+        operation: work.operation.clone(),
+        activation: work.activation.clone(),
+        permit: work.permit.clone(),
+        host: work.host.clone(),
+    };
+    value.validate().map_err(Status::data_loss)?;
+    encoded(data::ADMISSION_SCHEMA, &value)
+}
 #[tonic::async_trait]
 impl wire::execution_control_service_server::ExecutionControlService for PlatformIngress {
     async fn submit_node(
@@ -85,7 +101,7 @@ impl wire::execution_control_service_server::ExecutionControlService for Platfor
         };
         let ticket = match *preparation {
             rx_application::execution_inventory::OperationPreparation::Recorded(work) => {
-                return encoded("rx.execution-work.v2", &work);
+                return admitted(&work);
             }
             rx_application::execution_inventory::OperationPreparation::Compute(ticket) => ticket,
         };
@@ -101,7 +117,7 @@ impl wire::execution_control_service_server::ExecutionControlService for Platfor
         else {
             return Err(Status::internal("node commit reply"));
         };
-        encoded("rx.execution-work.v2", &work)
+        admitted(&work)
     }
     async fn negotiate(
         &self,

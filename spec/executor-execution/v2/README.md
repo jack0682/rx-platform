@@ -82,8 +82,9 @@ names only Cell, Run, Part, compiled node and mandate. P selects the published
 workflow node, immutable Part report/parameter and reserved slot. A private 30-second
 computation ticket re-materializes the approved report outside the writer; the commit
 rechecks current instance/definitions/authority/frontier before the existing operation
-and permit transaction. The bounded reply is `rx.execution-work.v2`, carrying Work and
-its explicit immutable execution binding. Original-key/occupied-node recovery returns
+and permit transaction. The bounded reply is `rx.execution-admission.v2`, carrying the shared Admission
+projection: operation, activation, permit, assigned Host and immutable execution
+binding. It excludes internal P Work/Host bookkeeping and is available in the SDK. Original-key/occupied-node recovery returns
 the original operation without granting new authority. No caller Intent or parameter
 reference is accepted. The per-Part graph substitutes only saved parameter references;
 frontier completion still needs actual released operation evidence.
