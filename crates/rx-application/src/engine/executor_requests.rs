@@ -52,6 +52,7 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                 &mut run,
                 revision,
                 command.expected_budget,
+                false,
                 ProcessingContext {
                     identity,
                     meta,

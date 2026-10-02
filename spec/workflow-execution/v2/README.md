@@ -320,10 +320,33 @@ actor/request and stable instance custody. Revising an instance or replenishing 
 does not make that identity available to another Run. Original replies and read-only
 history survive revision changes and restart without renewing authority.
 
-These APIs produce a Prepared Run and pending actual-object binding, not permission
-to dispatch. Legacy Start/BeginPart cannot activate them. Explicit Start2/Part2,
-budget consumption, per-node selection/permit, completion/UNKNOWN settlement and
-Executor2 remain required. Transaction tests include signed qualification first,
+Inventory APIs produce a Prepared Run and pending actual-object binding, not permission
+to dispatch. Legacy Start/BeginPart cannot activate them. The explicit P Start2/Part2
+path below consumes these records; per-node selection/permit, completion/UNKNOWN
+settlement and the deployed Executor2 remain required. Transaction tests include signed qualification first,
 simulated Host acknowledgement, two distinct pools, commit/reply loss, cross-Run and
 revision reuse refusals, explicit replenishment and actual SQLite reopen; they are
 not native operating or M3 acceptance evidence.
+
+
+## Negotiated P Start2 and Part2
+
+The [Executor admission contract](../../executor-execution/v2/README.md) uses a separate
+v2 binding declaration on the current registered Executor peer/cell. P stores its
+session/runtime/store/definition identity; matching a public hash is not attestation
+or an operation permit. Start2 runs the existing terminal, purpose, conditions, Host
+arm and mandate path, with exact reserved budget and current object/pool checks again
+at the final arm acknowledgement. Legacy start/part requests cannot opt in.
+
+Part2 uses a P-created non-deserializable computation ticket. Materialization and
+approved-index verification occur off-writer; commit rechecks current state and saves
+the immutable report/parameters, normal PartAttempt, one budget consumption and pool
+Part ownership atomically. Replaying the original key returns the same Part; the
+unfinished Part blocks another slot. Authenticated v2 reads permit only that Run/Part's
+bound artifacts. Instance drift before the final arm or after CPU verification blocks
+new admission while original artifacts remain readable.
+
+Current evidence is P transaction tests with registered Executor identity and simulated
+Host acknowledgements. The service is wired into the existing TLS peer ingress; no
+new native Executor/Host effect, frozen-binary case2 or M3 acceptance is established
+by these tests. Node-operation admission and recovery/completion remain incomplete.

@@ -128,6 +128,10 @@ fn build_router(
         )
         .route("/api/v1/workflow-resolution", get(workflow_model::report))
         .route(
+            "/api/v1/workflow-executions/start",
+            post(execution_inventory::start_run),
+        )
+        .route(
             "/api/v1/workflow-executions/objects",
             post(execution_inventory::bind_object).get(execution_inventory::object),
         )

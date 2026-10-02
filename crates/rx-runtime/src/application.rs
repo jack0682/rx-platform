@@ -558,6 +558,33 @@ pub enum Command {
         run: Id,
         ordinal: Counter,
     },
+    NegotiateExecutionSession {
+        identity: Identity,
+        cell: Name,
+        binding: Digest,
+    },
+    StartExecutionRun {
+        identity: Identity,
+        request_key: String,
+        command: StartRun,
+    },
+    PrepareExecutionPart {
+        identity: Identity,
+        key: Id,
+        command: rx_application::BeginPartRequest,
+    },
+    CommitExecutionPart(Box<rx_application::execution_inventory::PreparedPart>),
+    GetExecutionPart {
+        identity: Identity,
+        run: Id,
+        part: Id,
+    },
+    GetExecutionPartArtifact {
+        identity: Identity,
+        run: Id,
+        part: Id,
+        reference: ArtifactRef,
+    },
     InitializeExecutionSlots {
         identity: Identity,
         key: Id,
@@ -1162,6 +1189,10 @@ pub enum Reply {
     WorkflowModels(Box<rx_application::workflow_model::Page>),
     WorkflowResolutionPreparation(Box<rx_application::workflow_model::Preparation>),
     ExecutionObjectBinding(Box<rx_application::execution_inventory::ObjectBinding>),
+    ExecutionSession(Box<rx_process_contract::execution_v2::executor::Session>),
+    ExecutionPartPreparation(Box<rx_application::execution_inventory::PartPreparation>),
+    ExecutionPart(Box<rx_process_contract::execution_v2::executor::Part>),
+    ExecutionPartArtifact(Vec<u8>),
     ExecutionSlotPool(Box<rx_application::execution_inventory::Pool>),
     ExecutionRunBinding(Box<rx_application::execution_inventory::RunBinding>),
     ExecutionPreviewPreparation(Box<rx_application::workflow_publication::Preparation>),
@@ -2134,6 +2165,51 @@ impl<R: Repository + Send + 'static, C: Clock + 'static, A: QualificationAuthori
                 .engine
                 .execution_object(&identity, &run, ordinal)
                 .map(|v| Reply::ExecutionObjectBinding(Box::new(v))),
+            Command::NegotiateExecutionSession {
+                identity,
+                cell,
+                binding,
+            } => self
+                .engine
+                .negotiate_execution_session(&identity, &cell, binding)
+                .map(|v| Reply::ExecutionSession(Box::new(v))),
+            Command::StartExecutionRun {
+                identity,
+                request_key,
+                command,
+            } => self
+                .engine
+                .start_execution_run(&identity, &request_key, command)
+                .map(Reply::Attempt),
+            Command::PrepareExecutionPart {
+                identity,
+                key,
+                command,
+            } => self
+                .engine
+                .prepare_execution_part(&identity, &key, command)
+                .map(|v| Reply::ExecutionPartPreparation(Box::new(v))),
+            Command::CommitExecutionPart(prepared) => self
+                .engine
+                .commit_execution_part(*prepared)
+                .map(|v| Reply::ExecutionPart(Box::new(v))),
+            Command::GetExecutionPart {
+                identity,
+                run,
+                part,
+            } => self
+                .engine
+                .execution_part(&identity, &run, &part)
+                .map(|v| Reply::ExecutionPart(Box::new(v))),
+            Command::GetExecutionPartArtifact {
+                identity,
+                run,
+                part,
+                reference,
+            } => self
+                .engine
+                .execution_part_artifact(&identity, &run, &part, &reference)
+                .map(Reply::ExecutionPartArtifact),
             Command::InitializeExecutionSlots {
                 identity,
                 key,

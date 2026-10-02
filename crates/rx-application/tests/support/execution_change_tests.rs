@@ -57,6 +57,18 @@ fn execution_slot_reservations_are_atomic_across_runs_and_require_explicit_reset
 fn actual_object_custody_is_atomic_and_not_reusable_by_another_run() {
     run_reviewed_change(7);
 }
+#[test]
+fn negotiated_v2_start_and_part_admission_preserve_budget_and_original_artifacts() {
+    run_reviewed_change(8);
+}
+#[test]
+fn v2_start_refuses_instance_revision_drift_during_arming() {
+    run_reviewed_change(9);
+}
+#[test]
+fn v2_part_commit_refuses_instance_revision_drift_after_computation() {
+    run_reviewed_change(10);
+}
 #[path = "execution_qualification_activation_tests.rs"]
 mod qualification_tests;
 fn run_reviewed_change(stale_definition: u8) {
@@ -64,7 +76,15 @@ fn run_reviewed_change(stale_definition: u8) {
     action.host = name("host/0");
     action.intent.resource_set = vec![name("controller/0")];
     let mut f = fixture_configured(
-        (1, false, false, true, None, false, stale_definition < 3),
+        (
+            1,
+            false,
+            false,
+            true,
+            None,
+            stale_definition >= 8,
+            stale_definition < 3,
+        ),
         |mut cfg| {
             cfg.definition = signed_package::artifact("test.definition.v1", b"definition");
             cfg.envelope = signed_package::artifact("test.envelope.v1", b"envelope");
@@ -108,7 +128,7 @@ fn run_reviewed_change(stale_definition: u8) {
     }
     let mut e = execution_fixture_in((f._directory, f.app, f.admin.clone(), f.failure.clone()));
     e.policy.templates.insert(name("node"), action);
-    if stale_definition == 7 {
+    if stale_definition >= 7 {
         e.requests.truncate(1);
         e.policy.candidates.truncate(1);
     }

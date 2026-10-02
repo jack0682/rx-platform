@@ -61,6 +61,7 @@ mod evidence;
 mod execution_configuration;
 mod execution_inventory;
 mod execution_read;
+mod execution_session;
 mod executor_peer;
 mod executor_requests;
 mod handover;

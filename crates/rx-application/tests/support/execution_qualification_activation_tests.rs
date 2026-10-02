@@ -467,6 +467,10 @@ pub(super) fn activate_domain(
         .qualification_batch(&f.admin, &target.id, &batch.id)
         .unwrap();
     assert!(view.current && !view.operation_authorized);
+    if test_case >= 8 {
+        start_part_tests::exercise(f, target, published, inputs, saved.policy(), test_case);
+        return;
+    }
     if test_case >= 6 {
         inventory_tests::exercise(f, target, published, inputs, saved.policy(), test_case == 7);
         return;
@@ -510,3 +514,6 @@ pub(super) fn activate_domain(
 
 #[path = "execution_inventory_tests.rs"]
 mod inventory_tests;
+
+#[path = "execution_start_part_tests.rs"]
+mod start_part_tests;

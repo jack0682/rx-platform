@@ -8,6 +8,7 @@ pub(super) struct StartBasis<'a> {
     pub run: &'a Run,
     pub cell_revision: Counter,
     pub cell: &'a Cell,
+    pub execution_v2: bool,
 }
 pub(super) struct ValidatedStart {
     pub executor_session: Id,
@@ -40,7 +41,7 @@ pub(super) fn validate_candidate(
     check_revision(basis.cell_revision, command.expected_cell)?;
     check_revision(basis.run_revision, command.expected_run)?;
     run_configuration::require_current(tx, run, cell)?;
-    if cell.configuration.execution.is_some() {
+    if cell.configuration.execution.is_some() != basis.execution_v2 {
         return reject(Reject::UnsupportedSchema);
     }
     if run.state != RunState::Prepared {
@@ -88,6 +89,21 @@ pub(super) fn validate_candidate(
         Role::Executor,
         &run.cell,
     )?;
+    if basis.execution_v2 {
+        if command.purpose != Purpose::Production || command.budget_unit != BudgetUnit::PartAttempt
+        {
+            return reject(Reject::UnsupportedSchema);
+        }
+        execution_inventory::start_current(
+            tx,
+            meta,
+            now,
+            run,
+            cell,
+            &executor.id,
+            command.budget_limit,
+        )?;
+    }
     let mut host_boots = BTreeMap::new();
     for host in &cell.configuration.hosts {
         let registration = prepared_host(tx, cell, host, meta, now)?;
@@ -169,6 +185,7 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                     run: &run,
                     cell_revision,
                     cell: &cell,
+                    execution_v2: false,
                 },
                 &request,
             ) {

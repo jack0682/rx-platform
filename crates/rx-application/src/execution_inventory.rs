@@ -96,3 +96,45 @@ pub struct ObjectBinding {
     pub request: Id,
     pub created_at: TimePoint,
 }
+
+pub enum PartPreparation {
+    Recorded(Box<rx_process_contract::execution_v2::executor::Part>),
+    Compute(Box<PartTicket>),
+}
+pub struct PartTicket {
+    pub(crate) identity: crate::Identity,
+    pub(crate) key: Id,
+    pub(crate) command: crate::BeginPartRequest,
+    pub(crate) run_revision: Counter,
+    pub(crate) object: ObjectBinding,
+    pub(crate) binding: RunBinding,
+    pub(crate) policy: rx_process_contract::execution_v2::Policy,
+    pub(crate) inputs: rx_process_contract::execution_v2::InputClosure,
+    pub(crate) index: rx_process_contract::execution_v2::ValidatedIndex,
+    pub(crate) boot: Id,
+    pub(crate) issued: TimePoint,
+}
+pub struct PreparedPart {
+    pub(crate) ticket: PartTicket,
+    pub(crate) materialized: rx_process_contract::execution_v2::Materialized,
+}
+impl PreparedPart {
+    pub fn prepare(ticket: PartTicket) -> Result<Self, String> {
+        let materialized = rx_process_contract::execution_v2::materialize(
+            &ticket.policy,
+            &ticket.inputs,
+            ticket.object.candidate,
+            ticket.object.slot,
+        )?;
+        materialized.verify_index(
+            &ticket.policy,
+            &ticket.index,
+            ticket.object.candidate,
+            ticket.object.slot,
+        )?;
+        Ok(Self {
+            ticket,
+            materialized,
+        })
+    }
+}

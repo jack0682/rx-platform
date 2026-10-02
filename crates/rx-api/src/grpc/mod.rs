@@ -3,6 +3,7 @@ mod assignment;
 mod cell_negotiation;
 mod evidence;
 mod execution_read;
+mod execution_v2;
 mod executor_plan;
 mod operation;
 mod production;
@@ -111,6 +112,7 @@ impl PlatformIngress {
                     .max_decoding_message_size(1_048_576)
                     .max_encoding_message_size(1_048_576),
             )
+            .add_service(rx_protocol::execution_v2::execution_control_service_server::ExecutionControlServiceServer::new(self.clone()).max_decoding_message_size(1_048_576).max_encoding_message_size(1_048_576))
             .add_service(
                 rx_protocol::executor::executor_read_service_server::ExecutorReadServiceServer::new(self.clone())
                     .max_decoding_message_size(1_048_576).max_encoding_message_size(1_048_576),

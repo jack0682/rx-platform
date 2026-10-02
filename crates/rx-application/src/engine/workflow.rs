@@ -154,6 +154,23 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
         request_key: &str,
         command: StartRun,
     ) -> Result<StartAttempt> {
+        self.start_run_profile(identity, request_key, command, false)
+    }
+    pub fn start_execution_run(
+        &mut self,
+        identity: &Identity,
+        request_key: &str,
+        command: StartRun,
+    ) -> Result<StartAttempt> {
+        self.start_run_profile(identity, request_key, command, true)
+    }
+    fn start_run_profile(
+        &mut self,
+        identity: &Identity,
+        request_key: &str,
+        command: StartRun,
+        execution_v2: bool,
+    ) -> Result<StartAttempt> {
         let run_id = &command.run;
         let clock = &self.clock;
         let meta = &self.installation;
@@ -172,7 +189,11 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             let (scope, fingerprint) = request(
                 meta,
                 &principal,
-                "Cell.StartRun",
+                if execution_v2 {
+                    "Execution.StartRun"
+                } else {
+                    "Cell.StartRun"
+                },
                 request_key,
                 &(
                     run_id,
@@ -197,6 +218,7 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                     run: &run,
                     cell_revision,
                     cell: &cell,
+                    execution_v2,
                 },
                 &command,
             )?;
@@ -348,6 +370,20 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                 if executor.id != attempt.executor_session {
                     return reject(Reject::Unauthenticated);
                 }
+                if cell.configuration.execution.is_some() {
+                    execution_inventory::start_current(
+                        tx,
+                        meta,
+                        &now,
+                        &run,
+                        &cell,
+                        &executor.id,
+                        run.budget
+                            .as_ref()
+                            .ok_or(StoreError::Rejected(Reject::InvalidInput))?
+                            .limit(),
+                    )?;
+                }
                 for h in &cell.configuration.hosts {
                     let current = prepared_host(tx, &cell, h, meta, &now)?;
                     if attempt.host_boots.get(h) != Some(&current.boot_id) {
@@ -461,6 +497,7 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                 &mut run,
                 revision,
                 expected_budget,
+                false,
                 ProcessingContext {
                     identity,
                     meta,
@@ -545,6 +582,7 @@ pub(super) fn begin_part_transition(
     run: &mut Run,
     revision: Counter,
     expected_budget: Counter,
+    execution_v2: bool,
     context: ProcessingContext<'_>,
 ) -> Result<PartSnapshot> {
     let ProcessingContext {
@@ -553,7 +591,7 @@ pub(super) fn begin_part_transition(
         now,
     } = context;
     active_run(tx, cell, run, identity, meta, now)?;
-    if cell.configuration.execution.is_some() {
+    if cell.configuration.execution.is_some() != execution_v2 {
         return reject(Reject::UnsupportedSchema);
     }
     check_revision(

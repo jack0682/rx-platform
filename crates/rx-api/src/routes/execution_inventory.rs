@@ -125,3 +125,23 @@ pub(super) async fn object(
         _ => Err(mismatch()),
     }
 }
+
+pub(super) async fn start_run(
+    State(s): State<ApiState>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Response, ApiError> {
+    let input: Mutation<StartRun> = decode(&body)?;
+    match s
+        .runtime
+        .request(Command::StartExecutionRun {
+            identity: identity(&s, &headers)?,
+            request_key: input.request_key.to_string(),
+            command: input.command,
+        })
+        .await?
+    {
+        Reply::Attempt(value) => Ok(Json(value).into_response()),
+        _ => Err(mismatch()),
+    }
+}

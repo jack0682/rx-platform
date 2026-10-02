@@ -27,6 +27,7 @@ pub(super) fn plan(c: &CellConfiguration) -> Result<Option<v2::Plan>> {
 pub(super) struct Domain {
     pub policy: v2::Policy,
     pub inputs: v2::InputClosure,
+    pub index: v2::ValidatedIndex,
 }
 pub(super) fn verify(tx: &mut dyn Transaction, c: &CellConfiguration) -> Result<()> {
     domain(tx, c).map(|_| ())
@@ -68,7 +69,7 @@ pub(super) fn domain(tx: &mut dyn Transaction, c: &CellConfiguration) -> Result<
     let policy = v2::Policy::decode(&BLOBS.read(tx, &p.policy)?).map_err(StoreError::Integrity)?;
     let inputs = v2::InputClosure::decode(&BLOBS.read(tx, &policy.definition_closure)?, &policy)
         .map_err(StoreError::Integrity)?;
-    v2::ReportIndex::decode(&BLOBS.read(tx, &policy.report_index)?, &policy)
+    let index = v2::ReportIndex::decode(&BLOBS.read(tx, &policy.report_index)?, &policy)
         .map_err(StoreError::Integrity)?;
     if preview.inputs != policy.definition_closure
         || preview.index != policy.report_index
@@ -104,7 +105,11 @@ pub(super) fn domain(tx: &mut dyn Transaction, c: &CellConfiguration) -> Result<
         return reject(Reject::StaleRevision);
     }
     tx.require_workflow_execution_reader()?;
-    Ok(Some(Domain { policy, inputs }))
+    Ok(Some(Domain {
+        policy,
+        inputs,
+        index,
+    }))
 }
 pub(super) fn host_policy(
     tx: &mut dyn Transaction,
