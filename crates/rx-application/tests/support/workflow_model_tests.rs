@@ -826,7 +826,7 @@ impl ExecutionFixture {
         use rx_application::workflow_publication::{CandidateInput, PreviewInput};
         PreviewInput {
             id: id(),
-            slots: 2,
+            slots: self.policy.slot_order.len() as u16,
             candidates: self
                 .requests
                 .iter()
@@ -1172,6 +1172,15 @@ fn execution_publication_requires_exact_packages_and_rechecks_authority_after_ve
 
 #[test]
 fn derived_qualification_recomputes_every_candidate_even_with_a_valid_signed_report() {
+    for corrupted in [false, true] {
+        qualification_case(execution_fixture(), corrupted, false);
+    }
+}
+
+#[path = "execution_dense_measurement.rs"]
+mod dense_measurement;
+
+fn qualification_case(mut f: ExecutionFixture, corrupted: bool, timing: bool) {
     use ed25519_dalek::{Signer, SigningKey};
     use rx_application::requalification as q;
     use rx_process_contract::{
@@ -1186,8 +1195,10 @@ fn derived_qualification_recomputes_every_candidate_even_with_a_valid_signed_rep
         blobs.insert(r.sha256, bytes);
         r
     }
-    for corrupted in [false, true] {
-        let mut f = execution_fixture();
+    {
+        let slots = f.policy.slot_order.len() as u16;
+        let nodes = f.policy.templates.len();
+        let started = std::time::Instant::now();
         let input = f.preview_input();
         let key = id();
         let prepared = f.prepare_preview(&key, input);
@@ -1195,9 +1206,20 @@ fn derived_qualification_recomputes_every_candidate_even_with_a_valid_signed_rep
             .app
             .save_execution_preview(&f.owner, &key, prepared)
             .unwrap();
+        let preview_seconds = started.elapsed().as_secs_f64();
+        if timing {
+            eprintln!("DENSE preview complete: {preview_seconds:.6}s");
+        }
         let (package, intake) = f.enroll_package();
         let publish = f.publish_input(preview.reference.clone(), intake);
+        let publication_started = std::time::Instant::now();
         let mut publication = f.publish(&package, &id(), publish).unwrap();
+        let publication_seconds = publication_started.elapsed().as_secs_f64();
+        if timing {
+            eprintln!(
+                "DENSE publication preview={preview_seconds:.6}s publish={publication_seconds:.6}s"
+            );
+        }
         let saved = f
             .app
             .execution_preview(&f.owner, &preview.reference)
@@ -1209,7 +1231,7 @@ fn derived_qualification_recomputes_every_candidate_even_with_a_valid_signed_rep
             entries: vec![],
         };
         for candidate in 0..2 {
-            for slot in 0..2 {
+            for slot in 0..slots {
                 index.entries.push((
                     candidate,
                     slot,
@@ -1259,20 +1281,30 @@ fn derived_qualification_recomputes_every_candidate_even_with_a_valid_signed_rep
                 body,
             }
         };
-        let child = make(
-            "node",
-            CompiledBody::Operation {
-                binding: name("node"),
-            },
-        );
-        let child_id = child.id.clone();
+        let children: Vec<_> = inputs
+            .spec
+            .steps
+            .iter()
+            .map(|step| {
+                make(
+                    step.id.as_str(),
+                    CompiledBody::Operation {
+                        binding: step.id.clone(),
+                    },
+                )
+            })
+            .collect();
+        let node_map = children
+            .iter()
+            .map(|child| (child.id.clone(), child.source.node.clone()))
+            .collect();
         let plan = v2::Plan {
             schema: name(v2::PLAN_SCHEMA),
             binding: v2::Binding {
                 schema: name(v2::BINDING_SCHEMA),
                 publication: publication.reference.clone(),
                 policy: policy_ref.clone(),
-                nodes: [(child_id.clone(), name("node"))].into(),
+                nodes: node_map,
             },
             process: ResolvedProcess {
                 schema: name("rx.resolved-process.v1"),
@@ -1282,7 +1314,7 @@ fn derived_qualification_recomputes_every_candidate_even_with_a_valid_signed_rep
                 root: make(
                     "root",
                     CompiledBody::Sequence {
-                        children: vec![child],
+                        children: children.clone(),
                     },
                 ),
                 bindings: policy.templates.clone(),
@@ -1306,13 +1338,25 @@ fn derived_qualification_recomputes_every_candidate_even_with_a_valid_signed_rep
         config.envelope = blob(&mut blobs, "test.envelope.v1", b"envelope".to_vec());
         let site = blob(&mut blobs, "test.site.v1", b"site".to_vec());
         config.site_config_digest = site.sha256;
-        let action = &policy.templates[&name("node")];
-        config.steps.truncate(1);
-        config.steps[0].id = child_id;
-        config.steps[0].host = action.host.clone();
-        config.steps[0].intent = action.intent.clone();
-        config.steps[0].predecessors.clear();
-        config.hosts.push(action.host.clone());
+        let prototype = config.steps[0].clone();
+        config.steps = children
+            .iter()
+            .map(|child| {
+                let action = &policy.templates[&child.source.node];
+                let mut step = prototype.clone();
+                step.id = child.id.clone();
+                step.host = action.host.clone();
+                step.intent = action.intent.clone();
+                // The graph owns ordering; legacy predecessor links must be empty.
+                step.predecessors.clear();
+                step
+            })
+            .collect();
+        for action in policy.templates.values() {
+            if !config.hosts.contains(&action.host) {
+                config.hosts.push(action.host.clone());
+            }
+        }
         let config_ref = blob(
             &mut blobs,
             config.schema(),
@@ -1474,7 +1518,11 @@ fn derived_qualification_recomputes_every_candidate_even_with_a_valid_signed_rep
                 "failure report is recordable but has no successful derived proof"
             );
         }
+        let blob_count = blobs.len();
+        let blob_bytes: usize = blobs.values().map(Vec::len).sum();
+        let qualification_started = std::time::Instant::now();
         let checked = q::Verified::check(&job, &policy_q, report, signature, blobs);
+        let qualification_seconds = qualification_started.elapsed().as_secs_f64();
         if corrupted {
             let error = match checked {
                 Ok(_) => panic!("false final index entry was accepted"),
@@ -1484,9 +1532,30 @@ fn derived_qualification_recomputes_every_candidate_even_with_a_valid_signed_rep
         } else {
             let checked = checked.unwrap();
             assert_eq!(checked.derived().len(), 1);
-            assert_eq!(checked.derived()[0].reports_checked, Counter(4));
+            assert_eq!(
+                checked.derived()[0].reports_checked,
+                Counter(2 * u64::from(slots))
+            );
             assert_eq!(checked.derived()[0].candidates, Counter(2));
-            assert_eq!(checked.derived()[0].slots, Counter(2));
+            assert_eq!(checked.derived()[0].slots, Counter(u64::from(slots)));
+            if timing {
+                println!(
+                    "DENSE_MEASUREMENT {}",
+                    serde_json::json!({
+                        "fixture": "external-laser-simulation-valid-tray",
+                        "preview_seconds": preview_seconds, "publish_seconds": publication_seconds,
+                        "qualification_verify_seconds": qualification_seconds,
+                        "ticket_limit_seconds": 600, "ticket_headroom_seconds": 600.0 - qualification_seconds,
+                        "reports": 2 * u64::from(slots), "nodes": nodes,
+                        "parameter_materializations_per_pass": 2 * usize::from(slots) * nodes,
+                        "input_bytes": preview.inputs.size_bytes.0, "index_bytes": preview.index.size_bytes.0,
+                        "policy_bytes": preview.policy.size_bytes.0,
+                        "qualification_blob_count": blob_count, "qualification_blob_bytes": blob_bytes,
+                        "verification": checked.derived()[0],
+                        "limitations": "real publication and signed qualification verifier; test-only signature/evidence and manual clock; no applied change, decision ticket, runtime authority or native execution"
+                    })
+                );
+            }
         }
     }
 }

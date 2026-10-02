@@ -120,6 +120,8 @@ pub(super) fn fixture(
         assets.extend([p.program.clone(), p.parameter_set.clone()]);
     }
     assets.push(artifact(TEMPLATE_CATALOG_SCHEMA, &catalog_bytes));
+    assets.sort_by_key(|r| (r.sha256, r.schema_id.clone()));
+    assets.dedup();
     if !omit_declaration {
         files.insert(path(CATALOG_PATH), catalog_bytes);
     }
