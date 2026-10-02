@@ -109,7 +109,7 @@ fn selected(p: &Policy) -> (Selection, Intent, Vec<u8>) {
             configuration_digest: digest(9),
             run: id(4),
             part: id(5),
-            ordinal: Counter(0),
+            ordinal: Counter(1),
             object: reference(),
             object_values_digest: digest(8),
             candidate: 0,
@@ -268,7 +268,7 @@ fn cross_run_and_other_selection_replay_is_rejected_even_with_same_parameter() {
         ("run", serde_json::json!(id(9))),
         ("part", serde_json::json!(id(9))),
         ("publication", serde_json::json!(id(9))),
-        ("ordinal", serde_json::json!("1")),
+        ("ordinal", serde_json::json!("2")),
         ("slot", serde_json::json!(1)),
         ("candidate", serde_json::json!(1)),
         ("authority_generation", serde_json::json!("2")),
@@ -331,4 +331,91 @@ fn parameter_tampering_and_non_parameter_intent_changes_are_rejected() {
             "{field}"
         );
     }
+}
+
+#[test]
+fn v2_plan_pins_graph_order_and_refuses_legacy_or_altered_templates() {
+    use rx_process_contract::{CompiledBody, CompiledNode, ResolvedProcess, SourceLocation};
+    let mut p = policy(1, 1);
+    p.templates
+        .insert(n("second"), p.templates[&n("node")].clone());
+    p.node_contracts
+        .insert(n("second"), p.node_contracts[&n("node")].clone());
+    let process = n("plan/test");
+    let make = |label: &str, body| {
+        let source = SourceLocation {
+            flow: n("main"),
+            node: n(label),
+            instantiation: vec![],
+        };
+        let hash = canonical::digest("RX-PROCESS-NODE-v1", &(&process, &source)).unwrap();
+        CompiledNode {
+            id: n(&format!("node/{hash}")),
+            source,
+            body,
+        }
+    };
+    let a = make("a", CompiledBody::Operation { binding: n("node") });
+    let b = make(
+        "b",
+        CompiledBody::Operation {
+            binding: n("second"),
+        },
+    );
+    let binding = Binding {
+        schema: n(BINDING_SCHEMA),
+        publication: reference(),
+        policy: artifact(POLICY_SCHEMA, &canonical::bytes(&p).unwrap()),
+        nodes: [(a.id.clone(), n("node")), (b.id.clone(), n("second"))].into(),
+    };
+    let plan = Plan {
+        schema: n(PLAN_SCHEMA),
+        binding,
+        process: ResolvedProcess {
+            schema: n("rx.resolved-process.v1"),
+            package_digest: None,
+            source_digest: digest(9),
+            process: process.clone(),
+            root: make(
+                "root",
+                CompiledBody::Sequence {
+                    children: vec![a, b],
+                },
+            ),
+            bindings: p.templates.clone(),
+            conditions: BTreeMap::new(),
+        },
+    };
+    plan.verify_policy(&p, &[n("node"), n("second")]).unwrap();
+    assert_eq!(plan.reference().unwrap().schema_id, n(PLAN_SCHEMA));
+    assert!(canonical::decode_json::<ResolvedProcess>(&canonical::bytes(&plan).unwrap()).is_err());
+    let mut reordered = plan.clone();
+    let CompiledBody::Sequence { children } = &mut reordered.process.root.body else {
+        unreachable!()
+    };
+    children.reverse();
+    assert!(
+        reordered
+            .verify_policy(&p, &[n("node"), n("second")])
+            .is_err()
+    );
+    let mut mutated = plan.clone();
+    mutated
+        .process
+        .bindings
+        .get_mut(&n("node"))
+        .unwrap()
+        .intent
+        .execution_timeout_ms = Counter(1);
+    assert!(
+        mutated
+            .verify_policy(&p, &[n("node"), n("second")])
+            .is_err()
+    );
+    let mut omitted = plan.clone();
+    omitted.binding.nodes.pop_first();
+    assert!(omitted.validate().is_err());
+    let mut legacy = plan;
+    legacy.schema = n("rx.resolved-process.v1");
+    assert!(legacy.validate().is_err());
 }

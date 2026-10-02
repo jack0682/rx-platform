@@ -59,6 +59,32 @@ fn current(tx: &mut dyn Transaction, inputs: &v2::InputClosure, slots: u16) -> R
     Ok(())
 }
 impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
+    /// Immutable candidate for existing change/qualification review; never installs or activates it.
+    pub fn prepare_workflow_configuration(
+        &mut self,
+        identity: &Identity,
+        configuration: CellConfiguration,
+    ) -> Result<ArtifactRef> {
+        let meta = &self.installation;
+        let clock = &self.clock;
+        self.repository.transact(|tx| {
+            authorize(
+                tx,
+                identity,
+                meta,
+                &clock.now(),
+                Some(&configuration.id),
+                Role::Engineer,
+                false,
+            )?;
+            lifecycle::require_serving(tx)?;
+            if configuration.execution.is_none() {
+                return reject(Reject::InvalidInput);
+            }
+            validate_configuration(&configuration)?;
+            process_change::store_config(tx, &configuration)
+        })
+    }
     pub fn prepare_execution_preview(
         &mut self,
         identity: &Identity,

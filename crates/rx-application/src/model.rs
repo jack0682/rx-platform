@@ -158,6 +158,8 @@ pub enum CompletionRule {
 #[serde(deny_unknown_fields)]
 pub struct CellConfiguration {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution: Option<Box<rx_process_contract::execution_v2::Binding>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub process: Option<Box<rx_process_contract::ResolvedProcess>>,
     pub id: Name,
     pub environment: Environment,
@@ -175,6 +177,15 @@ pub struct CellConfiguration {
     pub steps: Vec<StepBinding>,
     pub maintained_conditions: Vec<Condition>,
     pub fact_specs: Vec<FactSpec>,
+}
+impl CellConfiguration {
+    pub fn schema(&self) -> &'static str {
+        if self.execution.is_some() {
+            "rx.cell-configuration.v2"
+        } else {
+            "rx.cell-configuration.v1"
+        }
+    }
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

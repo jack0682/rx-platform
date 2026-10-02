@@ -113,6 +113,9 @@ pub(super) fn submit_transition(
     let (cell_revision, cell): (_, Cell) = load(tx, "cell", &run.cell, CELL)?;
     check_revision(cell_revision, expected_cell)?;
     check_revision(run_revision, expected_run)?;
+    if cell.configuration.execution.is_some() {
+        return reject(Reject::UnsupportedSchema);
+    }
     active_run(tx, &cell, run, identity, meta, now)?;
     if cell.configuration.process.is_some() {
         super::process::eligible_node(tx, run, &cell, &activation.node, activation.visit)?;

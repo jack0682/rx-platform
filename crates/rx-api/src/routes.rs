@@ -127,6 +127,10 @@ fn build_router(
         )
         .route("/api/v1/workflow-resolution", get(workflow_model::report))
         .route(
+            "/api/v1/workflow-executions/configuration",
+            post(workflow_publication::configuration),
+        )
+        .route(
             "/api/v1/workflow-executions/preview",
             post(workflow_publication::preview),
         )

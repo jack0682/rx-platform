@@ -4,7 +4,6 @@ use crate::{
     process_review::{Choice, Decision, Job, Version},
 };
 const CHANGE: &str = "rx.process-change.v1";
-const CONFIG: &str = "rx.cell-configuration.v1";
 fn fingerprint<T: Serialize>(v: &T) -> Result<Digest> {
     canonical::digest("RX-PROCESS-CHANGE-CONTEXT-v1", v).map_err(domain_error)
 }
@@ -12,14 +11,15 @@ pub(super) fn config_ref(c: &CellConfiguration) -> Result<ArtifactRef> {
     let b = canonical::bytes(c).map_err(domain_error)?;
     Ok(ArtifactRef {
         sha256: rx_package::content_digest(&b),
-        schema_id: name(CONFIG),
+        schema_id: name(c.schema()),
         size_bytes: Counter(b.len() as u64),
     })
 }
 pub(super) fn store_config(tx: &mut dyn Transaction, c: &CellConfiguration) -> Result<ArtifactRef> {
+    execution_configuration::verify(tx, c)?;
     let r = config_ref(c)?;
     let k = key("changeconfiguration", r.sha256);
-    let d = doc(CONFIG, c)?;
+    let d = doc(c.schema(), c)?;
     if let Some(old) = tx.get(&k)? {
         if old.document != d {
             return Err(StoreError::Integrity(
@@ -32,7 +32,14 @@ pub(super) fn store_config(tx: &mut dyn Transaction, c: &CellConfiguration) -> R
     Ok(r)
 }
 pub(super) fn read_config(tx: &mut dyn Transaction, r: &ArtifactRef) -> Result<CellConfiguration> {
-    let (_, c): (_, CellConfiguration) = load(tx, "changeconfiguration", r.sha256, CONFIG)?;
+    if !matches!(
+        r.schema_id.as_str(),
+        "rx.cell-configuration.v1" | "rx.cell-configuration.v2"
+    ) {
+        return reject(Reject::UnsupportedSchema);
+    }
+    let (_, c): (_, CellConfiguration) =
+        load(tx, "changeconfiguration", r.sha256, r.schema_id.as_str())?;
     if &config_ref(&c)? != r {
         return Err(StoreError::Integrity(
             "change configuration integrity differs".into(),

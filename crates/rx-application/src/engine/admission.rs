@@ -204,14 +204,22 @@ pub(super) fn predecessors_done(
 pub(super) fn validate_configuration(c: &CellConfiguration) -> Result<()> {
     if let Some(process) = &c.process {
         rx_process_contract::validation::validate(process).map_err(StoreError::Invalid)?;
-        let encoded = canonical::bytes(process).map_err(domain_error)?;
-        if c.recipe.schema_id != process.schema || c.recipe.size_bytes.0 != encoded.len() as u64 {
-            return reject(Reject::InvalidInput);
-        }
-        if rx_process_contract::frontier::resolved_digest(process).map_err(StoreError::Invalid)?
-            != c.recipe.sha256
-        {
-            return reject(Reject::InvalidInput);
+        if let Some(plan) = execution_configuration::plan(c)? {
+            if plan.reference().map_err(StoreError::Invalid)? != c.recipe {
+                return reject(Reject::InvalidInput);
+            }
+        } else {
+            let encoded = canonical::bytes(process).map_err(domain_error)?;
+            if c.recipe.schema_id != process.schema || c.recipe.size_bytes.0 != encoded.len() as u64
+            {
+                return reject(Reject::InvalidInput);
+            }
+            if rx_process_contract::frontier::resolved_digest(process)
+                .map_err(StoreError::Invalid)?
+                != c.recipe.sha256
+            {
+                return reject(Reject::InvalidInput);
+            }
         }
         let mut required = BTreeMap::new();
         for node in rx_process_contract::validation::nodes(process) {
@@ -234,6 +242,9 @@ pub(super) fn validate_configuration(c: &CellConfiguration) -> Result<()> {
                 return reject(Reject::InvalidInput);
             }
         }
+    }
+    if c.execution.is_some() && c.process.is_none() {
+        return reject(Reject::InvalidInput);
     }
     if c.scopes.is_empty()
         || c.hosts.is_empty()

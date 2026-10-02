@@ -15,6 +15,7 @@
         "device_restrictions",
         "diagnostics",
         "dispatch",
+        "execution_configuration",
         "evidence",
         "executor_peer",
         "host_link",

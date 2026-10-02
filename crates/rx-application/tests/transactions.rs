@@ -129,6 +129,105 @@ impl Repository for FaultRepository {
     }
 }
 type App = Engine<FaultRepository, ManualClock, SimulationAuthority>;
+
+#[test]
+fn legacy_run_and_qualification_entrypoints_refuse_v2_configuration_marker() {
+    // Deliberate state-level negative probe; authoritative binding has separate HTTP tests.
+    // This is not the frozen-deployed-binary compatibility counterexample.
+    let f = fixture(1, false);
+    let installation = f.app.installation.id.clone();
+    let clock = f.clock.clone();
+    let mut repository = f.app.into_repository();
+    repository
+        .transact(|tx| {
+            use rx_application::persistence::{load, save};
+            let (revision, mut cell): (_, Cell) =
+                load(tx, "cell", name("cell/a"), "rx.internal.cell.v1")?;
+            let legacy = rx_domain::canonical::bytes(&cell.configuration).unwrap();
+            assert!(
+                serde_json::from_slice::<serde_json::Value>(&legacy)
+                    .unwrap()
+                    .get("execution")
+                    .is_none()
+            );
+            let roundtrip: CellConfiguration = rx_domain::canonical::decode_json(&legacy).unwrap();
+            assert_eq!(rx_domain::canonical::bytes(&roundtrip).unwrap(), legacy);
+            cell.configuration.execution =
+                Some(Box::new(rx_process_contract::execution_v2::Binding {
+                    schema: name(rx_process_contract::execution_v2::BINDING_SCHEMA),
+                    publication: rx_domain::definition::Reference {
+                        catalog: id(),
+                        id: id(),
+                        revision: Counter(1),
+                        digest: Digest::from_bytes([1; 32]),
+                    },
+                    policy: artifact(2, "rx.execution-policy.v2"),
+                    nodes: [(name("step/0"), name("node"))].into(),
+                }));
+            tx.require_workflow_execution_reader()?;
+            save(
+                tx,
+                "cell",
+                name("cell/a"),
+                Some(revision),
+                "rx.internal.cell.v1",
+                &cell,
+            )?;
+            Ok(())
+        })
+        .unwrap();
+    let mut app = Engine::open(
+        repository,
+        clock,
+        SimulationAuthority,
+        installation,
+        principal(
+            "admin",
+            &[Role::AccountAdmin, Role::Engineer, Role::Verifier],
+        ),
+    )
+    .unwrap();
+    let login = app
+        .authenticated_session(&name("operator"), id(), expiry(100000))
+        .unwrap();
+    let operator = Identity {
+        principal: name("operator"),
+        session: login.id,
+        terminal: None,
+    };
+    let (revision, cell) = app.inspect_cell(&operator, &name("cell/a")).unwrap();
+    assert!(matches!(
+        app.create_run(
+            &operator,
+            id().as_str(),
+            CreateRun {
+                cell: name("cell/a"),
+                expected_cell: revision,
+                recipe_digest: cell.configuration.recipe.sha256,
+                site_config_digest: cell.configuration.site_config_digest
+            }
+        ),
+        Err(StoreError::Rejected(Rejection::UnsupportedSchema))
+    ));
+    let login = app
+        .authenticated_session(&name("admin"), id(), expiry(100000))
+        .unwrap();
+    let admin = Identity {
+        principal: name("admin"),
+        session: login.id,
+        terminal: None,
+    };
+    assert!(matches!(
+        app.qualify(
+            &admin,
+            &name("cell/a"),
+            revision,
+            vec![artifact(9, "rx.validation.simulation.v1")],
+            vec![]
+        ),
+        Err(StoreError::Rejected(Rejection::UnsupportedSchema))
+    ));
+}
 #[path = "support/component_intake_tests.rs"]
 mod component_intake_tests;
 #[path = "support/resident_component_tests.rs"]
@@ -378,6 +477,7 @@ fn fixture_configured(
         }
     }
     let configuration = CellConfiguration {
+        execution: None,
         process: None,
         id: name("cell/a"),
         environment: Environment::Simulation,

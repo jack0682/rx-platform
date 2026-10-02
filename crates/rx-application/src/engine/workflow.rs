@@ -35,6 +35,9 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             lifecycle::require_serving(tx)?;
             let (revision, cell): (_, Cell) = load(tx, "cell", cell_id, CELL)?;
             check_revision(revision, expected_cell)?;
+            if cell.configuration.execution.is_some() {
+                return reject(Reject::UnsupportedSchema);
+            }
             if command.recipe_digest != cell.configuration.recipe.sha256
                 || command.site_config_digest != cell.configuration.site_config_digest
             {

@@ -17,6 +17,29 @@ fn input_error(message: String) -> Response {
     )
         .into_response()
 }
+pub(super) async fn configuration(
+    State(s): State<ApiState>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Response, ApiError> {
+    let configuration: CellConfiguration = decode(&body)?;
+    match command(
+        &s,
+        Command::PrepareWorkflowConfiguration {
+            identity: identity(&s, &headers)?,
+            configuration: Box::new(configuration),
+        },
+    )
+    .await
+    {
+        Ok(Reply::WorkflowConfiguration(reference)) => Ok(Json(
+            serde_json::json!({"configuration":reference,"installed":false,"qualified":false}),
+        )
+        .into_response()),
+        Err(response) => Ok(*response),
+        _ => Err(mismatch()),
+    }
+}
 async fn command(s: &ApiState, input: Command) -> Result<Reply, Box<Response>> {
     match s.runtime.request(input).await {
         Ok(reply) => Ok(reply),

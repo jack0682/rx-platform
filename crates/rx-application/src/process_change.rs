@@ -398,7 +398,7 @@ fn host_binding_plan(
     let config_ref = |v: &CellConfiguration| -> Result<ArtifactRef, String> {
         let data = canonical::bytes(v).map_err(|e| e.to_string())?;
         Ok(ArtifactRef {
-            schema_id: Name::new("rx.cell-configuration.v1").expect("literal"),
+            schema_id: Name::new(v.schema()).expect("static schema"),
             sha256: rx_package::content_digest(&data),
             size_bytes: Counter(data.len() as u64),
         })

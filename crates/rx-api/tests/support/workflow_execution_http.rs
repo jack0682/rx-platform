@@ -228,6 +228,149 @@ async fn saved_execution_preview_publish_and_stale_diagnostics_use_real_http_wri
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(read, publication);
+    // A v2 configuration references the published templates but is not installed by preparation.
+    use rx_process_contract::{
+        CompiledBody, CompiledNode, ResolvedProcess, SourceLocation, execution_v2 as v2,
+    };
+    let process_name = name("test/workflow");
+    let make = |node: &str, body: CompiledBody| {
+        let source = SourceLocation {
+            flow: name("main"),
+            node: name(node),
+            instantiation: vec![],
+        };
+        let digest =
+            rx_domain::canonical::digest("RX-PROCESS-NODE-v1", &(&process_name, &source)).unwrap();
+        CompiledNode {
+            id: name(&format!("node/{digest}")),
+            source,
+            body,
+        }
+    };
+    let child = make(
+        "node",
+        CompiledBody::Operation {
+            binding: name("node"),
+        },
+    );
+    let node_id = child.id.clone();
+    let process = ResolvedProcess {
+        schema: name("rx.resolved-process.v1"),
+        package_digest: None,
+        source_digest: Digest::from_bytes([1; 32]),
+        process: process_name.clone(),
+        root: make(
+            "root",
+            CompiledBody::Sequence {
+                children: vec![child],
+            },
+        ),
+        bindings: serde_json::from_value(input["templates"].clone()).unwrap(),
+        conditions: Default::default(),
+    };
+    let binding = v2::Binding {
+        schema: name(v2::BINDING_SCHEMA),
+        publication: serde_json::from_value(publication["reference"].clone()).unwrap(),
+        policy: serde_json::from_value(publication["policy"].clone()).unwrap(),
+        nodes: [(node_id.clone(), name("node"))].into(),
+    };
+    let plan = v2::Plan {
+        schema: name(v2::PLAN_SCHEMA),
+        binding: binding.clone(),
+        process: process.clone(),
+    };
+    assert!(
+        rx_domain::canonical::decode_json::<ResolvedProcess>(
+            &rx_domain::canonical::bytes(&plan).unwrap()
+        )
+        .is_err(),
+        "v1 DTO must refuse the v2 envelope (frozen binary test remains separate)"
+    );
+    let mut configuration = f.configuration.clone();
+    assert!(
+        serde_json::to_value(&configuration)
+            .unwrap()
+            .get("execution")
+            .is_none()
+    );
+    assert_eq!(configuration.schema(), "rx.cell-configuration.v1");
+    configuration.execution = Some(Box::new(binding));
+    configuration.process = Some(Box::new(process));
+    configuration.recipe = plan.reference().unwrap();
+    let action = &plan.process.bindings[&name("node")];
+    configuration.steps[0].id = node_id;
+    configuration.steps[0].host = action.host.clone();
+    configuration.steps[0].intent = action.intent.clone();
+    configuration.steps[0].predecessors.clear();
+    configuration.site_config_digest = action.intent.site_config_digest;
+    configuration.hosts.push(action.host.clone());
+    let (status, candidate, _) = send(
+        &f.app,
+        request(
+            "POST",
+            "/api/v1/workflow-executions/configuration",
+            Some(&cookie),
+            serde_json::to_string(&configuration).unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{candidate}");
+    assert_eq!(
+        candidate["configuration"]["schema_id"],
+        "rx.cell-configuration.v2"
+    );
+    assert_eq!(candidate["installed"], false);
+    assert_eq!(candidate["qualified"], false);
+    let (status, again, _) = send(
+        &f.app,
+        request(
+            "POST",
+            "/api/v1/workflow-executions/configuration",
+            Some(&cookie),
+            serde_json::to_string(&configuration).unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(candidate, again);
+    let Reply::Cell(_, live) = f
+        .handle
+        .call(Command::InspectCell {
+            identity: f.admin.clone(),
+            cell: f.configuration.id.clone(),
+        })
+        .await
+        .unwrap()
+    else {
+        panic!("cell")
+    };
+    assert!(live.configuration.execution.is_none());
+    assert_eq!(live.configuration.recipe, f.configuration.recipe);
+    let mut wrong = configuration.clone();
+    wrong
+        .execution
+        .as_mut()
+        .unwrap()
+        .nodes
+        .values_mut()
+        .for_each(|v| *v = name("not-published"));
+    let wrong_plan = v2::Plan {
+        schema: name(v2::PLAN_SCHEMA),
+        binding: *wrong.execution.clone().unwrap(),
+        process: *wrong.process.clone().unwrap(),
+    };
+    wrong.recipe = wrong_plan.reference().unwrap();
+    let (status, _, _) = send(
+        &f.app,
+        request(
+            "POST",
+            "/api/v1/workflow-executions/configuration",
+            Some(&cookie),
+            serde_json::to_string(&wrong).unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
     let (status, _, _) = send(&f.app, request("GET", &report_url, None, "".into())).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
     let reader = login(&f.app, "reader").await;

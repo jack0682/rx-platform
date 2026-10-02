@@ -568,6 +568,10 @@ pub enum Command {
         input: rx_application::workflow_publication::Publish,
     },
     CommitWorkflowPublication(Box<rx_application::workflow_publication::PreparedPublication>),
+    PrepareWorkflowConfiguration {
+        identity: Identity,
+        configuration: Box<CellConfiguration>,
+    },
     GetWorkflowPublication {
         identity: Identity,
         reference: rx_domain::definition::Reference,
@@ -1133,6 +1137,7 @@ pub enum Reply {
     ExecutionPreview(Box<rx_application::workflow_publication::Preview>),
     SavedExecutionPreview(Box<rx_application::workflow_publication::SavedPreview>),
     WorkflowPublication(Box<rx_application::workflow_publication::Publication>),
+    WorkflowConfiguration(ArtifactRef),
     WorkflowPublicationPreparation(Box<rx_application::workflow_publication::PublishPreparation>),
     WorkflowResolution(Box<rx_application::workflow_model::Receipt>),
     WorkflowResolutions(Box<rx_application::workflow_model::Reports>),
@@ -2117,6 +2122,13 @@ impl<R: Repository + Send + 'static, C: Clock + 'static, A: QualificationAuthori
                 .engine
                 .commit_workflow_publication(*prepared)
                 .map(|v| Reply::WorkflowPublication(Box::new(v))),
+            Command::PrepareWorkflowConfiguration {
+                identity,
+                configuration,
+            } => self
+                .engine
+                .prepare_workflow_configuration(&identity, *configuration)
+                .map(Reply::WorkflowConfiguration),
             Command::GetWorkflowPublication {
                 identity,
                 reference,

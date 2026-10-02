@@ -8,11 +8,13 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 mod materialize;
+mod plan;
 mod templates;
 pub use materialize::{
     InputClosure, Materialized, NodeContract, ParameterContract, compiler_digest, context_digest,
     materialize,
 };
+pub use plan::{BINDING_SCHEMA, Binding, PLAN_SCHEMA, Plan};
 pub use templates::{
     TEMPLATE_CATALOG_SCHEMA, TemplateCatalog, TemplateDeclaration, TemplateDocument,
 };
@@ -290,8 +292,13 @@ impl Selection {
         if self.schema.as_str() != "rx.execution-selection.v2"
             || self.authority_generation.0 == 0
             || self.object.revision.0 == 0
-            || self.ordinal.0 >= policy.slot_order.len() as u64
-            || policy.slot_order.get(self.ordinal.0 as usize).copied() != Some(self.slot)
+            || self.ordinal.0 == 0
+            || self.ordinal.0 > policy.slot_order.len() as u64
+            || policy
+                .slot_order
+                .get((self.ordinal.0 - 1) as usize)
+                .copied()
+                != Some(self.slot)
             || self.object.catalog != policy.workflow.catalog
             || canonical::bytes(self).map_err(|e| e.to_string())?
                 != canonical::bytes(submitted).map_err(|e| e.to_string())?

@@ -6,6 +6,39 @@ The authoritative revision decision is [Docs #96](https://github.com/jack0682/rx
 and the [semantic contract](https://github.com/jack0682/rx_docs/blob/cc1c0fd839c8aa6060a598ff8ff3e47ea18c56ad/docs/contracts/workflow-execution/v2/README.md).
 v2 is the execution version; v1.1 names the existing revision procedure.
 
+## Configuration and plan envelope
+
+`rx.execution-plan.v2` contains an explicit `rx.workflow-execution-binding.v2` and
+the existing compiled graph as a **template**. The binding pins the exact publication
+reference and policy artifact, with a complete one-to-one compiled-operation-ID to
+workflow-node map. This initial profile requires a finite sequence of one operation
+per published Task. P checks order, action templates, policy bytes, publication
+identity, saved input/index links and current definitions. The wrapper has its own
+content digest; it is never served as a v1 resolved recipe with its policy removed.
+
+Cell configuration has an optional `execution` binding. When absent, it is omitted
+from serialization and the artifact schema remains `rx.cell-configuration.v1`.
+When present, the artifact schema is `rx.cell-configuration.v2`, its recipe is the
+v2 plan, and its process field is only the graph template. Configuration storage
+verifies the publication link and uses the explicit artifact schema when reopening.
+The existing v1 decoder cannot reinterpret the new envelope as a v1 process.
+
+`POST /api/v1/workflow-executions/configuration` accepts a v2 CellConfiguration,
+checks cell engineering rights and the complete publication/graph link, and stores
+an immutable configuration artifact for change/qualification review. It returns
+the reference with `installed=false` and `qualified=false`; it does not replace the
+active cell. Applying a reviewed v2 target and qualifying the derived domain remain
+unfinished. V1 Run creation, qualification callback, execution-plan reads and new
+fixed-input submissions refuse a v2 configuration. Original operation/receipt
+recovery is not reinterpreted as a fresh submission.
+
+Part ordinal uses the existing production contract's **one-based** value. Slot and
+candidate indices remain zero-based; ordinal 1 selects published slot_order[0].
+The v2 selection check rejects ordinal zero and does not change legacy PartAttempt
+or visit meaning. New v2 admission still needs its durable actual-object/selection
+records; the legacy refusal is not itself execution v2 implementation or case-2
+frozen-binary evidence.
+
 `execution_v2` adds closed data types for policy, exhaustive report index and
 run-bound selection. `Policy.templates` pins node -> host/normalized finite
 Program Intent; `node_contracts` pins the same node keys to implementation,
