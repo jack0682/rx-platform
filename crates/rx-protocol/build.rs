@@ -12,6 +12,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "spec/host-qualification/v1/binding.json",
         "spec/resident-reporting/v1/binding.json",
         "spec/resident-execution/v1/binding.json",
+        "spec/workflow-execution/v2/binding.json",
     ] {
         let binding = workspace.join(relative_binding);
         let manifest: serde_json::Value = serde_json::from_slice(&std::fs::read(&binding)?)?;

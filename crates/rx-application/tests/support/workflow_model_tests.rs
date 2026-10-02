@@ -321,3 +321,328 @@ fn resolution_rechecks_access_after_cpu_work_and_rejects_forged_references() {
             .is_ok()
     );
 }
+
+#[test]
+fn execution_inputs_are_current_server_reads_and_do_not_create_resolution_receipts() {
+    let (_dir, mut app, owner, _) = standalone();
+    let catalog = app
+        .save_definition_catalog(&owner, &id(), catalog_save())
+        .unwrap();
+    let input = setup(&mut app, &owner, &catalog);
+    let model = app
+        .save_workflow_model(&owner, &id(), wm::PreparedSave::prepare(input).unwrap())
+        .unwrap();
+    let request = query(&model);
+    let snapshot = app
+        .prepare_execution_inputs(&owner, vec![request.clone()], 2400)
+        .unwrap();
+    let report = snapshot.resolve(0, 0).unwrap();
+    assert!(report.valid && report.concrete);
+    assert_eq!(report.request.workflow, model.reference);
+    assert_eq!(
+        snapshot.resolve(0, 2399).unwrap().request.slot_index,
+        Counter(2399)
+    );
+    assert!(snapshot.resolve(1, 0).is_err());
+    assert!(snapshot.resolve(0, 2400).is_err());
+    assert!(
+        app.workflow_resolutions(&owner, &catalog.id, None)
+            .unwrap()
+            .reports
+            .is_empty()
+    );
+
+    // An unrelated current definition does not invalidate this closure.
+    put(
+        &mut app,
+        &owner,
+        save(&catalog.id, property(Category::Resource, false)),
+    );
+    assert!(
+        app.prepare_execution_inputs(&owner, vec![request.clone()], 1)
+            .is_ok()
+    );
+    let reference = report.definitions[0].reference.clone();
+    let original = app
+        .definition(&owner, &catalog.id, &reference.id, None)
+        .unwrap();
+    let mut revised = save(&catalog.id, original.version.definition.body);
+    revised.id = reference.id;
+    revised.expected = Some(reference.revision);
+    revised.label = "New revision with identical values".into();
+    put(&mut app, &owner, revised);
+    let error = match app.prepare_execution_inputs(&owner, vec![request], 1) {
+        Ok(_) => panic!("stale value-bearing definition accepted"),
+        Err(e) => e.to_string(),
+    };
+    assert!(error.contains("STALE_EXECUTION_REFERENCE"), "{error}");
+    assert!(
+        error.contains("pinned 1") && error.contains("current 2"),
+        "{error}"
+    );
+    // A precomputation snapshot stays reproducible, but is not execution admission.
+    assert_eq!(
+        canonical::bytes(&snapshot.resolve(0, 0).unwrap()).unwrap(),
+        canonical::bytes(&report).unwrap()
+    );
+    assert!(app.pending_deliveries(128).unwrap().is_empty());
+}
+
+#[test]
+fn execution_input_cut_rejects_unauthorized_stale_and_unbounded_requests() {
+    let (_dir, mut app, owner, _) = standalone();
+    let reader = add_identity(&mut app, &owner, "read-v2", &[Role::Verifier]);
+    let mut catalog_input = catalog_save();
+    catalog_input
+        .members
+        .insert(reader.principal.clone(), Access::Read);
+    let catalog = app
+        .save_definition_catalog(&owner, &id(), catalog_input)
+        .unwrap();
+    let mut input = setup(&mut app, &owner, &catalog);
+    let model = app
+        .save_workflow_model(
+            &owner,
+            &id(),
+            wm::PreparedSave::prepare(input.clone()).unwrap(),
+        )
+        .unwrap();
+    let request = query(&model);
+    assert!(
+        app.prepare_execution_inputs(&reader, vec![request.clone()], 1)
+            .is_err()
+    );
+    assert!(app.prepare_execution_inputs(&owner, vec![], 1).is_err());
+    assert!(
+        app.prepare_execution_inputs(&owner, vec![request.clone(); 9], 1)
+            .is_err()
+    );
+    assert!(
+        app.prepare_execution_inputs(&owner, vec![request.clone(); 2], 1)
+            .is_err()
+    );
+    for slots in [0, 2401] {
+        assert!(
+            app.prepare_execution_inputs(&owner, vec![request.clone()], slots)
+                .is_err()
+        );
+    }
+    let mut reordered = request.clone();
+    reordered.slot_index = Counter(1);
+    assert!(
+        app.prepare_execution_inputs(&owner, vec![reordered], 1)
+            .is_err()
+    );
+    input.expected = Some(Counter(1));
+    input.label = "Changed workflow".into();
+    app.save_workflow_model(&owner, &id(), wm::PreparedSave::prepare(input).unwrap())
+        .unwrap();
+    assert!(
+        app.prepare_execution_inputs(&owner, vec![request], 1)
+            .is_err()
+    );
+}
+
+#[test]
+fn execution_materialization_recomputes_stored_values_and_matches_preapproved_reports() {
+    use rx_domain::intent::{Body as IntentBody, Intent, Kind, ProgramGoal};
+    use rx_process_contract::{ActionBinding, execution_v2 as v2};
+    let artifact = |schema: &str, bytes: &[u8]| ArtifactRef {
+        schema_id: name(schema),
+        sha256: rx_package::content_digest(bytes),
+        size_bytes: Counter(bytes.len() as u64),
+    };
+    let (_dir, mut app, owner, _) = standalone();
+    let catalog = app
+        .save_definition_catalog(&owner, &id(), catalog_save())
+        .unwrap();
+    let mut input = setup(&mut app, &owner, &catalog);
+    let typ = put(
+        &mut app,
+        &owner,
+        save(
+            &catalog.id,
+            Body::ObjectType {
+                parent: None,
+                fields: Default::default(),
+            },
+        ),
+    )
+    .version
+    .definition
+    .reference;
+    let object = put(
+        &mut app,
+        &owner,
+        save(
+            &catalog.id,
+            Body::ObjectModel {
+                object_type: typ.clone(),
+                values: Default::default(),
+            },
+        ),
+    )
+    .version
+    .definition
+    .reference;
+    input.spec.contexts.insert(
+        name("object"),
+        rx_domain::definition::Slot {
+            label: "Actual object model".into(),
+            kind: rx_domain::definition::SlotKind::Object,
+            accepted_types: vec![typ],
+            required: true,
+            multiple: false,
+        },
+    );
+    input
+        .spec
+        .defaults
+        .insert(name("object"), vec![object.clone()]);
+    let model = app
+        .save_workflow_model(&owner, &id(), wm::PreparedSave::prepare(input).unwrap())
+        .unwrap();
+    let a = query(&model);
+    let mut b = a.clone();
+    b.overrides.insert(name("node"),[(name("target"),serde_json::from_value(serde_json::json!({"unit":"mm","data":{"kind":"NUMBER","range":{"min":40,"max":40}}})).unwrap())].into());
+    let snapshot = app
+        .prepare_execution_inputs(&owner, vec![a.clone(), b.clone()], 2)
+        .unwrap();
+    let inputs = snapshot.input_closure();
+    let mut p = v2::Policy {
+        schema: name(v2::POLICY_SCHEMA),
+        workflow: model.reference,
+        definition_closure: inputs.artifact().unwrap(),
+        resolver_digest: snapshot.resolve(0, 0).unwrap().resolver_digest,
+        compiler_digest: v2::compiler_digest(),
+        candidates: [&a, &b]
+            .iter()
+            .enumerate()
+            .map(|(i, r)| v2::Candidate {
+                key: name(&format!("candidate/{i}")),
+                object_model: object.clone(),
+                context_digest: v2::context_digest(r).unwrap(),
+            })
+            .collect(),
+        slot_order: vec![0, 1],
+        templates: [(
+            name("node"),
+            ActionBinding {
+                host: name("sim-host"),
+                intent: Intent {
+                    kind: Kind::FiniteAction,
+                    target: name("device"),
+                    profile_digest: Digest::from_bytes([1; 32]),
+                    site_config_digest: Digest::from_bytes([2; 32]),
+                    calibration_digests: vec![],
+                    resource_set: vec![name("resource")],
+                    execution_timeout_ms: Counter(30000),
+                    prepare_validity_ms: Counter(1000),
+                    completion_rule: name("done"),
+                    cancel_rule: name("stop"),
+                    body: IntentBody::Program(ProgramGoal {
+                        program: artifact("fixture.program.v1", b"program"),
+                        parameter_set: artifact(v2::PARAMETER_SCHEMA, b"template"),
+                    }),
+                },
+            },
+        )]
+        .into(),
+        node_contracts: [(
+            name("node"),
+            v2::NodeContract {
+                implementation: "simulated".into(),
+                version: "1".into(),
+                primitive: name("set"),
+                parameters: [(
+                    name("value"),
+                    v2::ParameterContract {
+                        unit: name("mm"),
+                        value_type: ValueType::Number,
+                        frame: None,
+                    },
+                )]
+                .into(),
+            },
+        )]
+        .into(),
+        report_index: artifact(v2::INDEX_SCHEMA, b"pending-not-approved"),
+    };
+    let mut index = v2::ReportIndex {
+        schema: name(v2::INDEX_SCHEMA),
+        entries: vec![],
+    };
+    for candidate in 0..2 {
+        for slot in 0..2 {
+            let generated = snapshot.materialize(&p, candidate, slot).unwrap();
+            let parameter: serde_json::Value =
+                serde_json::from_slice(&generated.parameters()[&name("node")]).unwrap();
+            assert_eq!(
+                parameter["values"]["value"]["value"]["data"]["range"]["min"],
+                if candidate == 0 { 20 } else { 40 }
+            );
+            assert_eq!(parameter["slot"], slot);
+            assert_eq!(
+                generated.actions()[&name("node")]
+                    .intent
+                    .execution_timeout_ms,
+                Counter(30000),
+                "fixed Intent timeout must not change to derived 10000 ms"
+            );
+            index
+                .entries
+                .push((candidate, slot, generated.report_digest()));
+        }
+    }
+    let bytes = canonical::bytes(&index).unwrap();
+    p.report_index = artifact(v2::INDEX_SCHEMA, &bytes);
+    let approved = v2::ReportIndex::decode(&bytes, &p).unwrap();
+    let generated = snapshot.materialize(&p, 0, 0).unwrap();
+    generated.verify_index(&p, &approved, 0, 0).unwrap();
+    assert!(generated.verify_index(&p, &approved, 0, 1).is_err());
+    assert!(generated.verify_index(&p, &approved, 1, 0).is_err());
+    let reread = app
+        .prepare_execution_inputs(&owner, vec![a.clone(), b], 2)
+        .unwrap();
+    assert_eq!(
+        reread.materialize(&p, 0, 0).unwrap().report(),
+        generated.report()
+    );
+
+    for (unit, min, max) in [("mm", 60, 60), ("mm", 20, 40), ("kg", 20, 20)] {
+        let mut changed = a.clone();
+        changed.overrides.insert(name("node"),[(name("target"),serde_json::from_value(serde_json::json!({"unit":unit,"data":{"kind":"NUMBER","range":{"min":min,"max":max}}})).unwrap())].into());
+        let changed = app
+            .prepare_execution_inputs(&owner, vec![changed], 2)
+            .unwrap();
+        let closure = changed.input_closure();
+        let mut policy = p.clone();
+        policy.candidates.truncate(1);
+        policy.candidates[0].context_digest = v2::context_digest(&closure.requests[0]).unwrap();
+        policy.definition_closure = closure.artifact().unwrap();
+        assert!(
+            changed.materialize(&policy, 0, 0).is_err(),
+            "{unit} {min}..{max}"
+        );
+    }
+    let mut bad = p.clone();
+    bad.node_contracts
+        .get_mut(&name("node"))
+        .unwrap()
+        .parameters
+        .get_mut(&name("value"))
+        .unwrap()
+        .frame = Some("WRONG_FRAME".into());
+    assert!(snapshot.materialize(&bad, 0, 0).is_err());
+    let mut bad = p.clone();
+    bad.compiler_digest = Digest::from_bytes([9; 32]);
+    assert!(snapshot.materialize(&bad, 0, 0).is_err());
+    let mut bad = p.clone();
+    bad.resolver_digest = Digest::from_bytes([9; 32]);
+    assert!(snapshot.materialize(&bad, 0, 0).is_err());
+    let mut missing = inputs;
+    missing.definitions.pop();
+    let mut bad = p;
+    bad.definition_closure = missing.artifact().unwrap();
+    assert!(v2::materialize(&bad, &missing, 0, 0).is_err());
+}
