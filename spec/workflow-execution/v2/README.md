@@ -293,11 +293,37 @@ from the saved input closure, validates explicit geometry and actual ResourceIns
 identity across candidates, and deduplicates repeated contexts. Layout identity pins
 resource/pattern revisions, capacity and resolver identity. No cell-specific context
 name is used. Missing/ambiguous subjects, competing layouts, invalid geometry and
-capacity outside1..2400 fail closed. Runtime pool ownership/initialization/reservation
-must still be connected before these primitives can admit a Run.
+capacity outside1..2400 fail closed. P now persists pool ownership/initialization/reservation and Prepared Run bindings;
+Part admission and operation permits still require the explicit v2 execution path.
 
 Selection.ordinal is the Run-local one-based Part ordinal. The mandatory
 slot_ordinal is the one-based rank in the complete publication slot order and maps
 to the zero-based slot; an earlier Run's consumption cannot be hidden by resetting
 its Part ordinal. The authority must supply the reserved rank and check every field;
 this DTO does not allocate slots or authorize caller-selected indices.
+
+
+## Persistent simulation inventory and Prepared Runs
+
+P derives the complete pool set from the current published closure. Pools use
+catalog/ResourceInstance identity, never revision/publication/Run identity. Explicit
+operator terminal initialization or replenishment checks simulation scope, current
+layout, expected generation and the existing shared quiescence guard. Previous
+generations and Run bindings remain immutable history. A new Run atomically reserves
+the first N jointly unused approved indices across every pool or records nothing.
+Abandonment, a new Run ID, original-key replay and partial pool reset do not free slots.
+
+The same writer provides `/api/v1/workflow-executions/slot-pools`, `/runs` and
+`/objects`. Actual object binding checks the current instance/model/value projection,
+next Part ordinal, pool generation and reserved ownership, then records the source
+actor/request and stable instance custody. Revising an instance or replenishing stock
+does not make that identity available to another Run. Original replies and read-only
+history survive revision changes and restart without renewing authority.
+
+These APIs produce a Prepared Run and pending actual-object binding, not permission
+to dispatch. Legacy Start/BeginPart cannot activate them. Explicit Start2/Part2,
+budget consumption, per-node selection/permit, completion/UNKNOWN settlement and
+Executor2 remain required. Transaction tests include signed qualification first,
+simulated Host acknowledgement, two distinct pools, commit/reply loss, cross-Run and
+revision reuse refusals, explicit replenishment and actual SQLite reopen; they are
+not native operating or M3 acceptance evidence.

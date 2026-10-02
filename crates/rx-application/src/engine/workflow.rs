@@ -553,6 +553,9 @@ pub(super) fn begin_part_transition(
         now,
     } = context;
     active_run(tx, cell, run, identity, meta, now)?;
+    if cell.configuration.execution.is_some() {
+        return reject(Reject::UnsupportedSchema);
+    }
     check_revision(
         run.budget
             .as_ref()

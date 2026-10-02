@@ -548,6 +548,34 @@ pub enum Command {
         key: Id,
         input: rx_domain::workflow::Request,
     },
+    BindExecutionObject {
+        identity: Identity,
+        key: Id,
+        input: rx_application::execution_inventory::BindObject,
+    },
+    GetExecutionObject {
+        identity: Identity,
+        run: Id,
+        ordinal: Counter,
+    },
+    InitializeExecutionSlots {
+        identity: Identity,
+        key: Id,
+        input: rx_application::execution_inventory::Initialize,
+    },
+    GetExecutionSlotPool {
+        identity: Identity,
+        resource: rx_domain::definition::Reference,
+    },
+    CreateExecutionRun {
+        identity: Identity,
+        key: Id,
+        input: rx_application::execution_inventory::CreateRun,
+    },
+    GetExecutionRun {
+        identity: Identity,
+        run: Id,
+    },
     PrepareExecutionPreview {
         identity: Identity,
         key: Id,
@@ -1133,6 +1161,9 @@ pub enum Reply {
     WorkflowModel(Box<rx_application::workflow_model::Version>),
     WorkflowModels(Box<rx_application::workflow_model::Page>),
     WorkflowResolutionPreparation(Box<rx_application::workflow_model::Preparation>),
+    ExecutionObjectBinding(Box<rx_application::execution_inventory::ObjectBinding>),
+    ExecutionSlotPool(Box<rx_application::execution_inventory::Pool>),
+    ExecutionRunBinding(Box<rx_application::execution_inventory::RunBinding>),
     ExecutionPreviewPreparation(Box<rx_application::workflow_publication::Preparation>),
     ExecutionPreview(Box<rx_application::workflow_publication::Preview>),
     SavedExecutionPreview(Box<rx_application::workflow_publication::SavedPreview>),
@@ -2087,6 +2118,46 @@ impl<R: Repository + Send + 'static, C: Clock + 'static, A: QualificationAuthori
                 .engine
                 .prepare_workflow_resolution(&identity, &key, input)
                 .map(|v| Reply::WorkflowResolutionPreparation(Box::new(v))),
+            Command::BindExecutionObject {
+                identity,
+                key,
+                input,
+            } => self
+                .engine
+                .bind_execution_object(&identity, &key, input)
+                .map(|v| Reply::ExecutionObjectBinding(Box::new(v))),
+            Command::GetExecutionObject {
+                identity,
+                run,
+                ordinal,
+            } => self
+                .engine
+                .execution_object(&identity, &run, ordinal)
+                .map(|v| Reply::ExecutionObjectBinding(Box::new(v))),
+            Command::InitializeExecutionSlots {
+                identity,
+                key,
+                input,
+            } => self
+                .engine
+                .initialize_execution_slots(&identity, &key, input)
+                .map(|v| Reply::ExecutionSlotPool(Box::new(v))),
+            Command::GetExecutionSlotPool { identity, resource } => self
+                .engine
+                .execution_slot_pool(&identity, &resource)
+                .map(|v| Reply::ExecutionSlotPool(Box::new(v))),
+            Command::CreateExecutionRun {
+                identity,
+                key,
+                input,
+            } => self
+                .engine
+                .create_execution_run(&identity, &key, input)
+                .map(|v| Reply::ExecutionRunBinding(Box::new(v))),
+            Command::GetExecutionRun { identity, run } => self
+                .engine
+                .execution_run(&identity, &run)
+                .map(|v| Reply::ExecutionRunBinding(Box::new(v))),
             Command::PrepareExecutionPreview {
                 identity,
                 key,

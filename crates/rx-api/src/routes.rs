@@ -2,6 +2,7 @@ mod component_intake;
 mod definition_catalog;
 mod device_binding;
 mod device_review;
+mod execution_inventory;
 mod host_recovery;
 mod resident_components;
 mod resident_execution;
@@ -126,6 +127,18 @@ fn build_router(
             post(workflow_model::resolve).get(workflow_model::reports),
         )
         .route("/api/v1/workflow-resolution", get(workflow_model::report))
+        .route(
+            "/api/v1/workflow-executions/objects",
+            post(execution_inventory::bind_object).get(execution_inventory::object),
+        )
+        .route(
+            "/api/v1/workflow-executions/slot-pools",
+            post(execution_inventory::initialize).get(execution_inventory::pool),
+        )
+        .route(
+            "/api/v1/workflow-executions/runs",
+            post(execution_inventory::create_run).get(execution_inventory::run),
+        )
         .route(
             "/api/v1/workflow-executions/configuration",
             post(workflow_publication::configuration),

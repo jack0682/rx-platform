@@ -181,10 +181,15 @@ fn actual_instance_projection_preserves_provenance_but_cannot_expand_approved_va
     );
 }
 
-#[test]
-fn slot_resources_come_from_all_active_pattern_contexts_and_stable_instance_identity() {
-    let mut f = execution_fixture();
-    let origin = property_ref(&mut f, ValueType::Vector, Category::Resource, "mm");
+pub(super) fn attach_stock(
+    f: &mut ExecutionFixture,
+) -> (
+    v2::InputClosure,
+    v2::Policy,
+    rx_domain::definition::Reference,
+    rx_domain::definition::Reference,
+) {
+    let origin = property_ref(f, ValueType::Vector, Category::Resource, "mm");
     let orientation = put(
         &mut f.app,
         &f.owner,
@@ -209,9 +214,9 @@ fn slot_resources_come_from_all_active_pattern_contexts_and_stable_instance_iden
     .version
     .definition
     .reference;
-    let frame = property_ref(&mut f, ValueType::Text, Category::Resource, "unitless");
-    let count = property_ref(&mut f, ValueType::Number, Category::Resource, "unitless");
-    let pitch = property_ref(&mut f, ValueType::Number, Category::Resource, "mm");
+    let frame = property_ref(f, ValueType::Text, Category::Resource, "unitless");
+    let count = property_ref(f, ValueType::Number, Category::Resource, "unitless");
+    let pitch = property_ref(f, ValueType::Number, Category::Resource, "mm");
     let typ = put(
         &mut f.app,
         &f.owner,
@@ -313,7 +318,7 @@ fn slot_resources_come_from_all_active_pattern_contexts_and_stable_instance_iden
     .version
     .definition
     .reference;
-    let position = property_ref(&mut f, ValueType::Vector, Category::Execution, "mm");
+    let position = property_ref(f, ValueType::Vector, Category::Execution, "mm");
     let mut spec = f.snapshot.input_closure().spec;
     for key in ["stock", "same-stock"] {
         spec.contexts.insert(
@@ -342,7 +347,13 @@ fn slot_resources_come_from_all_active_pattern_contexts_and_stable_instance_iden
             },
         );
     }
-    let (inputs, policy) = prepared_inputs(&mut f, spec);
+    let (inputs, policy) = prepared_inputs(f, spec);
+    (inputs, policy, model, instance)
+}
+#[test]
+fn slot_resources_come_from_all_active_pattern_contexts_and_stable_instance_identity() {
+    let mut f = execution_fixture();
+    let (inputs, policy, model, instance) = attach_stock(&mut f);
     let pools = inputs.slot_resources(&policy).unwrap();
     assert_eq!(pools.len(), 1);
     assert_eq!(pools[0].resource, instance);
@@ -375,4 +386,34 @@ fn slot_resources_come_from_all_active_pattern_contexts_and_stable_instance_iden
             .unwrap_err()
             .contains("across candidates")
     );
+}
+
+pub(super) fn attach_distinct_stock(f: &mut ExecutionFixture) {
+    let (_, _, model, _) = attach_stock(f);
+    let other = put(
+        &mut f.app,
+        &f.owner,
+        save(
+            &f.catalog.id,
+            Body::ResourceInstance {
+                base: model,
+                values: [(
+                    name("origin"),
+                    Value::Vector(
+                        [100.0, 0.0, 0.0]
+                            .into_iter()
+                            .map(|v| Real::new(v).unwrap())
+                            .collect(),
+                    ),
+                )]
+                .into(),
+            },
+        ),
+    )
+    .version
+    .definition
+    .reference;
+    let mut spec = f.snapshot.input_closure().spec;
+    spec.defaults.insert(name("same-stock"), vec![other]);
+    prepared_inputs(f, spec);
 }

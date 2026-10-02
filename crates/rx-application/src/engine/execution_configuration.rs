@@ -24,9 +24,16 @@ pub(super) fn plan(c: &CellConfiguration) -> Result<Option<v2::Plan>> {
         })
         .transpose()
 }
+pub(super) struct Domain {
+    pub policy: v2::Policy,
+    pub inputs: v2::InputClosure,
+}
 pub(super) fn verify(tx: &mut dyn Transaction, c: &CellConfiguration) -> Result<()> {
+    domain(tx, c).map(|_| ())
+}
+pub(super) fn domain(tx: &mut dyn Transaction, c: &CellConfiguration) -> Result<Option<Domain>> {
     let Some(plan) = plan(c)? else {
-        return Ok(());
+        return Ok(None);
     };
     if plan.reference().map_err(StoreError::Invalid)? != c.recipe {
         return reject(Reject::InvalidInput);
@@ -96,7 +103,8 @@ pub(super) fn verify(tx: &mut dyn Transaction, c: &CellConfiguration) -> Result<
     {
         return reject(Reject::StaleRevision);
     }
-    tx.require_workflow_execution_reader()
+    tx.require_workflow_execution_reader()?;
+    Ok(Some(Domain { policy, inputs }))
 }
 pub(super) fn host_policy(
     tx: &mut dyn Transaction,

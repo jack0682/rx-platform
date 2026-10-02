@@ -49,6 +49,14 @@ fn reviewed_v2_domain_rejects_issue_and_activation_at_exact_ticket_expiry() {
 fn reviewed_v2_domain_loses_readiness_on_definition_drift_after_activation() {
     run_reviewed_change(5);
 }
+#[test]
+fn execution_slot_reservations_are_atomic_across_runs_and_require_explicit_reset() {
+    run_reviewed_change(6);
+}
+#[test]
+fn actual_object_custody_is_atomic_and_not_reusable_by_another_run() {
+    run_reviewed_change(7);
+}
 #[path = "execution_qualification_activation_tests.rs"]
 mod qualification_tests;
 fn run_reviewed_change(stale_definition: u8) {
@@ -100,6 +108,13 @@ fn run_reviewed_change(stale_definition: u8) {
     }
     let mut e = execution_fixture_in((f._directory, f.app, f.admin.clone(), f.failure.clone()));
     e.policy.templates.insert(name("node"), action);
+    if stale_definition == 7 {
+        e.requests.truncate(1);
+        e.policy.candidates.truncate(1);
+    }
+    if stale_definition >= 6 {
+        super::execution_runtime_binding_tests::attach_distinct_stock(&mut e);
+    }
     let mut p = review_support::fixture_sequence(&f.configuration, Digest::from_bytes([71; 32]));
     let mut contracts = p.policy.contracts.clone();
     contracts.package_abi = name("rx.package-abi.v2");

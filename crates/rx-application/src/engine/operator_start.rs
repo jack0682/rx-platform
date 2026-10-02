@@ -40,6 +40,9 @@ pub(super) fn validate_candidate(
     check_revision(basis.cell_revision, command.expected_cell)?;
     check_revision(basis.run_revision, command.expected_run)?;
     run_configuration::require_current(tx, run, cell)?;
+    if cell.configuration.execution.is_some() {
+        return reject(Reject::UnsupportedSchema);
+    }
     if run.state != RunState::Prepared {
         return reject(Reject::MandateRevoked);
     }

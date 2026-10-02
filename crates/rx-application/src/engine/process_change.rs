@@ -8,13 +8,9 @@ fn fingerprint<T: Serialize>(v: &T) -> Result<Digest> {
     canonical::digest("RX-PROCESS-CHANGE-CONTEXT-v1", v).map_err(domain_error)
 }
 pub(super) fn config_ref(c: &CellConfiguration) -> Result<ArtifactRef> {
-    let b = canonical::bytes(c).map_err(domain_error)?;
-    Ok(ArtifactRef {
-        sha256: rx_package::content_digest(&b),
-        schema_id: name(c.schema()),
-        size_bytes: Counter(b.len() as u64),
-    })
+    c.reference().map_err(StoreError::Invalid)
 }
+
 pub(super) fn store_config(tx: &mut dyn Transaction, c: &CellConfiguration) -> Result<ArtifactRef> {
     execution_configuration::verify(tx, c)?;
     let r = config_ref(c)?;

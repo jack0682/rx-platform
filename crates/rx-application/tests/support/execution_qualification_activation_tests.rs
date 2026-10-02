@@ -42,12 +42,13 @@ pub(super) fn activate_domain(
         .execution_preview(&f.admin, &published.preview)
         .unwrap();
     let policy = saved.policy().clone();
+    let report_count = Counter((policy.candidates.len() * policy.slot_order.len()) as u64);
     let index = v2::ReportIndex {
         schema: name(v2::INDEX_SCHEMA),
-        entries: (0..2)
+        entries: (0..policy.candidates.len() as u8)
             .flat_map(|candidate| {
                 let saved = &saved;
-                (0..2).map(move |slot| {
+                (0..saved.policy().slot_order.len() as u16).map(move |slot| {
                     (
                         candidate,
                         slot,
@@ -189,7 +190,7 @@ pub(super) fn activate_domain(
     let prepared = review::prepared_report(f, &job, &proof, &id(), None);
     let version = f.app.commit_requalification_report(prepared).unwrap();
     assert_eq!(version.derived.len(), 1);
-    assert_eq!(version.derived[0].reports_checked, Counter(4));
+    assert_eq!(version.derived[0].reports_checked, report_count);
     let verifier = add_identity(&mut f.app, &f.admin, "domain-reviewer", &[Role::Verifier]);
     let q::DecisionPreflight::Verify(ticket) = f
         .app
@@ -466,6 +467,10 @@ pub(super) fn activate_domain(
         .qualification_batch(&f.admin, &target.id, &batch.id)
         .unwrap();
     assert!(view.current && !view.operation_authorized);
+    if test_case >= 6 {
+        inventory_tests::exercise(f, target, published, inputs, saved.policy(), test_case == 7);
+        return;
+    }
     if test_case == 5 {
         let definition = &inputs.definitions[0];
         let mut update = save(&definition.reference.catalog, definition.body.clone());
@@ -502,3 +507,6 @@ pub(super) fn activate_domain(
         a::State::Suspended
     );
 }
+
+#[path = "execution_inventory_tests.rs"]
+mod inventory_tests;

@@ -77,3 +77,5 @@ pub mod execution_qualification;
 pub mod execution_templates;
 pub mod workflow_model;
 pub mod workflow_publication;
+
+pub mod execution_inventory;

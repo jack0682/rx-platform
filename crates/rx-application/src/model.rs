@@ -179,6 +179,14 @@ pub struct CellConfiguration {
     pub fact_specs: Vec<FactSpec>,
 }
 impl CellConfiguration {
+    pub fn reference(&self) -> Result<ArtifactRef, String> {
+        let bytes = rx_domain::canonical::bytes(self).map_err(|e| e.to_string())?;
+        Ok(ArtifactRef {
+            schema_id: Name::new(self.schema()).expect("static schema"),
+            sha256: rx_package::content_digest(&bytes),
+            size_bytes: Counter(bytes.len() as u64),
+        })
+    }
     pub fn schema(&self) -> &'static str {
         if self.execution.is_some() {
             "rx.cell-configuration.v2"

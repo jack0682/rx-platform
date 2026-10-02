@@ -59,6 +59,7 @@ mod dispatch;
 mod draft_bindings;
 mod evidence;
 mod execution_configuration;
+mod execution_inventory;
 mod execution_read;
 mod executor_peer;
 mod executor_requests;

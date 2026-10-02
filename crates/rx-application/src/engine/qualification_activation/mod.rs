@@ -357,58 +357,16 @@ fn approved(
     Ok((v, d))
 }
 fn quiet(tx: &mut dyn Transaction, j: &q::Job) -> Result<()> {
-    let cells: BTreeSet<_> = j
-        .request
-        .cells
-        .iter()
-        .map(|c| c.profile.cell.clone())
-        .collect();
-    for row in tx.scan("run/")? {
-        let r: Run = decode(&row, RUN)?;
-        if cells.contains(&r.cell) && !matches!(r.state, RunState::Completed | RunState::Abandoned)
-        {
-            return reject(Reject::Busy);
-        }
-    }
-    let mut resources = BTreeSet::new();
-    for name in &cells {
-        let (_, c): (_, Cell) = load(tx, "cell", name, CELL)?;
-        resources.extend(
-            c.configuration
-                .steps
-                .iter()
-                .flat_map(|s| s.intent.resource_set.iter().cloned()),
-        );
-    }
-    for row in tx.scan("work/")? {
-        let w: Work = decode(&row, WORK)?;
-        if cells.contains(&w.cell) {
-            resources.extend(w.intent.resource_set.iter().cloned());
-            if matches!(w.operation.outcome(), Outcome::None | Outcome::Unresolved)
-                || w.operation.integrity() == Integrity::Disputed
-            {
-                return reject(Reject::ContinuityUnproven);
-            }
-        }
-    }
-    for r in resources {
-        if let Some(row) = tx.get(&key("resource", &r))? {
-            let r: Resource = decode(&row, RESOURCE)?;
-            if r.holder.is_some() || r.quarantined {
-                return reject(Reject::Busy);
-            }
-        }
-    }
-    for row in tx.scan("case/")? {
-        let c: crate::intervention::Case = decode(&row, "rx.internal.intervention-case.v1")?;
-        if c.state != crate::intervention::CaseState::Closed
-            && (cells.contains(&c.cell) || c.effective_cells.iter().any(|c| cells.contains(c)))
-        {
-            return reject(Reject::BlockedByCase);
-        }
-    }
-    Ok(())
+    admission::quiet_cells(
+        tx,
+        &j.request
+            .cells
+            .iter()
+            .map(|c| c.profile.cell.clone())
+            .collect(),
+    )
 }
+
 fn pending_current(tx: &mut dyn Transaction, meta: &Installation, b: &a::Batch) -> Result<()> {
     if b.state != a::State::Pending
         || b.runtime_boot != meta.runtime_boot
