@@ -7,6 +7,7 @@ mod resident_components;
 mod resident_execution;
 mod settlement;
 mod workflow_model;
+mod workflow_publication;
 use crate::{
     auth::{Auth, COOKIE, Credentials, SESSION_SECONDS},
     error::ApiError,
@@ -125,6 +126,26 @@ fn build_router(
             post(workflow_model::resolve).get(workflow_model::reports),
         )
         .route("/api/v1/workflow-resolution", get(workflow_model::report))
+        .route(
+            "/api/v1/workflow-executions/preview",
+            post(workflow_publication::preview),
+        )
+        .route(
+            "/api/v1/workflow-executions/preview",
+            get(workflow_publication::get_preview),
+        )
+        .route(
+            "/api/v1/workflow-executions/preview-report",
+            get(workflow_publication::report),
+        )
+        .route(
+            "/api/v1/workflow-executions/publish",
+            post(workflow_publication::publish),
+        )
+        .route(
+            "/api/v1/workflow-executions/publication",
+            get(workflow_publication::get_publication),
+        )
         .route(
             "/api/v1/definition-catalogs",
             get(definition_catalog::catalogs).post(definition_catalog::save_catalog),

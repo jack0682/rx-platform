@@ -1,6 +1,7 @@
 # Explicit workflow execution v2 input contract
 
-Implementation in progress; no public v2 execution ingress is enabled yet.
+Implementation in progress. Saved Preview/publication HTTP paths are present;
+no v2 operation or Executor ingress is enabled yet.
 The authoritative revision decision is [Docs #96](https://github.com/jack0682/rx_docs/pull/96)
 and the [semantic contract](https://github.com/jack0682/rx_docs/blob/cc1c0fd839c8aa6060a598ff8ff3e47ea18c56ad/docs/contracts/workflow-execution/v2/README.md).
 v2 is the execution version; v1.1 names the existing revision procedure.
@@ -57,7 +58,54 @@ object identity/revision, slot, publication/configuration, generation and report
 it checks exact parameter bytes and the invariant Intent fields. A caller-built
 selection DTO or successful pure comparison cannot grant execution rights.
 
-Remaining gate work: immutable publication and qualification dependency evidence,
+Remaining gate work: signed package verification and qualification dependency evidence,
 durable Run/Part selection, explicit P/Executor v2 negotiation/admission and frozen
 deployed-v1 injection. Existing v1 source/wire/binding manifests remain unchanged.
 No Host/UI v2 implementation is authorized by these pure/preparation tests alone.
+
+## Saved Preview and publication
+
+`POST /api/v1/workflow-executions/preview` accepts the existing request-key mutation
+envelope with `PreviewInput`: id, candidate key/object-model/request tuples, slot
+count, templates and node contracts. P takes a current authorized snapshot, computes
+every candidate outside the writer, then rechecks access and the complete current
+input cut in the commit transaction. Any invalid candidate aborts preparation.
+No caller-supplied report/index is accepted as evidence. Completed Preview stores
+the policy, input closure and exhaustive index; individual reports are regenerated
+from the pinned closure and must match the saved index before being returned.
+
+`GET /api/v1/workflow-executions/preview` reads the exact reference (catalog, id,
+revision, digest query fields) and policy. `GET .../preview-report` adds candidate
+and slot indices and returns the verified deterministic report. Computation stays
+outside the writer transaction. Reads of historical Preview do not substitute
+current definitions. A different installed materializer is refused, not used to
+silently rewrite an old report. This implementation does not yet supply historical
+materializer execution across release upgrades.
+
+`POST /api/v1/workflow-executions/publish` takes id and exact Preview reference in
+the same mutation envelope. It rechecks current inputs and atomically saves an
+immutable publication referencing the Preview and policy. `GET .../publication`
+reads the exact reference. Original-key replay returns the original receipt after
+response loss; changed input under the key conflicts. Existing IDs cannot be
+overwritten, and access is rechecked on replay. An old Preview remains readable
+after a referenced revision changes, but a new publication is blocked. Stale
+diagnostics include the pinned/current revision and digest and definition label.
+
+These authoring publications are **not qualified or executable**. In particular,
+template package signature/review linkage still needs integration before the
+P/Executor gate is complete. Neither publication nor a `NOT_QUALIFIED` projection
+is a qualification approval. No Run/permit/device outbox is created by these APIs.
+
+The existing qualification blob mechanism is shared at application level with
+its original namespace/bytes/8 MiB bound preserved. Execution artifacts use a
+separate namespace and a 16 MiB bound, with immutable 256 KiB chunks. Individual
+store documents and legacy wire messages retain their 1 MiB limits. Policy/index
+readers enforce their tighter limits and content/schema identities as well.
+
+The first saved v2 Preview atomically promotes the local store reader barrier to
+10; normal v1-only stores stay at 6 (or their already opted-in reader version).
+Promotion rolls back with a failed transaction and never downgrades through an
+older barrier call. Existing version-9-or-earlier binaries must refuse the store.
+Sealed transfer of version-10 stores is unsupported and fails closed; existing
+sealed-store semantics are not expanded by this revision. This source-level
+barrier test does not replace frozen-binary counterexample 2.

@@ -11,7 +11,7 @@ use rx_domain::{
 
 const MODEL: &str = "rx.internal.workflow-model.v1";
 const RECEIPT: &str = "rx.internal.workflow-resolution.v1";
-fn version(
+pub(super) fn version(
     tx: &mut dyn Transaction,
     catalog: &Id,
     id: &Id,
@@ -87,77 +87,100 @@ fn snapshot(tx: &mut dyn Transaction, request: workflow_data::Request) -> Result
         definitions,
     })
 }
+pub(super) fn current_snapshot(
+    tx: &mut dyn Transaction,
+    inputs: &[workflow_data::Request],
+    slots: u16,
+) -> Result<ExecutionSnapshot> {
+    use rx_process_contract::execution_v2::{
+        MAX_DEFINITION_BYTES, MAX_DEFINITIONS, MAX_SLOTS, MAX_VARIANTS,
+    };
+    if inputs.is_empty()
+        || inputs.len() > MAX_VARIANTS
+        || slots == 0
+        || usize::from(slots) > MAX_SLOTS
+    {
+        return reject(Reject::InvalidInput);
+    }
+    for input in inputs {
+        input.validate_shape().map_err(StoreError::Invalid)?;
+        if input.slot_index != Counter(0) || input.workflow != inputs[0].workflow {
+            return reject(Reject::InvalidInput);
+        }
+    }
+    let expected = &inputs[0].workflow;
+    let current = version(tx, &expected.catalog, &expected.id, None)?;
+    if current.reference != *expected {
+        return Err(StoreError::Invalid(format!(
+            "STALE_EXECUTION_REFERENCE workflow {} ({}): pinned {} {}, current {} {}",
+            current.label,
+            expected.id,
+            expected.revision.0,
+            expected.digest,
+            current.reference.revision.0,
+            current.reference.digest,
+        )));
+    }
+    let mut candidates = Vec::with_capacity(inputs.len());
+    let mut closure = BTreeMap::new();
+    let mut checked = std::collections::BTreeSet::new();
+    let mut requests = std::collections::BTreeSet::new();
+    for input in inputs {
+        if !requests
+            .insert(canonical::digest("RX-EXECUTION-CONTEXT-v2", input).map_err(domain_error)?)
+        {
+            return reject(Reject::InvalidInput);
+        }
+        let candidate = snapshot(tx, input.clone())?;
+        for (reference, definition) in &candidate.definitions {
+            if checked.insert(reference.clone()) {
+                let current = definition_version(tx, &reference.catalog, &reference.id, None)?;
+                if current.archived || current.definition.reference != *reference {
+                    return Err(StoreError::Invalid(format!(
+                        "STALE_EXECUTION_REFERENCE definition {} ({}): pinned {} {}, current {} {}",
+                        definition.label,
+                        reference.id,
+                        reference.revision.0,
+                        reference.digest,
+                        current.definition.reference.revision.0,
+                        current.definition.reference.digest,
+                    )));
+                }
+                closure.insert(reference.clone(), definition.clone());
+                if closure.len() > MAX_DEFINITIONS {
+                    return reject(Reject::InvalidInput);
+                }
+            }
+        }
+        candidates.push(candidate);
+    }
+    if canonical::bytes(&closure.values().collect::<Vec<_>>())
+        .map_err(domain_error)?
+        .len() as u64
+        > MAX_DEFINITION_BYTES
+    {
+        return reject(Reject::InvalidInput);
+    }
+    Ok(ExecutionSnapshot { candidates, slots })
+}
 impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
-    /// Take one authorized/current cut before bounded v2 publication computation.
-    /// The eventual publication/admission transaction must recheck this cut.
+    /// Authorized immutable input cut; later commit/admission rechecks currentness.
     pub fn prepare_execution_inputs(
         &mut self,
         identity: &Identity,
         inputs: Vec<workflow_data::Request>,
         slots: u16,
     ) -> Result<ExecutionSnapshot> {
-        use rx_process_contract::execution_v2::{
-            MAX_DEFINITION_BYTES, MAX_DEFINITIONS, MAX_SLOTS, MAX_VARIANTS,
-        };
-        if inputs.is_empty()
-            || inputs.len() > MAX_VARIANTS
-            || slots == 0
-            || usize::from(slots) > MAX_SLOTS
-        {
-            return reject(Reject::InvalidInput);
-        }
-        for input in &inputs {
-            input.validate_shape().map_err(StoreError::Invalid)?;
-            if input.slot_index != Counter(0) || input.workflow != inputs[0].workflow {
-                return reject(Reject::InvalidInput);
-            }
-        }
+        let first = inputs
+            .first()
+            .ok_or(StoreError::Rejected(Reject::InvalidInput))?;
         let meta = &self.installation;
         let clock = &self.clock;
         self.repository.transact(|tx| {
             let p = author(tx, identity, meta, &clock.now(), true)?;
             lifecycle::require_serving(tx)?;
-            access(tx, identity, &p, &inputs[0].workflow.catalog, true)?;
-            let expected = &inputs[0].workflow;
-            let current = version(tx, &expected.catalog, &expected.id, None)?;
-            if current.reference != *expected {
-                return Err(StoreError::Invalid(format!(
-                    "STALE_EXECUTION_REFERENCE workflow {} ({}): pinned {} {}, current {} {}",
-                    current.label, expected.id, expected.revision.0, expected.digest,
-                    current.reference.revision.0, current.reference.digest,
-                )));
-            }
-            let mut candidates = Vec::with_capacity(inputs.len());
-            let mut closure = BTreeMap::new();
-            let mut checked = std::collections::BTreeSet::new();
-            let mut requests = std::collections::BTreeSet::new();
-            for input in &inputs {
-                if !requests.insert(canonical::digest("RX-EXECUTION-CONTEXT-v2", input).map_err(domain_error)?) {
-                    return reject(Reject::InvalidInput);
-                }
-                let candidate = snapshot(tx, input.clone())?;
-                for (reference, definition) in &candidate.definitions {
-                    if checked.insert(reference.clone()) {
-                        let current = definition_version(tx, &reference.catalog, &reference.id, None)?;
-                        if current.archived || current.definition.reference != *reference {
-                            return Err(StoreError::Invalid(format!(
-                                "STALE_EXECUTION_REFERENCE definition {} ({}): pinned {} {}, current {} {}",
-                                definition.label, reference.id, reference.revision.0, reference.digest,
-                                current.definition.reference.revision.0, current.definition.reference.digest,
-                            )));
-                        }
-                        closure.insert(reference.clone(), definition.clone());
-                        if closure.len() > MAX_DEFINITIONS {
-                            return reject(Reject::InvalidInput);
-                        }
-                    }
-                }
-                candidates.push(candidate);
-            }
-            if canonical::bytes(&closure.values().collect::<Vec<_>>()).map_err(domain_error)?.len() as u64 > MAX_DEFINITION_BYTES {
-                return reject(Reject::InvalidInput);
-            }
-            Ok(ExecutionSnapshot { candidates, slots })
+            access(tx, identity, &p, &first.workflow.catalog, true)?;
+            current_snapshot(tx, &inputs, slots)
         })
     }
 

@@ -185,86 +185,13 @@ pub(super) fn version_digest(v: &q::Version) -> Result<Digest> {
     )
     .map_err(domain_error)
 }
-const CHUNK: usize = 256 * 1024;
-#[derive(serde::Serialize, serde::Deserialize)]
-struct Blob {
-    size: Counter,
-    chunks: Vec<Digest>,
-}
+const BLOBS: crate::artifact_storage::BlobStore =
+    crate::artifact_storage::BlobStore::new("qualification", q::MAX_ARTIFACT);
 fn put_blob(tx: &mut dyn Transaction, hash: Digest, bytes: &[u8]) -> Result<()> {
-    use base64::Engine as _;
-    let mut chunks = Vec::new();
-    for (index, part) in bytes.chunks(CHUNK).enumerate() {
-        chunks.push(rx_package::content_digest(part));
-        let k = key("qualificationchunk", (hash, Counter(index as u64)));
-        let d = doc(
-            "rx.internal.qualification-chunk.v1",
-            &base64::engine::general_purpose::STANDARD.encode(part),
-        )?;
-        if let Some(old) = tx.get(&k)? {
-            if old.document != d {
-                return Err(StoreError::Integrity(
-                    "qualification chunk collision".into(),
-                ));
-            }
-        } else {
-            tx.put(&k, None, &d)?;
-        }
-    }
-    let k = key("qualificationblob", hash);
-    let d = doc(
-        "rx.internal.qualification-blob.v1",
-        &Blob {
-            size: Counter(bytes.len() as u64),
-            chunks,
-        },
-    )?;
-    if let Some(old) = tx.get(&k)? {
-        if old.document != d {
-            return Err(StoreError::Integrity("qualification blob collision".into()));
-        }
-    } else {
-        tx.put(&k, None, &d)?;
-    }
-    Ok(())
+    BLOBS.put(tx, hash, bytes)
 }
 pub(super) fn read_blob(tx: &mut dyn Transaction, r: &ArtifactRef) -> Result<Vec<u8>> {
-    use base64::Engine as _;
-    let (_, blob): (_, Blob) = load(
-        tx,
-        "qualificationblob",
-        r.sha256,
-        "rx.internal.qualification-blob.v1",
-    )?;
-    if blob.size != r.size_bytes
-        || blob.size.0 == 0
-        || blob.size.0 > q::MAX_ARTIFACT
-        || blob.chunks.len() != blob.size.0.div_ceil(CHUNK as u64) as usize
-    {
-        return Err(StoreError::Integrity("qualification blob shape".into()));
-    }
-    let mut bytes = Vec::with_capacity(blob.size.0 as usize);
-    for (index, hash) in blob.chunks.iter().enumerate() {
-        let (_, s): (_, String) = load(
-            tx,
-            "qualificationchunk",
-            (r.sha256, Counter(index as u64)),
-            "rx.internal.qualification-chunk.v1",
-        )?;
-        let part = base64::engine::general_purpose::STANDARD
-            .decode(s)
-            .map_err(|_| StoreError::Integrity("qualification artifact encoding".into()))?;
-        if part.len() > CHUNK || rx_package::content_digest(&part) != *hash {
-            return Err(StoreError::Integrity("qualification chunk differs".into()));
-        }
-        bytes.extend(part);
-    }
-    if bytes.len() as u64 != r.size_bytes.0 || rx_package::content_digest(&bytes) != r.sha256 {
-        return Err(StoreError::Integrity(
-            "qualification artifact differs".into(),
-        ));
-    }
-    Ok(bytes)
+    BLOBS.read(tx, r)
 }
 impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
     pub fn configure_requalification(&mut self, p: Option<q::Policy>) -> Result<()> {

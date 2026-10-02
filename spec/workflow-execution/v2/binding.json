@@ -6,7 +6,7 @@
   "source_sha256": {
     "crates/rx-process-contract/src/execution_v2.rs": "a4c3a15c134e2832ccbf2011e8a1a161186341067892a56d83b7f368ac775690",
     "crates/rx-process-contract/src/execution_v2/materialize.rs": "af7c35ef3806d92aa7a9a48d9b51c43283f658fdd6c38943ba4eb2bc628d520c",
-    "spec/workflow-execution/v2/README.md": "81552b93c27edd2ba368f9f7014b44a7a59b3b3d40da55d012340d25879d4de5"
+    "spec/workflow-execution/v2/README.md": "9c7c617cbb807cfc7a392037d99ef76e2cb6a1098e72ae1be9d08b1082998e5a"
   },
   "transport": "NOT_ENABLED"
 }

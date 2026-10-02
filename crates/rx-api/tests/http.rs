@@ -18,6 +18,8 @@ mod operator_start_http;
 #[path = "support/resident_component_http.rs"]
 mod resident_component_http;
 mod support;
+#[path = "support/workflow_execution_http.rs"]
+mod workflow_execution_http;
 use rx_runtime::{
     application::{Application, Command, Handle, Reply},
     writer::Writer,

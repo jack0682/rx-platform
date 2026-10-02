@@ -38,7 +38,8 @@
         "settlement",
         "store_restore",
         "definition_catalog",
-        "workflow_model"
+        "workflow_model",
+        "workflow_publication"
       ]
     },
     "cell": {

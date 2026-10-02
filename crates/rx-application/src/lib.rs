@@ -70,4 +70,6 @@ pub mod component_intake;
 
 pub mod resident_execution;
 
+mod artifact_storage;
 pub mod workflow_model;
+pub mod workflow_publication;

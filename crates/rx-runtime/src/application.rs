@@ -548,6 +548,29 @@ pub enum Command {
         key: Id,
         input: rx_domain::workflow::Request,
     },
+    PrepareExecutionPreview {
+        identity: Identity,
+        key: Id,
+        input: rx_application::workflow_publication::PreviewInput,
+    },
+    SaveExecutionPreview {
+        identity: Identity,
+        key: Id,
+        prepared: Box<rx_application::workflow_publication::PreparedPreview>,
+    },
+    GetExecutionPreview {
+        identity: Identity,
+        reference: rx_domain::definition::Reference,
+    },
+    PublishWorkflowExecution {
+        identity: Identity,
+        key: Id,
+        input: rx_application::workflow_publication::Publish,
+    },
+    GetWorkflowPublication {
+        identity: Identity,
+        reference: rx_domain::definition::Reference,
+    },
     SaveWorkflowResolution {
         identity: Identity,
         key: Id,
@@ -1105,6 +1128,10 @@ pub enum Reply {
     WorkflowModel(Box<rx_application::workflow_model::Version>),
     WorkflowModels(Box<rx_application::workflow_model::Page>),
     WorkflowResolutionPreparation(Box<rx_application::workflow_model::Preparation>),
+    ExecutionPreviewPreparation(Box<rx_application::workflow_publication::Preparation>),
+    ExecutionPreview(Box<rx_application::workflow_publication::Preview>),
+    SavedExecutionPreview(Box<rx_application::workflow_publication::SavedPreview>),
+    WorkflowPublication(Box<rx_application::workflow_publication::Publication>),
     WorkflowResolution(Box<rx_application::workflow_model::Receipt>),
     WorkflowResolutions(Box<rx_application::workflow_model::Reports>),
     DefinitionCatalog(Box<rx_application::definition_catalog::Catalog>),
@@ -2053,6 +2080,44 @@ impl<R: Repository + Send + 'static, C: Clock + 'static, A: QualificationAuthori
                 .engine
                 .prepare_workflow_resolution(&identity, &key, input)
                 .map(|v| Reply::WorkflowResolutionPreparation(Box::new(v))),
+            Command::PrepareExecutionPreview {
+                identity,
+                key,
+                input,
+            } => self
+                .engine
+                .prepare_execution_preview(&identity, &key, input)
+                .map(|v| Reply::ExecutionPreviewPreparation(Box::new(v))),
+            Command::SaveExecutionPreview {
+                identity,
+                key,
+                prepared,
+            } => self
+                .engine
+                .save_execution_preview(&identity, &key, *prepared)
+                .map(|v| Reply::ExecutionPreview(Box::new(v))),
+            Command::GetExecutionPreview {
+                identity,
+                reference,
+            } => self
+                .engine
+                .execution_preview(&identity, &reference)
+                .map(|v| Reply::SavedExecutionPreview(Box::new(v))),
+            Command::PublishWorkflowExecution {
+                identity,
+                key,
+                input,
+            } => self
+                .engine
+                .publish_workflow_execution(&identity, &key, input)
+                .map(|v| Reply::WorkflowPublication(Box::new(v))),
+            Command::GetWorkflowPublication {
+                identity,
+                reference,
+            } => self
+                .engine
+                .workflow_publication(&identity, &reference)
+                .map(|v| Reply::WorkflowPublication(Box::new(v))),
             Command::SaveWorkflowResolution {
                 identity,
                 key,

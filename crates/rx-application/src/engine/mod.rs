@@ -93,6 +93,7 @@ mod run_configuration;
 mod runtime_restrictions;
 mod runtime_skill;
 mod workflow;
+mod workflow_publication;
 
 use access::*;
 use admission::*;
