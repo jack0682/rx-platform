@@ -10,7 +10,7 @@
     "crates/rx-process-contract/src/execution_v2/host_configuration.rs": "bb2d9fb7fdb4dd02023c98575480ad3b21819061795f27ee97f530d69b3c4f54",
     "crates/rx-process-contract/src/execution_v2/materialize.rs": "af7c35ef3806d92aa7a9a48d9b51c43283f658fdd6c38943ba4eb2bc628d520c",
     "crates/rx-process-contract/src/execution_v2/templates.rs": "d835981c76e5c3f2722051350fd4f5f8f336989e32a20831d25dac95ab9166cb",
-    "proto/rx/host/configuration/v2/configuration.proto": "11a02453bbc1c38b26f792443a5b3edc02a9e437b3b91eeb4a302577ece48dce",
+    "proto/rx/host/configuration/v2/configuration.proto": "33a7fae02f2ca278b80642ba6315f338f0daaccd1ebeeca8f1aafd84bb526818",
     "spec/host-configuration/v2/README.md": "9f42da0e3c773bf845d22021e98314533639ab1c06eeb4d82bdedd287452630b"
   }
 }

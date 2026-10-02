@@ -357,6 +357,15 @@ g.service("HostConfiguration", [("Inspect", "InspectConfiguration", "Configurati
 
 g.write()
 
+# Explicit execution-v2 acceptance uses a separate service, never a v1 fallback.
+g = Schema("rx.host.configuration.v2", "rx/host/configuration/v2/configuration.proto", ("rx/contract/v1/contract.proto", "rx/cell/v1/cell.proto"))
+g.message("InspectConfiguration", "context:base.CallContext#1 binding_hash:Digest#2")
+g.message("ApplyConfiguration", "call:rx.cell.v1.CellCall#1 binding_hash:Digest#2 reference:base.ArtifactRef#3 payload:bytes#4")
+g.message("LookupConfiguration", "context:base.CallContext#1 request_id:Id#2 binding_hash:Digest#3")
+g.message("ConfigurationPayload", "reference:base.ArtifactRef#1 payload:bytes#2")
+g.service("HostExecutionConfiguration", [("Inspect", "InspectConfiguration", "ConfigurationPayload"),("Apply", "ApplyConfiguration", "ConfigurationPayload"),("Lookup", "LookupConfiguration", "ConfigurationPayload")])
+g.write()
+
 g = Schema("rx.host.qualification.v1", "rx/host/qualification/v1/qualification.proto", ("rx/contract/v1/contract.proto", "rx/cell/v1/cell.proto"))
 g.message("InspectQualification", "context:base.CallContext#1 binding_hash:Digest#2")
 g.message("AcceptQualification", "call:rx.cell.v1.CellCall#1 binding_hash:Digest#2 reference:base.ArtifactRef#3 payload:bytes#4")
