@@ -88,10 +88,10 @@ must also enforce the total bound across definitions, implementations and packag
 Canonical metadata aliases are retained; conflicting metadata is rejected.
 
 This code establishes signed declaration integrity, not software review, source
-semantic consistency, physical qualification or runtime admission. It is not yet
-mandatory in the publication HTTP path. The remaining connection must require fresh
-store verification and review evidence at publication, preserve reviewer separation
-and recheck policy/current context on commit. The preexisting v1 device-review
+semantic consistency, physical qualification or runtime admission. Fresh declaration
+verification is mandatory in the publication HTTP path. Software-review and
+qualification evidence still need connecting without weakening reviewer separation.
+The preexisting v1 device-review
 checker and its hashes are unchanged; a v1 approval cannot be relabelled as a v2
 variable-input review. Do not close the P/Executor gate based on these checks alone.
 
@@ -114,18 +114,32 @@ current definitions. A different installed materializer is refused, not used to
 silently rewrite an old report. This implementation does not yet supply historical
 materializer execution across release upgrades.
 
-`POST /api/v1/workflow-executions/publish` takes id and exact Preview reference in
-the same mutation envelope. It rechecks current inputs and atomically saves an
-immutable publication referencing the Preview and policy. `GET .../publication`
+`POST /api/v1/workflow-executions/publish` takes id, exact Preview reference, cell,
+and a complete node -> `{intake, template}` binding map in the mutation envelope.
+Preparation checks current catalog/cell rights, saved inputs, package registration,
+intake receipt identities and current configuration. No package I/O precedes those
+checks. The existing bounded off-writer package worker then reopens each exact
+stored object, reloads the pinned trust policy, verifies signatures/content and
+matches each signed declaration to the saved Preview action and NodeContract.
+There is no caller-supplied PASS field or fallback to a v1 fixed-operation catalog.
+
+Commit requires the original boot, a ticket age below 30 seconds, current rights,
+unchanged package registration/configuration and current definition closure. It
+atomically saves an immutable publication referencing the Preview and policy,
+including the cell, binding map, package manifest/signature/catalog identities,
+complete package dependency refs and verification-policy registration.
+The combined known definition/package/root count must fit the 1024 dependency
+bound; later qualification must also account for runtime and implementation roots.
+`GET .../publication`
 reads the exact reference. Original-key replay returns the original receipt after
 response loss; changed input under the key conflicts. Existing IDs cannot be
 overwritten, and access is rechecked on replay. An old Preview remains readable
 after a referenced revision changes, but a new publication is blocked. Stale
 diagnostics include the pinned/current revision and digest and definition label.
 
-These authoring publications are **not qualified or executable**. In particular,
-template package signature/review linkage still needs integration before the
-P/Executor gate is complete. Neither publication nor a `NOT_QUALIFIED` projection
+These authoring publications are **not qualified or executable**. Template package
+signatures are verified, but software-review and qualification linkage still need
+integration before the P/Executor gate is complete. Neither publication nor a `NOT_QUALIFIED` projection
 is a qualification approval. No Run/permit/device outbox is created by these APIs.
 
 The existing qualification blob mechanism is shared at application level with

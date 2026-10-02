@@ -38,8 +38,7 @@
         "settlement",
         "store_restore",
         "definition_catalog",
-        "workflow_model",
-        "workflow_publication"
+        "workflow_model"
       ]
     },
     "cell": {
@@ -79,7 +78,8 @@
         "process_draft",
         "process_review",
         "qualification_activation",
-        "requalification"
+        "requalification",
+        "workflow_publication"
       ]
     }
   },

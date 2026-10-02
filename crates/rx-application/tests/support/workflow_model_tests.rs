@@ -1,3 +1,5 @@
+#[path = "execution_template_package.rs"]
+mod signed_package;
 use super::*;
 use rx_application::workflow_model as wm;
 use rx_domain::canonical;
@@ -687,6 +689,139 @@ fn execution_materialization_recomputes_stored_values_and_matches_preapproved_re
 }
 
 impl ExecutionFixture {
+    fn enroll_package(&mut self) -> (signed_package::Fixture, Id) {
+        use rx_application::package_intake as intake;
+        self.app
+            .put_principal(
+                &self.owner,
+                principal("owner", &[Role::Engineer, Role::AccountAdmin]),
+                Some(Counter(1)),
+            )
+            .unwrap();
+        let session = self
+            .app
+            .authenticated_session(&name("owner"), id(), expiry(100000))
+            .unwrap();
+        self.owner.session = session.id;
+        let configuration = fixture(1, false).configuration;
+        self.app.install_cell(&self.owner, configuration).unwrap();
+        let package = signed_package::fixture(
+            |catalog| {
+                catalog.installation = self.app.installation.id.clone();
+                catalog.cell = name("cell/a");
+                catalog.templates = self
+                    .policy
+                    .templates
+                    .iter()
+                    .map(|(node, action)| {
+                        (
+                            node.clone(),
+                            rx_process_contract::execution_v2::TemplateDeclaration {
+                                action: action.clone(),
+                                contract: self.policy.node_contracts[node].clone(),
+                            },
+                        )
+                    })
+                    .collect();
+            },
+            false,
+        );
+        self.app
+            .configure_package_intake(Some((
+                package.store.owner().clone(),
+                package.policy.fingerprint().unwrap(),
+                package.registration.policy_file_digest,
+            )))
+            .unwrap();
+        let context = self
+            .app
+            .package_intake_context(&self.owner, &name("cell/a"))
+            .unwrap();
+        let intake_id = id();
+        let input = intake::Submit {
+            id: intake_id.clone(),
+            cell: name("cell/a"),
+            title: "Signed templates".into(),
+            relative_path: rx_package::PackagePath::new("templates").unwrap(),
+            object: package.stored.object().clone(),
+            configuration_digest: context.configuration_digest,
+            policy_generation: context.registration.unwrap().generation,
+        };
+        let intake::Preflight::Verify(ticket) = self
+            .app
+            .prepare_package_intake(&self.owner, &id(), input)
+            .unwrap()
+        else {
+            panic!("new intake")
+        };
+        let stored = package
+            .store
+            .verify_owned(package.stored.object(), &package.policy)
+            .unwrap();
+        self.app
+            .commit_package_intake(intake::Prepared::new(*ticket, stored).unwrap())
+            .unwrap();
+        (package, intake_id)
+    }
+    fn publish_input(
+        &self,
+        preview: rx_domain::definition::Reference,
+        intake: Id,
+    ) -> rx_application::workflow_publication::Publish {
+        use rx_application::workflow_publication::{Publish, TemplateBinding};
+        Publish {
+            id: id(),
+            preview,
+            cell: name("cell/a"),
+            bindings: self
+                .policy
+                .templates
+                .keys()
+                .map(|node| {
+                    (
+                        node.clone(),
+                        TemplateBinding {
+                            intake: intake.clone(),
+                            template: node.clone(),
+                        },
+                    )
+                })
+                .collect(),
+        }
+    }
+    fn publish(
+        &mut self,
+        package: &signed_package::Fixture,
+        key: &Id,
+        input: rx_application::workflow_publication::Publish,
+    ) -> rx_ports::Result<rx_application::workflow_publication::Publication> {
+        use rx_application::workflow_publication::{PreparedPublication, PublishPreparation};
+        // Inject the transaction fault at the actual commit, not the read-only preflight.
+        let mode = self.failure.swap(0, Ordering::SeqCst);
+        let ticket = match self
+            .app
+            .prepare_workflow_publication(&self.owner, key, input)?
+        {
+            PublishPreparation::Recorded(value) => return Ok(*value),
+            PublishPreparation::Verify(ticket) => ticket,
+        };
+        let packages = ticket
+            .objects()
+            .into_iter()
+            .map(|(id, object)| {
+                (
+                    id,
+                    package
+                        .store
+                        .verify_owned(&object, &package.policy)
+                        .unwrap(),
+                )
+            })
+            .collect();
+        let prepared = PreparedPublication::verify(*ticket, packages).unwrap();
+        self.failure.store(mode, Ordering::SeqCst);
+        self.app.commit_workflow_publication(prepared)
+    }
     fn preview_input(&self) -> rx_application::workflow_publication::PreviewInput {
         use rx_application::workflow_publication::{CandidateInput, PreviewInput};
         PreviewInput {
@@ -733,7 +868,7 @@ impl ExecutionFixture {
 
 #[test]
 fn execution_preview_and_publication_recover_commit_loss_and_reopen_immutable_bytes() {
-    use rx_application::workflow_publication::{Preparation, Publish};
+    use rx_application::workflow_publication::Preparation;
     for mode in [1, 2] {
         let mut f = execution_fixture();
         let input = f.preview_input();
@@ -771,28 +906,24 @@ fn execution_preview_and_publication_recover_commit_loss_and_reopen_immutable_by
             .unwrap()
             .report()
             .to_vec();
-        let publish = Publish {
-            id: id(),
-            preview: preview.reference.clone(),
-        };
+        let (package, intake) = f.enroll_package();
+        let publish = f.publish_input(preview.reference.clone(), intake);
+        let before_deliveries = f
+            .app
+            .pending_deliveries(128)
+            .unwrap()
+            .into_iter()
+            .map(|d| d.id)
+            .collect::<Vec<_>>();
         let publish_key = id();
         f.failure.store(mode, Ordering::SeqCst);
-        assert!(
-            f.app
-                .publish_workflow_execution(&f.owner, &publish_key, publish.clone())
-                .is_err()
-        );
-        let publication = f
-            .app
-            .publish_workflow_execution(&f.owner, &publish_key, publish.clone())
-            .unwrap();
+        assert!(f.publish(&package, &publish_key, publish.clone()).is_err());
+        let publication = f.publish(&package, &publish_key, publish.clone()).unwrap();
         assert_eq!(publication.policy, preview.policy);
         assert_eq!(publication.preview, preview.reference);
         assert_eq!(publication.reference.revision, Counter(1));
         assert!(
-            f.app
-                .publish_workflow_execution(&f.owner, &id(), publish.clone())
-                .is_err(),
+            f.publish(&package, &id(), publish.clone()).is_err(),
             "immutable ID must not be overwritten"
         );
         let mut conflict = input.clone();
@@ -804,6 +935,16 @@ fn execution_preview_and_publication_recover_commit_loss_and_reopen_immutable_by
             "same request key with changed input"
         );
 
+        assert_eq!(
+            f.app
+                .pending_deliveries(128)
+                .unwrap()
+                .into_iter()
+                .map(|d| d.id)
+                .collect::<Vec<_>>(),
+            before_deliveries,
+            "publication must not enqueue work"
+        );
         let installation = f.app.installation.id.clone();
         let owner_id = f.owner.principal.clone();
         drop(f.app);
@@ -844,16 +985,13 @@ fn execution_preview_and_publication_recover_commit_loss_and_reopen_immutable_by
                 .report(),
             original
         );
-        assert!(
-            app.pending_deliveries(128).unwrap().is_empty(),
-            "publication must not enqueue a device effect"
-        );
+        // Restart may enqueue safety fences; publication itself was checked above.
     }
 }
 
 #[test]
 fn execution_publication_rechecks_currentness_and_access_without_rewriting_old_preview() {
-    use rx_application::workflow_publication::{Preparation, Publish};
+    use rx_application::workflow_publication::Preparation;
     let mut f = execution_fixture();
     let input = f.preview_input();
     let key = id();
@@ -882,19 +1020,14 @@ fn execution_publication_rechecks_currentness_and_access_without_rewriting_old_p
         .unwrap()
         .report()
         .to_vec();
+    let (_package, intake) = f.enroll_package();
+    let publish = f.publish_input(preview.reference.clone(), intake);
     f.revise_dependency();
-    assert!(
-        f.app
-            .publish_workflow_execution(
-                &f.owner,
-                &id(),
-                Publish {
-                    id: id(),
-                    preview: preview.reference.clone()
-                }
-            )
-            .is_err()
-    );
+    let error = match f.app.prepare_workflow_publication(&f.owner, &id(), publish) {
+        Ok(_) => panic!("stale input accepted"),
+        Err(e) => e.to_string(),
+    };
+    assert!(error.contains("STALE_EXECUTION_REFERENCE"), "{error}");
     assert_eq!(
         f.app
             .execution_preview(&f.owner, &preview.reference)
@@ -947,4 +1080,92 @@ fn execution_publication_rechecks_currentness_and_access_without_rewriting_old_p
             .save_execution_preview(&editor, &key, prepared)
             .is_err()
     );
+}
+
+#[test]
+fn execution_publication_requires_exact_packages_and_rechecks_authority_after_verification() {
+    use rx_application::workflow_publication::{PreparedPublication, PublishPreparation};
+    for changed in ["policy", "role", "definition"] {
+        let mut f = execution_fixture();
+        let input = f.preview_input();
+        let key = id();
+        let prepared = f.prepare_preview(&key, input);
+        let preview = f
+            .app
+            .save_execution_preview(&f.owner, &key, prepared)
+            .unwrap();
+        let (package, intake) = f.enroll_package();
+        let publish = f.publish_input(preview.reference.clone(), intake);
+        let mut unbound = publish.clone();
+        unbound.bindings.clear();
+        assert!(
+            f.app
+                .prepare_workflow_publication(&f.owner, &id(), unbound)
+                .is_err()
+        );
+        let mut wrong = publish.clone();
+        wrong.bindings.get_mut(&name("node")).unwrap().template = name("unsigned-template");
+        let PublishPreparation::Verify(ticket) = f
+            .app
+            .prepare_workflow_publication(&f.owner, &id(), wrong)
+            .unwrap()
+        else {
+            panic!("verify")
+        };
+        let packages = ticket
+            .objects()
+            .into_iter()
+            .map(|(id, object)| {
+                (
+                    id,
+                    package
+                        .store
+                        .verify_owned(&object, &package.policy)
+                        .unwrap(),
+                )
+            })
+            .collect();
+        assert!(PreparedPublication::verify(*ticket, packages).is_err());
+        let PublishPreparation::Verify(ticket) = f
+            .app
+            .prepare_workflow_publication(&f.owner, &id(), publish.clone())
+            .unwrap()
+        else {
+            panic!("verify")
+        };
+        let packages = ticket
+            .objects()
+            .into_iter()
+            .map(|(id, object)| {
+                (
+                    id,
+                    package
+                        .store
+                        .verify_owned(&object, &package.policy)
+                        .unwrap(),
+                )
+            })
+            .collect();
+        let prepared = PreparedPublication::verify(*ticket, packages).unwrap();
+        match changed {
+            "policy" => {
+                f.app.configure_package_intake(None).unwrap();
+            }
+            "role" => {
+                f.app
+                    .put_principal(
+                        &f.owner,
+                        principal("owner", &[Role::AccountAdmin]),
+                        Some(Counter(2)),
+                    )
+                    .unwrap();
+            }
+            "definition" => f.revise_dependency(),
+            _ => unreachable!(),
+        }
+        assert!(
+            f.app.commit_workflow_publication(prepared).is_err(),
+            "{changed}"
+        );
+    }
 }

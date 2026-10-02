@@ -368,6 +368,7 @@ impl Worker {
 }
 mod device_binding;
 mod device_review;
+mod workflow_publication;
 
 impl Worker {
     fn verify_process_devices(

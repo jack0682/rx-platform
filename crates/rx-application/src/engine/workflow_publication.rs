@@ -186,12 +186,12 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             saved(tx, reference)
         })
     }
-    pub fn publish_workflow_execution(
+    pub fn prepare_workflow_publication(
         &mut self,
         identity: &Identity,
         key_: &Id,
         input: Publish,
-    ) -> Result<Publication> {
+    ) -> Result<PublishPreparation> {
         let meta = &self.installation;
         let clock = &self.clock;
         self.repository.transact(|tx| {
@@ -199,6 +199,9 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             let p = author(tx, identity, meta, &now, true)?;
             lifecycle::require_serving(tx)?;
             access(tx, identity, &p, &input.preview.catalog, true)?;
+            if !p.cells.contains(&input.cell) {
+                return reject(Reject::Forbidden);
+            }
             let (scope, fingerprint) = request(
                 meta,
                 &p,
@@ -206,13 +209,107 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                 key_.as_str(),
                 &(&p.id, &input),
             )?;
-            if let Some(prior) = prior(tx, &scope, fingerprint, PUBLICATION)? {
-                return Ok(prior);
+            if let Some(value) = prior(tx, &scope, fingerprint, PUBLICATION)? {
+                return Ok(PublishPreparation::Recorded(Box::new(value)));
             }
             if tx.get(&key("workflowpublication", &input.id))?.is_some() {
                 return reject(Reject::StaleRevision);
             }
             let saved = saved(tx, &input.preview)?;
+            if input.bindings.keys().ne(saved.policy.templates.keys()) {
+                return reject(Reject::InvalidInput);
+            }
+            current(tx, &saved.inputs, saved.policy.slot_order.len() as u16)?;
+            let (_, cell): (_, Cell) = load(tx, "cell", &input.cell, CELL)?;
+            if cell.configuration.environment != Environment::Simulation {
+                return reject(Reject::InvalidInput);
+            }
+            let configuration_digest = package_intake::configuration_digest(&cell)?;
+            let registration = package_intake::current(tx, meta)?.ok_or(
+                StoreError::Unavailable("package intake not configured".into()),
+            )?;
+            let mut receipts = BTreeMap::new();
+            for binding in input.bindings.values() {
+                if receipts.contains_key(&binding.intake) {
+                    continue;
+                }
+                let (revision, receipt): (_, crate::package_intake::Receipt) = load(
+                    tx,
+                    "packageintakereceipt",
+                    &binding.intake,
+                    "rx.package-intake-receipt.v1",
+                )?;
+                if revision != Counter(1)
+                    || receipt.id != binding.intake
+                    || receipt.cell != input.cell
+                    || receipt.registration != registration
+                    || receipt.configuration_digest != configuration_digest
+                {
+                    return reject(Reject::StaleRevision);
+                }
+                receipts.insert(binding.intake.clone(), receipt);
+            }
+            Ok(PublishPreparation::Verify(Box::new(PublishTicket {
+                input: input.clone(),
+                identity: identity.clone(),
+                key: key_.clone(),
+                preview: saved.preview,
+                policy: saved.policy,
+                registration,
+                receipts,
+                configuration_digest,
+                installation: meta.id.clone(),
+                boot: meta.runtime_boot.clone(),
+                issued: now,
+                definition_count: saved.inputs.definitions.len(),
+            })))
+        })
+    }
+    pub fn commit_workflow_publication(
+        &mut self,
+        prepared: PreparedPublication,
+    ) -> Result<Publication> {
+        let meta = &self.installation;
+        let clock = &self.clock;
+        self.repository.transact(|tx| {
+            let t = &prepared.ticket;
+            let input = &t.input;
+            let now = clock.now();
+            let p = author(tx, &t.identity, meta, &now, true)?;
+            lifecycle::require_serving(tx)?;
+            access(tx, &t.identity, &p, &input.preview.catalog, true)?;
+            if !p.cells.contains(&input.cell) {
+                return reject(Reject::Forbidden);
+            }
+            let (scope, fingerprint) = request(
+                meta,
+                &p,
+                "WorkflowExecution.Publish",
+                t.key.as_str(),
+                &(&p.id, input),
+            )?;
+            if let Some(value) = prior(tx, &scope, fingerprint, PUBLICATION)? {
+                return Ok(value);
+            }
+            if tx.get(&key("workflowpublication", &input.id))?.is_some() {
+                return reject(Reject::StaleRevision);
+            }
+            if t.boot != meta.runtime_boot
+                || now.age_ns(&t.issued).is_none_or(|age| age >= TICKET_TTL_NS)
+                || package_intake::current(tx, meta)?.as_ref() != Some(&t.registration)
+            {
+                return reject(Reject::StaleRevision);
+            }
+            let (_, cell): (_, Cell) = load(tx, "cell", &input.cell, CELL)?;
+            if package_intake::configuration_digest(&cell)? != t.configuration_digest {
+                return reject(Reject::StaleRevision);
+            }
+            let saved = saved(tx, &input.preview)?;
+            if saved.preview.reference != t.preview.reference
+                || saved.preview.policy != t.preview.policy
+            {
+                return reject(Reject::StaleRevision);
+            }
             current(tx, &saved.inputs, saved.policy.slot_order.len() as u16)?;
             tx.require_workflow_execution_reader()?;
             let mut publication = Publication {
@@ -224,6 +321,10 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                 },
                 preview: input.preview.clone(),
                 policy: saved.preview.policy,
+                cell: input.cell.clone(),
+                bindings: input.bindings.clone(),
+                packages: prepared.packages,
+                registration: t.registration.clone(),
                 published_by: p.id,
                 published_at: now,
             };

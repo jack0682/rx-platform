@@ -138,7 +138,7 @@ pub(super) async fn publish(
     body: Bytes,
 ) -> Result<Response, ApiError> {
     let input: Mutation<publication::Publish> = decode(&body)?;
-    match command(
+    let ticket = match command(
         &s,
         Command::PublishWorkflowExecution {
             identity: identity(&s, &headers)?,
@@ -148,6 +148,31 @@ pub(super) async fn publish(
     )
     .await
     {
+        Ok(Reply::WorkflowPublicationPreparation(value)) => match *value {
+            publication::PublishPreparation::Recorded(value) => {
+                return Ok(Json(value).into_response());
+            }
+            publication::PublishPreparation::Verify(ticket) => ticket,
+        },
+        Err(response) => return Ok(*response),
+        _ => return Err(mismatch()),
+    };
+    let worker = s.package_intake.as_ref().ok_or_else(|| {
+        ApiError::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "PACKAGE_INTAKE_NOT_CONFIGURED",
+        )
+    })?;
+    let prepared = worker
+        .prepare_workflow_publication(*ticket)
+        .await
+        .map_err(|_| {
+            ApiError::new(
+                StatusCode::CONFLICT,
+                "EXECUTION_TEMPLATE_REVERIFICATION_FAILED",
+            )
+        })?;
+    match command(&s, Command::CommitWorkflowPublication(Box::new(prepared))).await {
         Ok(Reply::WorkflowPublication(value)) => Ok(Json(value).into_response()),
         Err(response) => Ok(*response),
         _ => Err(mismatch()),

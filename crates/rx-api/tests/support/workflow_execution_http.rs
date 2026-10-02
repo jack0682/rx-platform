@@ -1,3 +1,5 @@
+#[path = "../../../rx-application/tests/support/execution_template_package.rs"]
+mod signed_package;
 use super::*;
 
 async fn post(
@@ -42,8 +44,8 @@ fn quantity(v: u64, unit: &str) -> serde_json::Value {
 
 #[tokio::test]
 async fn saved_execution_preview_publish_and_stale_diagnostics_use_real_http_writer() {
-    let f = fixture().await;
-    let cookie = login(&f.app, "admin").await;
+    let mut f = fixture().await;
+    let mut cookie = login(&f.app, "admin").await;
     let catalog = id();
     post(&f,&cookie,"/api/v1/definition-catalogs",json!({"id":catalog,"expected":null,"title":"Execution inputs","members":{},"terminals":[],"archived":false})).await;
     let mut properties = std::collections::BTreeMap::new();
@@ -88,7 +90,7 @@ async fn saved_execution_preview_publish_and_stale_diagnostics_use_real_http_wri
             "timeout_property":"timeout","done":{"observation":"done","property":properties["flag"],"equals":{"unit":"unitless","data":{"kind":"BOOLEAN","value":true}}},"on_failure":"STOP","on_unknown":"HOLD_AND_RECONCILE"}},
         "steps":[{"id":"node","task":"act"}]}});
     let model = post(&f, &cookie, "/api/v1/workflow-models", model_input.clone()).await;
-    let template = json!({"host":"sim-host","intent":{"kind":"FINITE_ACTION","target":"device","profile_digest":"11".repeat(32),"site_config_digest":"22".repeat(32),"calibration_digests":[],"resource_set":["resource"],"execution_timeout_ms":"30000","prepare_validity_ms":"1000","completion_rule":"done","cancel_rule":"stop","body":{"program":{"program":{"sha256":"33".repeat(32),"schema_id":"test.program.v1","size_bytes":"1"},"parameter_set":{"sha256":"44".repeat(32),"schema_id":"rx.workflow-parameters.v2","size_bytes":"1"}}}}});
+    let template = json!({"host":"sim-host","intent":{"kind":"FINITE_ACTION","target":"device","profile_digest":"11".repeat(32),"site_config_digest":"22".repeat(32),"calibration_digests":[],"resource_set":["resource"],"execution_timeout_ms":"30000","prepare_validity_ms":"1000","completion_rule":"done","cancel_rule":"stop","body":{"program":{"program":{"sha256":rx_package::content_digest(b"program"),"schema_id":"test.program.v1","size_bytes":"7"},"parameter_set":{"sha256":rx_package::content_digest(b"template"),"schema_id":"rx.workflow-parameters.v2","size_bytes":"8"}}}}});
     let input = json!({"id":id(),"slots":2,"candidates":[{"key":"a","object_model":object,"request":{"workflow":model["reference"],"contexts":{},"property_sets":[],"overrides":{},"inputs":{},"slot_index":"0"}}],"templates":{"node":template},"node_contracts":{"node":{"implementation":"simulated","version":"1","primitive":"set","parameters":{"value":{"unit":"mm","value_type":"NUMBER","frame":null}}}}});
     let preview = post(
         &f,
@@ -112,14 +114,105 @@ async fn saved_execution_preview_publish_and_stale_diagnostics_use_real_http_wri
         report["resolution"]["steps"][0]["properties"]["target"]["value"]["data"]["range"]["min"],
         20
     );
+    let Reply::Installation(installation) = f.handle.call(Command::Installation).await.unwrap()
+    else {
+        panic!("installation")
+    };
+    let package = signed_package::fixture(
+        |catalog| {
+            catalog.installation = installation.id.clone();
+            catalog.cell = name("cell/a");
+            catalog.templates = [(
+                name("node"),
+                rx_process_contract::execution_v2::TemplateDeclaration {
+                    action: serde_json::from_value(input["templates"]["node"].clone()).unwrap(),
+                    contract: serde_json::from_value(input["node_contracts"]["node"].clone())
+                        .unwrap(),
+                },
+            )]
+            .into();
+        },
+        false,
+    );
+    let object = package.stored.object().clone();
+    let worker = rx_runtime::package_intake::Worker::new_pinned(
+        package._directory.path().join("incoming"),
+        package.store,
+        package.policy,
+        package.registration.policy_file_digest,
+        package._directory.path().join("policy.json"),
+    )
+    .unwrap();
+    f.handle
+        .call(Command::ConfigurePackageIntake(Some(worker.registration())))
+        .await
+        .unwrap();
+    f.app = rx_api::router_with_package_intake(
+        Arc::new(f.handle.clone()),
+        credentials(),
+        LocalPolicy::new("http://127.0.0.1:8080").unwrap(),
+        worker,
+    )
+    .unwrap();
+    cookie = login(&f.app, "admin").await;
+    let (_, context, _) = send(
+        &f.app,
+        request(
+            "GET",
+            "/api/v1/package-intake-context?cell=cell%2Fa",
+            Some(&cookie),
+            String::new(),
+        ),
+    )
+    .await;
+    let intake_id = id();
+    post(&f,&cookie,"/api/v1/package-intakes",json!({"id":intake_id,"cell":"cell/a","title":"Signed workflow templates","relative_path":"templates","object":object,"configuration_digest":context["configuration_digest"],"policy_generation":context["registration"]["generation"]})).await;
+    let mut publication_command = json!({"id":id(),"preview":preview["reference"],"cell":"cell/a","bindings":{"node":{"intake":intake_id,"template":"node"}}});
+    let policy_path = package._directory.path().join("policy.json");
+    let policy_bytes = std::fs::read(&policy_path).unwrap();
+    let mut changed_policy = policy_bytes.clone();
+    changed_policy.push(b'\n');
+    std::fs::write(&policy_path, changed_policy).unwrap();
+    let (status, error, _) = send(
+        &f.app,
+        request(
+            "POST",
+            "/api/v1/workflow-executions/publish",
+            Some(&cookie),
+            json!({"request_key":id(),"command":publication_command}).to_string(),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(error["code"], "EXECUTION_TEMPLATE_REVERIFICATION_FAILED");
+    std::fs::write(&policy_path, policy_bytes).unwrap();
+    let mut unsigned = publication_command.clone();
+    unsigned["bindings"]["node"]["template"] = json!("unsigned");
+    let (status, error, _) = send(
+        &f.app,
+        request(
+            "POST",
+            "/api/v1/workflow-executions/publish",
+            Some(&cookie),
+            json!({"request_key":id(),"command":unsigned}).to_string(),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(error["code"], "EXECUTION_TEMPLATE_REVERIFICATION_FAILED");
     let publication = post(
         &f,
         &cookie,
         "/api/v1/workflow-executions/publish",
-        json!({"id":id(),"preview":preview["reference"]}),
+        publication_command.clone(),
     )
     .await;
     assert_eq!(publication["policy"], preview["policy"]);
+    assert_eq!(publication["cell"], "cell/a");
+    assert_eq!(
+        publication["packages"][intake_id.as_str()]["object"],
+        serde_json::to_value(&object).unwrap()
+    );
     let (status, read, _) = send(
         &f.app,
         request(
@@ -162,14 +255,14 @@ async fn saved_execution_preview_publish_and_stale_diagnostics_use_real_http_wri
     model_input["expected"] = json!("1");
     model_input["label"] = json!("Changed revision");
     post(&f, &cookie, "/api/v1/workflow-models", model_input).await;
+    publication_command["id"] = json!(id());
     let (status, error, _) = send(
         &f.app,
         request(
             "POST",
             "/api/v1/workflow-executions/publish",
             Some(&cookie),
-            json!({"request_key":id(),"command":{"id":id(),"preview":preview["reference"]}})
-                .to_string(),
+            json!({"request_key":id(),"command":publication_command}).to_string(),
         ),
     )
     .await;
