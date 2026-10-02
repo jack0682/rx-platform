@@ -419,3 +419,191 @@ fn v2_plan_pins_graph_order_and_refuses_legacy_or_altered_templates() {
     legacy.schema = n("rx.resolved-process.v1");
     assert!(legacy.validate().is_err());
 }
+
+fn host_v2_observation() -> host_configuration::Observation {
+    use host_configuration as h;
+    use rx_domain::host_configuration as old;
+    let policy = policy(1, 2);
+    let policy_ref = artifact(POLICY_SCHEMA, &canonical::bytes(&policy).unwrap());
+    let context = old::Request {
+        schema: n("rx.host-process-configuration-request.v1"),
+        id: id(6),
+        change: id(3),
+        preparation: Counter(1),
+        plan_digest: digest(5),
+        host: n("host"),
+        expected_host_boot: id(4),
+        expected_delivery_journal: id(5),
+        binding_digest: digest(6),
+        cells: vec![old::CellTarget {
+            cell: n("cell"),
+            expected_context: None,
+            before_configuration: digest(7),
+            after_configuration: digest(8),
+            recipe: artifact(PLAN_SCHEMA, b"plan"),
+            definition: digest(9),
+            envelope: digest(10),
+            environment: n("SIMULATION"),
+            required_intents: vec![policy.templates[&n("node")].intent.digest().unwrap()],
+            required_conditions: vec![n("ready")],
+            epoch: Counter(1),
+            scopes: [(n("scope"), Counter(1))].into(),
+            fence_request: id(7),
+        }],
+    };
+    let request = h::Request {
+        schema: n(h::REQUEST_SCHEMA),
+        context: context.clone(),
+        policies: [(
+            n("cell"),
+            h::CellPolicy {
+                publication: reference(),
+                reference: policy_ref.clone(),
+                policy,
+                packages: [(
+                    n("node"),
+                    h::Package {
+                        manifest: digest(11),
+                        signature: digest(12),
+                        catalog: artifact(TEMPLATE_CATALOG_SCHEMA, b"catalog"),
+                        template: n("template"),
+                    },
+                )]
+                .into(),
+            },
+        )]
+        .into(),
+    };
+    let policies: BTreeMap<_, _> = [(
+        n("cell"),
+        h::AppliedPolicy {
+            publication: reference(),
+            policy: policy_ref,
+            request: context.id.clone(),
+            receipt_sequence: Counter(1),
+            configuration: digest(8),
+        },
+    )]
+    .into();
+    let at = TimePoint {
+        clock_id: "test".into(),
+        ticks_ns: Counter(1000),
+    };
+    let facts = old::Receipt {
+        schema: n("rx.host-process-configuration-receipt.v1"),
+        request_digest: context.digest().unwrap(),
+        request: context,
+        host_boot: id(4),
+        journal: id(5),
+        sequence: Counter(1),
+        status: old::Status::AppliedUnqualified,
+        effect: old::Effect::Installed,
+        reason: None,
+        quiescence: Some(old::Quiescence {
+            device_session: id(8),
+            observed_at: at.clone(),
+            uncertainty_ns: Counter(0),
+            resources: vec![n("resource")],
+        }),
+        recorded_at: at,
+    };
+    h::Observation {
+        schema: n(h::OBSERVATION_SCHEMA),
+        snapshot: old::Snapshot {
+            schema: n("rx.host-process-configuration-snapshot.v1"),
+            host: n("host"),
+            host_boot: id(4),
+            delivery_journal: id(5),
+            binding_digest: digest(6),
+            evidence_journal: None,
+            installation_identity: None,
+            binding_commit: None,
+            cells: vec![old::CellObservation {
+                cell: n("cell"),
+                definition: digest(9),
+                envelope: digest(10),
+                environment: n("SIMULATION"),
+                epoch: Counter(1),
+                scopes: [(n("scope"), Counter(1))].into(),
+                blocked: vec![],
+                applied: Some(old::AppliedContext {
+                    cell: n("cell"),
+                    configuration: digest(8),
+                    change: id(3),
+                    request: id(6),
+                    receipt_sequence: Counter(1),
+                    binding_digest: digest(6),
+                }),
+            }],
+        },
+        receipt: Some(h::Receipt {
+            schema: n(h::RECEIPT_SCHEMA),
+            request_digest: request.digest().unwrap(),
+            request,
+            context: facts,
+            policies: policies.clone(),
+        }),
+        policies,
+        context_matches_current_host: true,
+        activation_authorized: false,
+    }
+}
+
+#[test]
+fn host_v2_receipt_binds_policy_and_never_accepts_bare_v1_confirmation() {
+    let value = host_v2_observation();
+    value.validate().unwrap();
+    let old = rx_domain::host_configuration::Observation {
+        schema: n("rx.host-process-configuration-observation.v1"),
+        snapshot: value.snapshot.clone(),
+        receipt: Some(value.receipt.as_ref().unwrap().context.clone()),
+        context_matches_current_host: true,
+        activation_authorized: false,
+    };
+    old.validate().unwrap();
+    assert!(
+        canonical::decode_json::<host_configuration::Observation>(&canonical::bytes(&old).unwrap())
+            .is_err()
+    );
+    let mut missing = value.clone();
+    missing.policies.clear();
+    assert!(missing.validate().is_err());
+    let mut wrong = value.clone();
+    wrong
+        .receipt
+        .as_mut()
+        .unwrap()
+        .policies
+        .get_mut(&n("cell"))
+        .unwrap()
+        .policy
+        .sha256 = digest(99);
+    assert!(wrong.validate().is_err());
+    let mut old_boot = value.clone();
+    old_boot.snapshot.host_boot = id(99);
+    assert!(old_boot.validate().is_err());
+    old_boot.context_matches_current_host = false;
+    old_boot.validate().unwrap();
+    let mut absent = value;
+    absent.receipt = None;
+    absent.context_matches_current_host = false;
+    absent.validate().unwrap();
+}
+
+#[test]
+fn host_v2_request_rejects_missing_policy_foreign_host_and_missing_package() {
+    let request = host_v2_observation().receipt.unwrap().request;
+    request.validate().unwrap();
+    let mut wrong = request.clone();
+    wrong.policies.clear();
+    assert!(wrong.validate().is_err());
+    let mut wrong = request.clone();
+    wrong.context.host = n("other");
+    assert!(wrong.validate().is_err());
+    let mut wrong = request.clone();
+    wrong.policies.get_mut(&n("cell")).unwrap().packages.clear();
+    assert!(wrong.validate().is_err());
+    let mut wrong = request;
+    wrong.context.cells[0].required_intents.clear();
+    assert!(wrong.validate().is_err());
+}

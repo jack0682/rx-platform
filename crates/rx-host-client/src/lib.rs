@@ -637,3 +637,5 @@ pub mod qualification;
 pub mod qualification_worker;
 
 pub mod recovery;
+
+mod configuration_v2;

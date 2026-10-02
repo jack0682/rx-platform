@@ -23,6 +23,9 @@ pub mod rx {
             }
         }
         pub mod configuration {
+            pub mod v2 {
+                tonic::include_proto!("rx.host.configuration.v2");
+            }
             pub mod v1 {
                 tonic::include_proto!("rx.host.configuration.v1");
             }
@@ -88,3 +91,5 @@ pub use rx::executor::assignment::v1 as assignment;
 pub use rx::resident::reporting::v1 as resident_reporting;
 
 pub use rx::resident::execution::v1 as resident_execution;
+
+pub use rx::host::configuration::v2 as host_execution_configuration;

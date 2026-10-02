@@ -1,0 +1,16 @@
+{
+  "max_payload_bytes": 1000000,
+  "observation_schema": "rx.host-execution-configuration-observation.v2",
+  "package": "rx.host.configuration.v2",
+  "request_schema": "rx.host-execution-configuration-request.v2",
+  "schema": "rx.host-execution-configuration-binding.v2",
+  "source_sha256": {
+    "crates/rx-domain/src/host_configuration.rs": "23bf628291115d86d77ea73a67aa3b6b6eb9c50dfd61368f2d296906950f8933",
+    "crates/rx-process-contract/src/execution_v2.rs": "bf68e454683d4360b2ee742f9008ac554332e0ab4d765f92ebfc75fb70aec787",
+    "crates/rx-process-contract/src/execution_v2/host_configuration.rs": "bb2d9fb7fdb4dd02023c98575480ad3b21819061795f27ee97f530d69b3c4f54",
+    "crates/rx-process-contract/src/execution_v2/materialize.rs": "af7c35ef3806d92aa7a9a48d9b51c43283f658fdd6c38943ba4eb2bc628d520c",
+    "crates/rx-process-contract/src/execution_v2/templates.rs": "d835981c76e5c3f2722051350fd4f5f8f336989e32a20831d25dac95ab9166cb",
+    "proto/rx/host/configuration/v2/configuration.proto": "11a02453bbc1c38b26f792443a5b3edc02a9e437b3b91eeb4a302577ece48dce",
+    "spec/host-configuration/v2/README.md": "9f42da0e3c773bf845d22021e98314533639ab1c06eeb4d82bdedd287452630b"
+  }
+}
