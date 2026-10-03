@@ -148,10 +148,12 @@ pub(super) async fn report(
     .await
     .map_err(|_| ApiError::unavailable())?
     {
-        Ok(bytes) => Ok(Json(
-            serde_json::from_slice::<serde_json::Value>(&bytes).map_err(|_| mismatch())?,
+        // Preserve the approved artifact's canonical bytes for receipt hash comparison.
+        Ok(bytes) => Ok((
+            [(axum::http::header::CONTENT_TYPE, "application/json")],
+            bytes,
         )
-        .into_response()),
+            .into_response()),
         Err(error) => Ok(input_error(error)),
     }
 }
@@ -216,6 +218,49 @@ pub(super) async fn get_publication(
     .await
     {
         Ok(Reply::WorkflowPublication(value)) => Ok(Json(value).into_response()),
+        Err(response) => Ok(*response),
+        _ => Err(mismatch()),
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct MaterialQuery {
+    catalog: Id,
+    id: Id,
+    revision: Counter,
+    digest: Digest,
+    artifact: String,
+}
+/// Authenticated byte-preserving export for the installation-owned Host material store.
+pub(super) async fn material(
+    State(s): State<ApiState>,
+    headers: HeaderMap,
+    Query(q): Query<MaterialQuery>,
+) -> Result<Response, ApiError> {
+    let reference = Reference {
+        catalog: q.catalog,
+        id: q.id,
+        revision: q.revision,
+        digest: q.digest,
+    };
+    match command(
+        &s,
+        Command::GetExecutionPreview {
+            identity: identity(&s, &headers)?,
+            reference,
+        },
+    )
+    .await
+    {
+        Ok(Reply::SavedExecutionPreview(value)) => match value.artifact(&q.artifact) {
+            Ok(bytes) => Ok((
+                [(axum::http::header::CONTENT_TYPE, "application/json")],
+                bytes,
+            )
+                .into_response()),
+            Err(error) => Ok(input_error(error)),
+        },
         Err(response) => Ok(*response),
         _ => Err(mismatch()),
     }

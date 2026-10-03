@@ -9,3 +9,5 @@ Replies echo that digest; a mismatched/missing binding is rejected before receip
 The protocol hash is RX-HOST-EXECUTION-BINDING-v2 over canonical binding.json.
 No v1 fallback, no inferred no-effect outcome on unknown/unsupported response.
 P client/transport fixtures do not establish native Host execution conformance.
+
+Revision 2026-10-03.2 requires Host-owned approval membership before native input handoff. The shared host_inputs verifier regenerates the selected report from the Host-retained input closure, compares its saved index entry, and compares exact parameter bytes. The gate must bind that material to its durable qualification acknowledgement; the pure verifier alone grants no authority. Python and external adapters use the same BoundInput meaning. See rx_docs workflow-execution/v2/host-input-membership.md and python-execution-profile.md.

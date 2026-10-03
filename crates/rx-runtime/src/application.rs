@@ -590,6 +590,11 @@ pub enum Command {
         run: Id,
         part: Id,
     },
+    GetExecutionRunReport {
+        identity: Identity,
+        run: Id,
+        report: Digest,
+    },
     GetExecutionPartArtifact {
         identity: Identity,
         run: Id,
@@ -990,6 +995,10 @@ pub enum Command {
     DeviceRestrictions {
         identity: Identity,
         cell: Name,
+    },
+    GetOperatorExecutionStartContext {
+        identity: Identity,
+        input: rx_application::operator_start::ContextRequest,
     },
     GetOperatorStartContext {
         identity: Identity,
@@ -2234,6 +2243,14 @@ impl<R: Repository + Send + 'static, C: Clock + 'static, A: QualificationAuthori
                 .engine
                 .execution_part(&identity, &run, &part)
                 .map(|v| Reply::ExecutionPart(Box::new(v))),
+            Command::GetExecutionRunReport {
+                identity,
+                run,
+                report,
+            } => self
+                .engine
+                .execution_run_report(&identity, &run, report)
+                .map(Reply::ExecutionPartArtifact),
             Command::GetExecutionPartArtifact {
                 identity,
                 run,
@@ -2876,6 +2893,10 @@ impl<R: Repository + Send + 'static, C: Clock + 'static, A: QualificationAuthori
                 .engine
                 .device_restrictions(&identity, &cell)
                 .map(|v| Reply::DeviceRestrictions(Box::new(v))),
+            Command::GetOperatorExecutionStartContext { identity, input } => self
+                .engine
+                .operator_execution_start_context(&identity, input)
+                .map(|v| Reply::OperatorStartContext(Box::new(v))),
             Command::GetOperatorStartContext { identity, input } => self
                 .engine
                 .operator_start_context(&identity, input)

@@ -38,6 +38,8 @@ pub struct Catalog {
 }
 #[derive(Clone, Debug, Serialize)]
 pub struct Work {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub execution: Option<Box<rx_process_contract::execution_v2::OperationBinding>>,
     pub operation: Operation,
     pub part: Option<Id>,
     pub slot: Name,

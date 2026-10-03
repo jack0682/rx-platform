@@ -99,6 +99,22 @@ async fn saved_execution_preview_publish_and_stale_diagnostics_use_real_http_wri
         input.clone(),
     )
     .await;
+    for kind in ["policy", "inputs", "index"] {
+        let url = query(
+            "/api/v1/workflow-executions/material",
+            &preview["reference"],
+        ) + "&artifact="
+            + kind;
+        let (status, artifact, _) =
+            send(&f.app, request("GET", &url, Some(&cookie), "".into())).await;
+        assert_eq!(status, StatusCode::OK, "{artifact}");
+        let raw = rx_domain::canonical::bytes(&artifact).unwrap();
+        assert_eq!(
+            rx_package::content_digest(&raw).to_string(),
+            preview[kind]["sha256"]
+        );
+        assert_eq!(raw.len().to_string(), preview[kind]["size_bytes"]);
+    }
     let report_url = query(
         "/api/v1/workflow-executions/preview-report",
         &preview["reference"],

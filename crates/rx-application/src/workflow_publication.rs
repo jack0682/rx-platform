@@ -298,6 +298,46 @@ impl SavedPreview {
     pub fn policy(&self) -> &v2::Policy {
         &self.policy
     }
+    /// Export immutable installation material, not a qualification acknowledgement.
+    pub fn artifact(&self, kind: &str) -> Result<Vec<u8>, String> {
+        let (bytes, reference, limit) = match kind {
+            "policy" => (
+                canonical::bytes(&self.policy).map_err(|e| e.to_string())?,
+                &self.preview.policy,
+                v2::MAX_POLICY_BYTES,
+            ),
+            "inputs" => (
+                canonical::bytes(&self.inputs).map_err(|e| e.to_string())?,
+                &self.preview.inputs,
+                v2::MAX_DEFINITION_BYTES as usize,
+            ),
+            "index" => {
+                let digest = self.policy.digest()?;
+                let mut entries = Vec::new();
+                for c in 0..self.policy.candidates.len() {
+                    for s in 0..self.policy.slot_order.len() {
+                        entries.push((
+                            c as u8,
+                            s as u16,
+                            self.index.report(digest, c as u8, s as u16)?,
+                        ));
+                    }
+                }
+                let index = v2::ReportIndex {
+                    schema: Name::new(v2::INDEX_SCHEMA).expect("schema"),
+                    entries,
+                };
+                (
+                    canonical::bytes(&index).map_err(|e| e.to_string())?,
+                    &self.preview.index,
+                    v2::MAX_INDEX_BYTES,
+                )
+            }
+            _ => return Err("unknown execution material artifact".into()),
+        };
+        v2::verify_artifact(&bytes, reference, limit)?;
+        Ok(bytes)
+    }
     pub fn report(&self, candidate: u8, slot: u16) -> Result<v2::Materialized, String> {
         let generated = v2::materialize(&self.policy, &self.inputs, candidate, slot)?;
         generated.verify_index(&self.policy, &self.index, candidate, slot)?;

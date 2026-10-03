@@ -22,7 +22,11 @@ fn binding(meta: &Installation, cfg: &CellConfiguration) -> Result<Option<view::
         package_digest: process.package_digest,
         site_config_digest: cfg.site_config_digest,
         maximum_budget: cfg.maximum_budget,
-        input_mode: "BOUND_CONFIGURATION",
+        input_mode: if cfg.execution.is_some() {
+            "PUBLISHED_SELECTION_V2"
+        } else {
+            "BOUND_CONFIGURATION"
+        },
     }))
 }
 
@@ -105,6 +109,7 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                 work_count += 1;
                 if work.len() < 256 {
                     work.push(view::Work {
+                        execution: value.execution,
                         operation: value.operation,
                         part: value.part,
                         slot: value.slot,

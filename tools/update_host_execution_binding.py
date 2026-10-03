@@ -11,6 +11,7 @@ args = parser.parse_args()
 files = [
     'proto/rx/host/configuration/v2/configuration.proto',
     'crates/rx-process-contract/src/execution_v2.rs',
+    'crates/rx-process-contract/src/execution_v2/host_inputs.rs',
     'crates/rx-process-contract/src/execution_v2/host_configuration.rs',
     'crates/rx-process-contract/src/execution_v2/materialize.rs',
     'crates/rx-process-contract/src/execution_v2/templates.rs',

@@ -133,6 +133,26 @@ pub(super) fn exercise(
         .negotiate_execution_session(&f.executor, &target.id, wire::binding_hash())
         .unwrap();
     assert_eq!(session.session, f.executor.session);
+    let context_request = rx_application::operator_start::ContextRequest {
+        cell: target.id.clone(),
+        run: binding.run.clone(),
+        purpose: Purpose::Production,
+        budget_limit: Counter(2),
+    };
+    let legacy = f
+        .app
+        .operator_start_context(&f.operator, context_request.clone())
+        .unwrap();
+    assert!(!legacy.can_request);
+    let explicit = f
+        .app
+        .operator_execution_start_context(&f.operator, context_request)
+        .unwrap();
+    assert!(explicit.can_request, "{:?}", explicit.blocking_reason);
+    assert_eq!(
+        canonical::bytes(&explicit.request).unwrap(),
+        canonical::bytes(&command).unwrap()
+    );
     let key = id();
     let attempt = f
         .app
@@ -275,6 +295,22 @@ pub(super) fn exercise(
     assert_eq!(
         rx_package::content_digest(&bytes),
         part.binding.report.sha256
+    );
+    assert_eq!(
+        f.app
+            .execution_run_report(&f.operator, &run.id, part.binding.report.sha256)
+            .unwrap(),
+        bytes
+    );
+    assert!(
+        f.app
+            .execution_run_report(&f.operator, &run.id, Digest::from_bytes([0; 32]))
+            .is_err()
+    );
+    assert!(
+        f.app
+            .execution_run_report(&f.operator, &id(), part.binding.report.sha256)
+            .is_err()
     );
     let mut wrong = part.binding.report.clone();
     wrong.schema_id = name("foreign/schema");

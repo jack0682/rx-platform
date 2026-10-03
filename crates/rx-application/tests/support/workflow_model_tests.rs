@@ -645,6 +645,78 @@ fn execution_materialization_recomputes_stored_values_and_matches_preapproved_re
     let approved = v2::ReportIndex::decode(&bytes, &p).unwrap();
     let generated = snapshot.materialize(&p, 0, 0).unwrap();
     generated.verify_index(&p, &approved, 0, 0).unwrap();
+    // The receiving Host compares content to its own complete, qualification-linked domain.
+    let local = v2::host_inputs::VerifiedDomain::verify(
+        &canonical::bytes(&p).unwrap(),
+        &canonical::bytes(&inputs).unwrap(),
+        &bytes,
+    )
+    .unwrap();
+    let concrete = &generated.actions()[&name("node")];
+    let parameter = &generated.parameters()[&name("node")];
+    let publication_id = id();
+    let selection = v2::Selection {
+        schema: name("rx.execution-selection.v2"),
+        publication: publication_id.clone(),
+        policy_digest: p.digest().unwrap(),
+        configuration_digest: Digest::from_bytes([1; 32]),
+        run: id(),
+        part: id(),
+        ordinal: Counter(1),
+        slot_ordinal: Counter(1),
+        object: p.candidates[0].object_model.clone(),
+        object_values_digest: Digest::from_bytes([2; 32]),
+        candidate: 0,
+        slot: 0,
+        report_digest: generated.report_digest(),
+        node: name("node"),
+        parameter: artifact(v2::PARAMETER_SCHEMA, parameter),
+        intent_digest: concrete.intent.digest().unwrap(),
+        authority_generation: Counter(1),
+    };
+    let binding = v2::OperationBinding {
+        schema: name(v2::OPERATION_SCHEMA),
+        operation: id(),
+        mandate: id(),
+        publication: rx_domain::definition::Reference {
+            catalog: p.workflow.catalog.clone(),
+            id: publication_id,
+            revision: Counter(1),
+            digest: Digest::from_bytes([3; 32]),
+        },
+        policy: local.reference().clone(),
+        report: artifact("rx.execution-report.v2", generated.report()),
+        selection_digest: selection.digest().unwrap(),
+        selection,
+    };
+    local
+        .verify_operation(&binding, &concrete.host, &concrete.intent, parameter)
+        .unwrap();
+    let mut changed: serde_json::Value = serde_json::from_slice(parameter).unwrap();
+    changed["values"]["value"]["value"]["data"]["range"] = serde_json::json!({"min":21,"max":21});
+    let forged = canonical::bytes(&changed).unwrap();
+    let mut forged_binding = binding.clone();
+    forged_binding.selection.parameter = artifact(v2::PARAMETER_SCHEMA, &forged);
+    let mut forged_intent = concrete.intent.clone();
+    let rx_domain::intent::Body::Program(goal) = &mut forged_intent.body else {
+        panic!("program")
+    };
+    goal.parameter_set = forged_binding.selection.parameter.clone();
+    forged_binding.selection.intent_digest = forged_intent.digest().unwrap();
+    forged_binding.selection_digest = forged_binding.selection.digest().unwrap();
+    assert!(
+        local
+            .verify_operation(&forged_binding, &concrete.host, &forged_intent, &forged)
+            .is_err(),
+        "consistent caller hashes cannot replace membership in the Host's saved domain"
+    );
+    let mut foreign = binding.clone();
+    foreign.policy.sha256 = Digest::from_bytes([9; 32]);
+    assert!(
+        local
+            .verify_operation(&foreign, &concrete.host, &concrete.intent, parameter)
+            .is_err()
+    );
     assert!(generated.verify_index(&p, &approved, 0, 1).is_err());
     assert!(generated.verify_index(&p, &approved, 1, 0).is_err());
     let reread = app

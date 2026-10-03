@@ -136,7 +136,7 @@ pub async fn run() {
     let fingerprint = Digest::from_bytes(sha2::Sha256::digest(peer.der().as_ref()).into());
     let peer_boot = id();
     let mode = std::env::args().nth(3).unwrap_or_else(|| "normal".into());
-    assert!(["normal", "begin", "submit", "complete"].contains(&mode.as_str()));
+    assert!(["normal", "begin", "submit", "complete", "export"].contains(&mode.as_str()));
     let setup =
         definition_catalog_tests::workflow_model_tests::execution_change_tests::network_setup((
             peer_boot.clone(),
@@ -169,6 +169,32 @@ pub async fn run() {
         canonical::bytes(&setup.policy).unwrap(),
     )
     .unwrap();
+    if mode == "export" {
+        use rx_process_contract::execution_v2 as v2;
+        let mut index = v2::ReportIndex {
+            schema: name(v2::INDEX_SCHEMA),
+            entries: vec![],
+        };
+        for c in 0..setup.policy.candidates.len() {
+            for slot in 0..setup.policy.slot_order.len() {
+                let value =
+                    v2::materialize(&setup.policy, &setup.inputs, c as u8, slot as u16).unwrap();
+                index
+                    .entries
+                    .push((c as u8, slot as u16, value.report_digest()));
+            }
+        }
+        let bytes = canonical::bytes(&index).unwrap();
+        v2::ReportIndex::decode(&bytes, &setup.policy).unwrap();
+        std::fs::write(
+            output.join("input-closure.json"),
+            canonical::bytes(&setup.inputs).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(output.join("report-index.json"), bytes).unwrap();
+        println!("Exported signed-fixture domain material; no native execution performed");
+        return;
+    }
     for layout in &layouts {
         f.app
             .initialize_execution_slots(
