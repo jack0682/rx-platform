@@ -127,3 +127,27 @@ impl VerifiedDomain {
         Ok(())
     }
 }
+
+/// Profile-verified native entry evidence. Correlation and byte integrity are common;
+/// only the installed provider profile defines what establishes entry.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeEntry {
+    pub operation: rx_domain::types::Id,
+    pub invocation: rx_domain::types::Id,
+    pub intent_digest: Digest,
+    pub device_session: rx_domain::types::Id,
+    pub profile_digest: Digest,
+    pub evidence: ArtifactRef,
+    pub payload: Vec<u8>,
+}
+impl NativeEntry {
+    pub fn validate(&self) -> Result<(), String> {
+        if self.intent_digest == Digest::from_bytes([0; 32])
+            || self.profile_digest == Digest::from_bytes([0; 32])
+        {
+            return Err("native entry identity missing".into());
+        }
+        super::verify_artifact(&self.payload, &self.evidence, 64 * 1024)
+    }
+}
