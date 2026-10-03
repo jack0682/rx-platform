@@ -44,7 +44,7 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             let admission = active_run(tx, &cell, &run, identity, meta, &now).and_then(|()| {
                 let (_, binding): (_, data::RunBinding) =
                     load(tx, "executionrun", run_id, BINDING)?;
-                object_current(tx, &cell, &binding, visit).map(|_| ())
+                object_reference_current(tx, &cell, &binding, visit).map(|_| ())
             });
             let admission_reason = match admission {
                 Ok(()) => None,

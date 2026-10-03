@@ -467,6 +467,9 @@ pub(super) fn activate_domain(
         .qualification_batch(&f.admin, &target.id, &batch.id)
         .unwrap();
     assert!(view.current && !view.operation_authorized);
+    if test_case == 16 {
+        return;
+    }
     if test_case >= 8 {
         start_part_tests::exercise(f, target, published, inputs, saved.policy(), test_case);
         return;

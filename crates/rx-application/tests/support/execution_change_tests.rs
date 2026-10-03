@@ -91,11 +91,29 @@ fn v2_unknown_keeps_original_operation_resources_and_slot() {
 }
 #[path = "execution_qualification_activation_tests.rs"]
 mod qualification_tests;
+#[allow(dead_code)] // Reused by the loopback-only registered Executor integration example.
+pub(crate) struct NetworkSetup {
+    pub fixture: Fixture,
+    pub policy: v2::Policy,
+    pub inputs: v2::InputClosure,
+    pub publication: publication::Publication,
+    pub _sources: Box<dyn std::any::Any + Send>,
+}
+#[allow(dead_code)]
+pub(crate) fn network_setup(peer: (Id, Digest, Digest)) -> NetworkSetup {
+    run_reviewed_change_inner(16, Some(peer)).expect("qualified fixture")
+}
 fn run_reviewed_change(stale_definition: u8) {
+    let _ = run_reviewed_change_inner(stale_definition, None);
+}
+fn run_reviewed_change_inner(
+    stale_definition: u8,
+    peer: Option<(Id, Digest, Digest)>,
+) -> Option<NetworkSetup> {
     let mut action = execution_fixture().policy.templates[&name("node")].clone();
     action.host = name("host/0");
     action.intent.resource_set = vec![name("controller/0")];
-    let mut f = fixture_configured(
+    let mut f = fixture_configured_peer(
         (
             1,
             false,
@@ -112,6 +130,7 @@ fn run_reviewed_change(stale_definition: u8) {
             cfg.steps[0].intent = action.intent.clone();
             cfg
         },
+        peer,
     );
     if stale_definition >= 3 {
         // Valid actor sessions and native grants outlive the ticket boundary under test.
@@ -256,6 +275,12 @@ fn run_reviewed_change(stale_definition: u8) {
     )
     .unwrap();
     let published = e.app.commit_workflow_publication(prepared).unwrap();
+    let network_policy = e
+        .app
+        .execution_preview(&e.owner, &published.preview)
+        .unwrap()
+        .policy()
+        .clone();
     let inputs = e.snapshot.input_closure();
     let dependency = inputs.definitions[0].clone();
     let catalog = e.catalog;
@@ -461,7 +486,7 @@ fn run_reviewed_change(stale_definition: u8) {
         );
         let cell = f.app.inspect_cell(&f.admin, &f.configuration.id).unwrap().1;
         assert!(cell.configuration.execution.is_none());
-        return;
+        return None;
     }
     let apply_key = id();
     let process_change::Preflight::Verify(ticket) = f
@@ -484,7 +509,7 @@ fn run_reviewed_change(stale_definition: u8) {
                 .execution
                 .is_none()
         );
-        return;
+        return None;
     }
     f.failure.store(2, Ordering::SeqCst);
     assert!(
@@ -525,7 +550,16 @@ fn run_reviewed_change(stale_definition: u8) {
             &configuration_receipt,
             stale_definition,
         );
-        return;
+        if stale_definition == 16 {
+            return Some(NetworkSetup {
+                fixture: f,
+                policy: network_policy,
+                inputs,
+                publication: published,
+                _sources: Box::new((p, device)),
+            });
+        }
+        return None;
     }
     // A changed current definition blocks new effects but never original-key apply recovery.
     revise(&mut f, "Changed after original apply");
@@ -535,4 +569,5 @@ fn run_reviewed_change(stale_definition: u8) {
             .unwrap(),
         process_change::Preflight::Recorded(_)
     ));
+    None
 }

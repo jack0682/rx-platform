@@ -529,31 +529,54 @@ pub(super) fn object_current(
     binding: &data::RunBinding,
     ordinal: Counter,
 ) -> Result<data::ObjectBinding> {
+    let object = object_reference_current(tx, cell, binding, ordinal)?;
+    let domain = execution_configuration::domain(tx, &cell.configuration)?
+        .ok_or(StoreError::Rejected(Reject::UnsupportedSchema))?;
+    let current = definition_catalog::version(tx, &object.object.catalog, &object.object.id, None)?;
+    let checked = domain
+        .inputs
+        .object_projection(&domain.policy, &current.definition)
+        .map_err(StoreError::Invalid)?;
+    if object.model != checked.model
+        || object.candidate != checked.candidate
+        || object.values_digest != checked.values_digest
+        || object.context != checked.context
+    {
+        return Err(StoreError::Integrity(
+            "actual object projection differs".into(),
+        ));
+    }
+    Ok(object)
+}
+
+/// Advisory reads call this only after active_run has checked the full current definition closure.
+/// The immutable instance reference preserves its previously validated projection; no effect
+/// admission uses this shortcut.
+pub(super) fn object_reference_current(
+    tx: &mut dyn Transaction,
+    cell: &Cell,
+    binding: &data::RunBinding,
+    ordinal: Counter,
+) -> Result<data::ObjectBinding> {
     if ordinal.0 == 0 || ordinal.0 > binding.slots.len() as u64 {
         return reject(Reject::BudgetExhausted);
     }
     let (_, object): (_, data::ObjectBinding) =
         load(tx, "executionobject", (&binding.run, ordinal), OBJECT)?;
-    let domain = execution_configuration::domain(tx, &cell.configuration)?
-        .ok_or(StoreError::Rejected(Reject::UnsupportedSchema))?;
     let current = definition_catalog::version(tx, &object.object.catalog, &object.object.id, None)?;
     if current.archived || current.definition.reference != object.object {
         return reject(Reject::StaleRevision);
     }
-    let checked = domain
-        .inputs
-        .object_projection(&domain.policy, &current.definition)
-        .map_err(StoreError::Invalid)?;
+    if !matches!(&current.definition.body, rx_domain::definition::Body::ObjectInstance {base,..} if base==&object.model)
+    {
+        return Err(StoreError::Integrity("actual object model differs".into()));
+    }
     let slot = &binding.slots[ordinal.0 as usize - 1];
     if object.run != binding.run
         || object.cell != binding.cell
         || object.ordinal != ordinal
         || object.slot != slot.index
         || object.slot_ordinal != slot.slot_ordinal
-        || object.model != checked.model
-        || object.candidate != checked.candidate
-        || object.values_digest != checked.values_digest
-        || object.context != checked.context
     {
         return Err(StoreError::Integrity(
             "actual object binding differs".into(),
@@ -678,13 +701,26 @@ pub(super) fn production_current(
         return Ok(());
     }
     let (_, binding): (_, data::RunBinding) = load(tx, "executionrun", &run.id, BINDING)?;
-    start_current(
-        tx,
-        context.meta,
-        context.now,
-        run,
-        cell,
-        &context.identity.session,
-        Counter(binding.slots.len() as u64),
-    )
+    execution_session::require(tx, context.identity, context.meta, context.now, cell)?;
+    if binding.run != run.id
+        || binding.cell != run.cell
+        || binding.configuration
+            != cell
+                .configuration
+                .reference()
+                .map_err(StoreError::Integrity)?
+    {
+        return reject(Reject::StaleRevision);
+    }
+    let ordinal = if let Some(id) = run.part_ids.last() {
+        let (_, part): (_, PartAttempt) = load(tx, "part", id, PART)?;
+        if part.disposition == PartDisposition::ConfirmedCompleted {
+            Counter(run.part_ids.len() as u64 + 1)
+        } else {
+            part.ordinal
+        }
+    } else {
+        Counter(1)
+    };
+    object_reference_current(tx, cell, &binding, ordinal).map(|_| ())
 }

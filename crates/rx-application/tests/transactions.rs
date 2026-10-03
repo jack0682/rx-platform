@@ -340,6 +340,13 @@ fn fixture_configured(
     settings: (usize, bool, bool, bool, Option<TestProcess>, bool, bool),
     configure: impl FnOnce(CellConfiguration) -> CellConfiguration,
 ) -> Fixture {
+    fixture_configured_peer(settings, configure, None)
+}
+fn fixture_configured_peer(
+    settings: (usize, bool, bool, bool, Option<TestProcess>, bool, bool),
+    configure: impl FnOnce(CellConfiguration) -> CellConfiguration,
+    peer: Option<(Id, Digest, Digest)>,
+) -> Fixture {
     let (host_count, qualify, maintained, native_result, process, peer_mode, register) = settings;
     let directory = tempfile::tempdir().unwrap();
     let failure = Arc::new(AtomicU8::new(0));
@@ -386,8 +393,25 @@ fn fixture_configured(
             None,
         )
         .unwrap();
+        let (boot, authentication) = if let Some((boot, fingerprint, release)) = peer {
+            (
+                boot,
+                rx_domain::canonical::digest(
+                    "RX-EXECUTOR-AUTH-v1",
+                    &(
+                        fingerprint,
+                        app.installation.id.clone(),
+                        app.installation.store_generation.clone(),
+                        release,
+                    ),
+                )
+                .unwrap(),
+            )
+        } else {
+            (id(), Digest::from_bytes([71; 32]))
+        };
         let session = app
-            .open_executor_peer(&name("executor"), id(), Digest::from_bytes([71; 32]))
+            .open_executor_peer(&name("executor"), boot, authentication)
             .unwrap();
         Identity {
             principal: name("executor"),
