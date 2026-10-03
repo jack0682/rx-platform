@@ -27,7 +27,7 @@ use std::{
     path::{Component, Path},
 };
 
-pub const SCHEMA: &str = "rx.operator-ui-bundle.v1";
+pub const SCHEMA: &str = "rx.operator-ui-bundle.v2";
 pub const API_SCHEMA: &str = "rx.operator-api.v1";
 pub const MANIFEST_FILENAME: &str = "operator-bundle.json";
 const MAX_FILES: usize = 1024;
