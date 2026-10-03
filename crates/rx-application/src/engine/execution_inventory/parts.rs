@@ -301,6 +301,35 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             Ok(snapshot(binding, revision, value))
         })
     }
+    /// Operator read of a report already bound to a Part of this authorized Run.
+    /// Catalog authoring privileges and Executor mutation authority remain separate.
+    pub fn execution_run_report(
+        &mut self,
+        identity: &Identity,
+        run_id: &Id,
+        report: Digest,
+    ) -> Result<Vec<u8>> {
+        let meta = &self.installation;
+        let clock = &self.clock;
+        self.repository.transact(|tx| {
+            let (_, run): (_, Run) = load(tx, "run", run_id, RUN)?;
+            authorize_read(tx, identity, meta, &clock.now(), &run.cell)?;
+            for part in &run.part_ids {
+                let (_, binding): (_, wire::PartBinding) =
+                    load(tx, "executionpart", part, PART_BINDING)?;
+                binding.validate().map_err(StoreError::Integrity)?;
+                if binding.run != *run_id || binding.part != *part {
+                    return Err(StoreError::Integrity(
+                        "Run report Part ownership differs".into(),
+                    ));
+                }
+                if binding.report.sha256 == report {
+                    return BLOBS.read(tx, &binding.report);
+                }
+            }
+            reject(Reject::NotFound)
+        })
+    }
     pub fn execution_part_artifact(
         &mut self,
         identity: &Identity,

@@ -46,7 +46,7 @@ def recovery_evidence(docker, image, solutions, temporary):
         logs[name] = hashlib.sha256(dest.read_bytes()).hexdigest()
     client = temporary / 'installed-client'
     docker.run('cp', holder + ':/opt/rx/client', str(client))
-    for name in ['rx','runtime_client.py','image_identity.py']:
+    for name in ['rx','runtime_client.py','image_identity.py','execution_client.py']:
         if (client/name).read_bytes() != (solutions/'deployment/local-skills'/name).read_bytes():
             raise ValueError('installed client differs from selected source: ' + name)
         files['deployment/local-skills/'+name] = hashlib.sha256((client/name).read_bytes()).hexdigest()

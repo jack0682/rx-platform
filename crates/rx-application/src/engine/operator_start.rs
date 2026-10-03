@@ -147,6 +147,21 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
         identity: &Identity,
         input: ContextRequest,
     ) -> Result<StartContext> {
+        self.start_context(identity, input, false)
+    }
+    pub fn operator_execution_start_context(
+        &mut self,
+        identity: &Identity,
+        input: ContextRequest,
+    ) -> Result<StartContext> {
+        self.start_context(identity, input, true)
+    }
+    fn start_context(
+        &mut self,
+        identity: &Identity,
+        input: ContextRequest,
+        execution_v2: bool,
+    ) -> Result<StartContext> {
         let meta = &self.installation;
         let clock = &self.clock;
         self.repository.transact(|tx| {
@@ -185,7 +200,7 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                     run: &run,
                     cell_revision,
                     cell: &cell,
-                    execution_v2: false,
+                    execution_v2,
                 },
                 &request,
             ) {

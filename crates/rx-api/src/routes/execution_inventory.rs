@@ -145,3 +145,50 @@ pub(super) async fn start_run(
         _ => Err(mismatch()),
     }
 }
+
+pub(super) async fn start_context(
+    State(s): State<ApiState>,
+    headers: HeaderMap,
+    Query(input): Query<rx_application::operator_start::ContextRequest>,
+) -> Result<Response, ApiError> {
+    match s
+        .runtime
+        .request(Command::GetOperatorExecutionStartContext {
+            identity: identity(&s, &headers)?,
+            input,
+        })
+        .await?
+    {
+        Reply::OperatorStartContext(value) => Ok(Json(value).into_response()),
+        _ => Err(mismatch()),
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct ReportQuery {
+    run: Id,
+    report: Digest,
+}
+pub(super) async fn report(
+    State(s): State<ApiState>,
+    headers: HeaderMap,
+    Query(q): Query<ReportQuery>,
+) -> Result<Response, ApiError> {
+    match s
+        .runtime
+        .request(Command::GetExecutionRunReport {
+            identity: identity(&s, &headers)?,
+            run: q.run,
+            report: q.report,
+        })
+        .await?
+    {
+        Reply::ExecutionPartArtifact(bytes) => Ok((
+            [(axum::http::header::CONTENT_TYPE, "application/json")],
+            bytes,
+        )
+            .into_response()),
+        _ => Err(mismatch()),
+    }
+}

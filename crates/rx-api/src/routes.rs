@@ -128,6 +128,14 @@ fn build_router(
         )
         .route("/api/v1/workflow-resolution", get(workflow_model::report))
         .route(
+            "/api/v1/workflow-executions/report",
+            get(execution_inventory::report),
+        )
+        .route(
+            "/api/v1/workflow-executions/start-context",
+            get(execution_inventory::start_context),
+        )
+        .route(
             "/api/v1/workflow-executions/start",
             post(execution_inventory::start_run),
         )
@@ -154,6 +162,10 @@ fn build_router(
         .route(
             "/api/v1/workflow-executions/preview",
             get(workflow_publication::get_preview),
+        )
+        .route(
+            "/api/v1/workflow-executions/material",
+            get(workflow_publication::material),
         )
         .route(
             "/api/v1/workflow-executions/preview-report",

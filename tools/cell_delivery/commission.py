@@ -23,9 +23,10 @@ def wait_for(read, accepted, *, timeout: float = 45):
 
 
 class Commission:
-    def __init__(self, engineer:Api, reviewer:Api, release:Api, cell:str, target:dict):
+    def __init__(self, engineer:Api, reviewer:Api, release:Api, cell:str, target:dict, *, execution_configuration=None, package_path="package"):
         self.engineer,self.reviewer,self.release=engineer,reviewer,release
         self.cell,self.target=cell,target
+        self.execution_configuration,self.package_path=execution_configuration,package_path
         self.target_digest=hashlib.sha256(encoded(target)).hexdigest()
 
     def import_process(self, manifest:str, signature:str, binding_selections:dict)->dict:
@@ -33,7 +34,7 @@ class Commission:
         context=api.get('/api/v1/package-intake-context',cell=self.cell)
         package=api.mutate('process-intake','/api/v1/package-intakes',{
             'id':uid(),'cell':self.cell,'title':'Signed FILE_SIMULATION delivery process',
-            'relative_path':'package','object':{'manifest':manifest,'signature':signature},
+            'relative_path':self.package_path,'object':{'manifest':manifest,'signature':signature},
             'configuration_digest':context['configuration_digest'],
             'policy_generation':context['registration']['generation']})
         return api.mutate('process-review','/api/v1/process-reviews',{
@@ -53,6 +54,7 @@ class Commission:
             'review_digest':version['review_digest'],'expected':None,'choice':'APPROVE',
             'note':'Reviewed actual signed package/compiler results for FILE_SIMULATION only.'})
         change=self.engineer.mutate('process-change','/api/v1/process-changes',{
+            **({'execution_configuration':self.execution_configuration} if self.execution_configuration is not None else {}),
             'id':uid(),'cell':self.cell,'mode':'REPLACE',
             'review':{'id':job['request']['id'],'revision':version['revision'],
                       'review_digest':version['review_digest'],'decision_revision':decision['revision']},
@@ -93,8 +95,8 @@ class Commission:
                  lambda v:v['context_current'] and v['fences_confirmed'])
         self.clearance_snapshot=self.release.get('/api/v1/cell',id=self.cell)
         blocks=self.clearance_snapshot['value']['blocks']
-        if any(b['reason'] not in ('CONFIGURATION_CHANGE','RUNTIME_RESTART') for b in blocks):
-            raise RuntimeError('fresh installation contains an unrelated restriction requiring separate resolution')
+        if any(b['reason'] != 'CONFIGURATION_CHANGE' and b['id'] not in origins for b in blocks):
+            raise RuntimeError('installation contains a restriction without a reviewed change or recorded runtime origin')
         self.clear_candidates=sorted(b['id'] for b in blocks)
         selected=next(c for c in job['request']['cells'] if c['profile']['cell']==self.cell)
         if not set(selected['blocks']).issubset(self.clear_candidates):

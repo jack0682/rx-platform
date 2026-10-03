@@ -9,6 +9,7 @@ use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 pub mod executor;
 pub mod host_configuration;
+pub mod host_inputs;
 pub mod host_qualification;
 mod materialize;
 mod operation;
