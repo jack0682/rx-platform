@@ -357,6 +357,15 @@ g.service("HostConfiguration", [("Inspect", "InspectConfiguration", "Configurati
 
 g.write()
 
+# Explicit execution-v2 acceptance uses a separate service, never a v1 fallback.
+g = Schema("rx.host.configuration.v2", "rx/host/configuration/v2/configuration.proto", ("rx/contract/v1/contract.proto", "rx/cell/v1/cell.proto"))
+g.message("InspectConfiguration", "context:base.CallContext#1 binding_hash:Digest#2")
+g.message("ApplyConfiguration", "call:rx.cell.v1.CellCall#1 binding_hash:Digest#2 reference:base.ArtifactRef#3 payload:bytes#4")
+g.message("LookupConfiguration", "context:base.CallContext#1 request_id:Id#2 binding_hash:Digest#3")
+g.message("ConfigurationPayload", "reference:base.ArtifactRef#1 payload:bytes#2")
+g.service("HostExecutionConfiguration", [("Inspect", "InspectConfiguration", "ConfigurationPayload"),("Apply", "ApplyConfiguration", "ConfigurationPayload"),("Lookup", "LookupConfiguration", "ConfigurationPayload")])
+g.write()
+
 g = Schema("rx.host.qualification.v1", "rx/host/qualification/v1/qualification.proto", ("rx/contract/v1/contract.proto", "rx/cell/v1/cell.proto"))
 g.message("InspectQualification", "context:base.CallContext#1 binding_hash:Digest#2")
 g.message("AcceptQualification", "call:rx.cell.v1.CellCall#1 binding_hash:Digest#2 reference:base.ArtifactRef#3 payload:bytes#4")
@@ -364,6 +373,35 @@ g.message("LookupQualification", "context:base.CallContext#1 request_id:Id#2 bin
 g.message("QualificationPayload", "reference:base.ArtifactRef#1 payload:bytes#2")
 g.service("HostQualification", [("Inspect", "InspectQualification", "QualificationPayload"),("Accept", "AcceptQualification", "QualificationPayload"),("Lookup", "LookupQualification", "QualificationPayload")])
 g.write()
+
+# Explicit v2 qualification of a configured derived input domain.
+g = Schema("rx.host.qualification.v2", "rx/host/qualification/v2/qualification.proto", ("rx/contract/v1/contract.proto", "rx/cell/v1/cell.proto"))
+g.message("InspectQualification", "context:base.CallContext#1 binding_hash:Digest#2")
+g.message("AcceptQualification", "call:rx.cell.v1.CellCall#1 binding_hash:Digest#2 reference:base.ArtifactRef#3 payload:bytes#4")
+g.message("LookupQualification", "context:base.CallContext#1 request_id:Id#2 binding_hash:Digest#3")
+g.message("QualificationPayload", "reference:base.ArtifactRef#1 payload:bytes#2")
+g.service("HostExecutionQualification", [("Inspect", "InspectQualification", "QualificationPayload"),("Accept", "AcceptQualification", "QualificationPayload"),("Lookup", "LookupQualification", "QualificationPayload")])
+g.write()
+
+e = Schema("rx.executor.execution.v2", "rx/executor/execution/v2/execution.proto", ("rx/contract/v1/contract.proto", "rx/cell/v1/cell.proto"))
+e.message("NegotiateExecution", "context:base.CallContext#1 cell:Name#2 binding_hash:Digest#3")
+e.message("BeginExecutionPart", "call:rx.cell.v1.CellCall#1 run_id:Id#2 mandate_id:Id#3 expected_budget:uint64#4 binding_hash:Digest#5")
+e.message("SubmitExecutionNode", "call:rx.cell.v1.CellCall#1 run_id:Id#2 part_id:Id#3 node:Name#4 mandate_id:Id#5 expected_run:uint64#6 binding_hash:Digest#7")
+e.message("ReadExecutionSnapshot", "context:base.CallContext#1 run_id:Id#2 visit:uint64#3 binding_hash:Digest#4")
+e.message("ReadExecutionPart", "context:base.CallContext#1 run_id:Id#2 part_id:Id#3 binding_hash:Digest#4")
+e.message("ReadExecutionArtifact", "context:base.CallContext#1 run_id:Id#2 part_id:Id#3 reference:base.ArtifactRef#4 binding_hash:Digest#5")
+e.message("ExecutionPayload", "reference:base.ArtifactRef#1 payload:bytes#2")
+e.service("ExecutionControl", [("GetSnapshot", "ReadExecutionSnapshot", "ExecutionPayload"),("SubmitNode", "SubmitExecutionNode", "ExecutionPayload"),("Negotiate", "NegotiateExecution", "ExecutionPayload"),("BeginPart", "BeginExecutionPart", "ExecutionPayload"),("GetPart", "ReadExecutionPart", "ExecutionPayload"),("GetArtifact", "ReadExecutionArtifact", "ExecutionPayload")])
+e.write()
+
+h = Schema("rx.host.execution.v2", "rx/host/execution/v2/execution.proto", ("rx/contract/v1/contract.proto", "rx/cell/v1/cell.proto"))
+h.message("PrepareExecution", "request:rx.cell.v1.HostPrepareRequest#1 binding_hash:Digest#2 reference:base.ArtifactRef#3 payload:bytes#4 parameters:bytes#5")
+h.message("AuthorizeExecution", "request:rx.cell.v1.HostAuthorizeRequest#1 binding_hash:Digest#2 operation_binding:Digest#3")
+h.message("ReadExecution", "request:rx.contract.v1.OperationRef#1 binding_hash:Digest#2 operation_binding:Digest#3")
+h.message("ExecutionReceipt", "receipt:rx.contract.v1.Receipt#1 operation_binding:Digest#2")
+h.message("ExecutionEvidence", "batch:rx.contract.v1.EvidenceBatch#1 operation_binding:Digest#2")
+h.service("HostExecution", [("Prepare", "PrepareExecution", "ExecutionReceipt"),("Authorize", "AuthorizeExecution", "ExecutionReceipt"),("GetReceipt", "ReadExecution", "ExecutionReceipt"),("Reconcile", "ReadExecution", "ExecutionEvidence")])
+h.write()
 
 (OUT / "semantic_fields.json").write_text(json.dumps(RULES, sort_keys=True, indent=2) + "\n")
 print(f"Wrote base/cell and optional executor schemas and {len(RULES)} semantic field mappings")

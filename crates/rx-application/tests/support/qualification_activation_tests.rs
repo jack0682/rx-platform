@@ -36,7 +36,12 @@ fn approved_setup() -> (
         .unwrap();
     (f, release, c, p, source, j, v, d)
 }
-fn issue_input(f: &mut Fixture, j: &q::Job, v: &q::Version, d: &q::Decision) -> a::IssueRequest {
+pub(crate) fn issue_input(
+    f: &mut Fixture,
+    j: &q::Job,
+    v: &q::Version,
+    d: &q::Decision,
+) -> a::IssueRequest {
     a::IssueRequest {
         review: j.request.id.clone(),
         cell: j.request.origin.clone(),
@@ -103,7 +108,7 @@ fn issue(
         .commit_qualification_issue(verify(*t, p, source))
         .unwrap()
 }
-fn inspect(f: &mut Fixture, b: &a::Batch, t: &a::Task) -> h::Observation {
+pub(crate) fn inspect(f: &mut Fixture, b: &a::Batch, t: &a::Task) -> h::Observation {
     let c = f
         .app
         .process_change(&f.admin, &b.origin, &b.change)
@@ -160,8 +165,8 @@ fn inspect(f: &mut Fixture, b: &a::Batch, t: &a::Task) -> h::Observation {
         activation_authorized: false,
     }
 }
-fn accepted(mut o: h::Observation, t: &a::Task) -> h::Observation {
-    let request = t.request.as_ref().unwrap();
+pub(crate) fn accepted(mut o: h::Observation, t: &a::Task) -> h::Observation {
+    let request = t.request.as_ref().unwrap().context();
     let receipt = h::Receipt {
         schema: name("rx.host-qualification-receipt.v1"),
         request: request.clone(),
@@ -228,7 +233,7 @@ fn confirm_host(f: &mut Fixture, b: &a::Batch, host: usize) -> (a::Task, h::Obse
         .unwrap();
     (t, observation)
 }
-fn finalize(b: &a::Batch) -> a::Finalize {
+pub(crate) fn finalize(b: &a::Batch) -> a::Finalize {
     a::Finalize {
         batch: b.id.clone(),
         cell: b.origin.clone(),

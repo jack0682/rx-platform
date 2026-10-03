@@ -1,0 +1,11 @@
+{
+  "max_payload_bytes": 1000000,
+  "package": "rx.host.execution.v2",
+  "schema": "rx.host-execution-binding.v2",
+  "source_sha256": {
+    "crates/rx-process-contract/src/execution_v2.rs": "76c533e9368eb882df22e22c035931c72a38b0f1411acac90c8ff661dc7be1c3",
+    "crates/rx-process-contract/src/execution_v2/operation.rs": "8dd55a26707b437f7bc97f4bd30843b00d0df5a3e067edbabb5d331f34081c0d",
+    "proto/rx/host/execution/v2/execution.proto": "63ce3e92715780f7d9af86369e19e16df0c9bf79b512757aab29e9231004f6f6",
+    "spec/host-execution/v2/README.md": "e944b1fa462e162cf07a3c30e55668acae49619cf61c5e0c70a9b44d5dfd3126"
+  }
+}

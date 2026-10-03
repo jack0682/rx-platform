@@ -44,6 +44,8 @@ pub mod process_review;
 pub mod process_change;
 
 pub mod configuration_dispatch;
+mod configuration_exchange;
+mod qualification_exchange;
 
 pub mod requalification;
 
@@ -70,4 +72,10 @@ pub mod component_intake;
 
 pub mod resident_execution;
 
+mod artifact_storage;
+pub mod execution_qualification;
+pub mod execution_templates;
 pub mod workflow_model;
+pub mod workflow_publication;
+
+pub mod execution_inventory;

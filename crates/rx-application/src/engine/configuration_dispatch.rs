@@ -4,21 +4,27 @@ use crate::{
     process_change::{Change, State, Transition},
 };
 use rx_domain::host_configuration as wire;
+mod storage;
+use storage::decode_task;
 const TASK: &str = "rx.internal.host-configuration-task.v1";
 const BATCH: &str = "rx.host-configuration-batch.v1";
 pub(super) fn key_for(c: &Id, attempt: Counter, host: &Name) -> Name {
     key("hostconfigtaskslot", (c, attempt, host))
 }
 pub(super) fn read(tx: &mut dyn Transaction, id: &Id) -> Result<(Counter, Task)> {
-    let (revision, t): (_, Task) = load(tx, "hostconfigtask", id, TASK)?;
+    let row = tx
+        .get(&key("hostconfigtask", id))?
+        .ok_or(StoreError::Rejected(Reject::NotFound))?;
+    let revision = row.revision;
+    let t = decode_task(tx, &row)?;
     if &t.id != id
         || t.request.is_some() != t.request_digest.is_some()
         || t.request.as_ref().is_some_and(|r| {
-            r.id != t.id
-                || r.change != t.change
-                || r.preparation != t.preparation
-                || r.host != t.host
-                || r.plan_digest != t.plan_digest
+            r.context().id != t.id
+                || r.context().change != t.change
+                || r.context().preparation != t.preparation
+                || r.context().host != t.host
+                || r.context().plan_digest != t.plan_digest
                 || r.digest().ok() != t.request_digest
         })
     {
@@ -26,19 +32,43 @@ pub(super) fn read(tx: &mut dyn Transaction, id: &Id) -> Result<(Counter, Task)>
             "Host configuration task identity differs".into(),
         ));
     }
+    if t.request
+        .as_ref()
+        .is_some_and(|r| r.is_v2() != !t.execution_policies.is_empty())
+        || t.receipt
+            .as_ref()
+            .is_some_and(|r| r.is_v2() != !t.execution_policies.is_empty())
+        || t.observation
+            .as_ref()
+            .is_some_and(|o| o.is_v2() != !t.execution_policies.is_empty())
+    {
+        return Err(StoreError::Integrity(
+            "Host configuration version mismatch".into(),
+        ));
+    }
     if let Some(r) = &t.receipt {
         r.validate().map_err(StoreError::Integrity)?;
-        if Some(r.request_digest) != t.request_digest {
+        if Some(r.request_digest()) != t.request_digest {
             return Err(StoreError::Integrity(
                 "Host configuration receipt differs".into(),
             ));
         }
     }
+    if let Some(o) = &t.observation {
+        o.validate().map_err(StoreError::Integrity)?;
+    }
+    if let Some(Request::V2(request)) = &t.request
+        && canonical::bytes(&request.policies).map_err(domain_error)?
+            != canonical::bytes(&t.execution_policies).map_err(domain_error)?
+    {
+        return Err(StoreError::Integrity(
+            "Host task policy projection differs".into(),
+        ));
+    }
     Ok((revision, t))
 }
 fn save_task(tx: &mut dyn Transaction, t: &Task, expected: Option<Counter>) -> Result<()> {
-    save(tx, "hostconfigtask", &t.id, expected, TASK, t)?;
-    event(tx, "rx.event.host-configuration-task.v1", t)
+    storage::persist(tx, t, expected)
 }
 fn host_access(
     tx: &mut dyn Transaction,
@@ -213,7 +243,7 @@ pub(super) fn summary(
     let history = tx
         .scan("hostconfigtask/")?
         .iter()
-        .map(|r| decode::<Task>(r, TASK))
+        .map(|r| decode_task(tx, r))
         .collect::<Result<Vec<_>>>()?;
     let mut hosts = Vec::new();
     let mut applied = 0;
@@ -239,7 +269,7 @@ pub(super) fn summary(
         let mut acknowledged = false;
         let mut outcome = None;
         if let Some(t) = &t {
-            outcome = t.receipt.as_ref().map(|r| r.status);
+            outcome = t.receipt.as_ref().map(|r| r.context().status);
             if outcome == Some(wire::Status::AppliedUnqualified) {
                 applied += 1;
             }
@@ -250,7 +280,7 @@ pub(super) fn summary(
                 && generation_matches(tx, t)?
                 && t.observation
                     .as_ref()
-                    .is_some_and(|o| o.context_matches_current_host)
+                    .is_some_and(|o| o.context_matches_current_host())
                 && match current_change(tx, meta, t) {
                     Ok(_) => true,
                     Err(StoreError::Rejected(_)) => false,
@@ -284,9 +314,10 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
         &mut self,
         identity: &Identity,
         id: &Id,
-        observation: wire::Observation,
+        observation: impl Into<Observation>,
         read_started: TimePoint,
     ) -> Result<Task> {
+        let observation = observation.into();
         let now = self.clock.now();
         if now
             .age_ns(&read_started)
@@ -294,8 +325,7 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
         {
             return reject(Reject::Expired);
         }
-        let digest = canonical::digest("RX-HOST-CONFIGURATION-OBSERVATION-v1", &observation)
-            .map_err(domain_error)?;
+        let digest = observation.digest().map_err(StoreError::Invalid)?;
         let task = self.record_host_configuration_observation(identity, id, observation)?;
         self.configuration_reads
             .retain(|_, (at, _)| now.age_ns(at).is_some_and(|age| age <= 3_000_000_000));
@@ -351,7 +381,7 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             }
             barrier(tx, meta, &c)?;
             for row in tx.scan("hostconfigtask/")? {
-                let t: Task = decode(&row, TASK)?;
+                let t = decode_task(tx, &row)?;
                 if t.change == c.id
                     && t.preparation != prep.attempt
                     && t.phase == Phase::SendEntered
@@ -391,6 +421,7 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                     continue;
                 }
                 let mut cells = Vec::new();
+                let mut execution_policies = BTreeMap::new();
                 let mut incarnation = None;
                 for impact in c.impact.cells.iter().filter(|c| c.hosts.contains(&host)) {
                     let (_, current): (_, Cell) = load(tx, "cell", &impact.id, CELL)?;
@@ -423,6 +454,9 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                     } else {
                         &current.configuration
                     };
+                    if let Some(policy) = execution_configuration::host_policy(tx, target, &host)? {
+                        execution_policies.insert(target.id.clone(), policy);
+                    }
                     cells.push(CellProjection {
                         cell: impact.id.clone(),
                         definition: target.definition.sha256,
@@ -470,6 +504,7 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                     incarnation.ok_or(StoreError::Rejected(Reject::InvalidInput))?;
                 let id = id();
                 let t = Task {
+                    execution_policies,
                     id: id.clone(),
                     change: c.id.clone(),
                     origin: c.cell.clone(),
@@ -520,7 +555,7 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             let mut tasks = tx
                 .scan("hostconfigtask/")?
                 .iter()
-                .map(|r| decode::<Task>(r, TASK))
+                .map(|r| decode_task(tx, r))
                 .collect::<Result<Vec<_>>>()?;
             tasks.retain(|t| {
                 t.host == p.id
@@ -541,7 +576,7 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                     && !t
                         .receipt
                         .as_ref()
-                        .is_some_and(|r| r.status == wire::Status::NotApplied)
+                        .is_some_and(|r| r.context().status == wire::Status::NotApplied)
                 {
                     selected.push(t);
                 }
@@ -556,9 +591,10 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
         &mut self,
         identity: &Identity,
         id: &Id,
-        observation: wire::Observation,
+        observation: impl Into<Observation>,
         read_started: TimePoint,
     ) -> Result<Task> {
+        let observation = observation.into();
         observation.validate().map_err(StoreError::Invalid)?;
         let meta = &self.installation;
         let clock = &self.clock;
@@ -566,6 +602,9 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             let now = clock.now();
             let (rev, mut t) = read(tx, id)?;
             host_access(tx, identity, meta, &now, &t)?;
+            if observation.is_v2() != !t.execution_policies.is_empty() {
+                return reject(Reject::UnsupportedSchema);
+            }
             lifecycle::require_serving(tx)?;
             send_authorized(tx, meta, &now, &t)?;
             if t.request.is_some() {
@@ -574,7 +613,7 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             if now.age_ns(&read_started).is_none_or(|v| v > 3_000_000_000) {
                 return reject(Reject::Expired);
             }
-            let s = &observation.snapshot;
+            let s = &observation.snapshot();
             if s.host != t.host
                 || s.host_boot != t.host_boot
                 || s.delivery_journal != t.delivery_journal
@@ -634,6 +673,18 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                 binding_digest: s.binding_digest,
                 cells,
             };
+            let request: Request = if t.execution_policies.is_empty() {
+                request.into()
+            } else {
+                rx_process_contract::execution_v2::host_configuration::Request {
+                    schema: name(
+                        rx_process_contract::execution_v2::host_configuration::REQUEST_SCHEMA,
+                    ),
+                    context: request,
+                    policies: t.execution_policies.clone(),
+                }
+                .into()
+            };
             t.request_digest = Some(request.digest().map_err(StoreError::Invalid)?);
             t.request = Some(request);
             t.phase = Phase::Prepared;
@@ -655,7 +706,10 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             let now = clock.now();
             host_access(tx, identity, meta, &now, &t)?;
             if t.phase == Phase::SendEntered && !retry_missing {
-                return Ok(Emission::Lookup { request: t.id });
+                return Ok(Emission::Lookup {
+                    request: t.id,
+                    execution_v2: !t.execution_policies.is_empty(),
+                });
             }
             lifecycle::require_serving(tx)?;
             send_authorized(tx, meta, &now, &t)?;
@@ -666,9 +720,9 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                 && !(t.phase == Phase::SendEntered
                     && t.issue == Some(Issue::ReceiptMissing)
                     && t.observation.as_ref().is_some_and(|o| {
-                        o.receipt.is_none()
-                            && o.snapshot.host_boot == t.host_boot
-                            && o.snapshot.delivery_journal == t.delivery_journal
+                        o.receipt().is_none()
+                            && o.snapshot().host_boot == t.host_boot
+                            && o.snapshot().delivery_journal == t.delivery_journal
                     }))
             {
                 return reject(Reject::ContinuityUnproven);
@@ -707,20 +761,24 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
         &mut self,
         identity: &Identity,
         id: &Id,
-        observation: wire::Observation,
+        observation: impl Into<Observation>,
     ) -> Result<Task> {
+        let observation = observation.into();
         observation.validate().map_err(StoreError::Invalid)?;
         let meta = &self.installation;
         let clock = &self.clock;
         self.repository.transact(|tx| {
             let (rev, mut t) = read(tx, id)?;
             host_access(tx, identity, meta, &clock.now(), &t)?;
-            if t.phase != Phase::SendEntered || observation.snapshot.host != t.host {
+            if observation.is_v2() != !t.execution_policies.is_empty() {
+                return reject(Reject::UnsupportedSchema);
+            }
+            if t.phase != Phase::SendEntered || observation.snapshot().host != t.host {
                 return reject(Reject::InvalidInput);
             }
             let before = canonical::bytes(&t).map_err(domain_error)?;
-            if let Some(receipt) = &observation.receipt {
-                if Some(receipt.request_digest) != t.request_digest {
+            if let Some(receipt) = &observation.receipt() {
+                if Some(receipt.request_digest()) != t.request_digest {
                     return reject(Reject::InvalidInput);
                 }
                 if let Some(old) = &t.receipt {
@@ -739,10 +797,10 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             }
             let expected_snapshot =
                 t.request.as_ref().is_some_and(|r| {
-                    observation.snapshot.binding_digest == r.binding_digest
-                        && observation.snapshot.cells.len() == r.cells.len()
-                        && r.cells.iter().all(|target| {
-                            observation.snapshot.cells.iter().any(|c| {
+                    observation.snapshot().binding_digest == r.context().binding_digest
+                        && observation.snapshot().cells.len() == r.context().cells.len()
+                        && r.context().cells.iter().all(|target| {
+                            observation.snapshot().cells.iter().any(|c| {
                                 c.cell == target.cell
                                     && c.definition == target.definition
                                     && c.envelope == target.envelope
@@ -757,9 +815,9 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                             })
                         })
                 });
-            if observation.receipt.is_none()
+            if observation.receipt().is_none()
                 && observation
-                    .snapshot
+                    .snapshot()
                     .cells
                     .iter()
                     .any(|c| c.applied.as_ref().is_some_and(|a| a.request == t.id))
@@ -769,11 +827,11 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             }
 
             if !t.integrity_disputed {
-                t.issue = if observation.snapshot.host_boot != t.host_boot
-                    || observation.snapshot.delivery_journal != t.delivery_journal
+                t.issue = if observation.snapshot().host_boot != t.host_boot
+                    || observation.snapshot().delivery_journal != t.delivery_journal
                 {
                     Some(Issue::HostGenerationChanged)
-                } else if observation.receipt.is_none() {
+                } else if observation.receipt().is_none() {
                     Some(if expected_snapshot {
                         Issue::ReceiptMissing
                     } else {
@@ -782,8 +840,8 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                 } else if t
                     .receipt
                     .as_ref()
-                    .is_some_and(|r| r.status == wire::Status::AppliedUnqualified)
-                    && !observation.context_matches_current_host
+                    .is_some_and(|r| r.context().status == wire::Status::AppliedUnqualified)
+                    && !observation.context_matches_current_host()
                 {
                     Some(Issue::ObservationMismatch)
                 } else {

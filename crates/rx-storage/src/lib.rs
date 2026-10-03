@@ -139,7 +139,7 @@ impl SqliteRepository {
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .map_err(unavailable)?;
-        if version > 9 {
+        if version > 10 {
             return Err(StoreError::Unavailable(
                 "newer store schema: downgrade refused".into(),
             ));
@@ -174,7 +174,7 @@ impl SqliteRepository {
                 .execute_batch(include_str!("../migrations/0006.sql"))
                 .map_err(unavailable)?;
         }
-        if version == 7 || (matches!(version, 8 | 9) && sealing::present(connection)?) {
+        if version == 7 || (matches!(version, 8..=10) && sealing::present(connection)?) {
             sealing::verify(connection)?;
         }
         Ok(())
@@ -456,7 +456,7 @@ impl SqliteTransaction<'_, '_> {
             .transaction
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .map_err(unavailable)?;
-        if !(6..=9).contains(&current) {
+        if !(6..=10).contains(&current) {
             return Err(integrity("unsupported reader promotion"));
         }
         self.transaction
@@ -468,6 +468,10 @@ impl SqliteTransaction<'_, '_> {
     }
 }
 impl rx_ports::Transaction for SqliteTransaction<'_, '_> {
+    fn require_workflow_execution_reader(&mut self) -> Result<()> {
+        self.promote_reader(10)
+    }
+
     fn require_resident_execution_reader(&mut self) -> Result<()> {
         self.promote_reader(9)
     }

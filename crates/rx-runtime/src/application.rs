@@ -244,7 +244,7 @@ pub enum Command {
     BindQualificationRequest {
         identity: Identity,
         task: Id,
-        observation: Box<rx_domain::host_qualification::Observation>,
+        observation: Box<rx_application::qualification_activation::Observation>,
         read_started: TimePoint,
     },
     EnterQualificationSend {
@@ -260,7 +260,7 @@ pub enum Command {
     RecordQualificationObservation {
         identity: Identity,
         task: Id,
-        observation: Box<rx_domain::host_qualification::Observation>,
+        observation: Box<rx_application::qualification_activation::Observation>,
         read_started: TimePoint,
     },
 
@@ -336,7 +336,7 @@ pub enum Command {
     BindHostConfiguration {
         identity: Identity,
         task: Id,
-        observation: Box<rx_domain::host_configuration::Observation>,
+        observation: Box<rx_application::configuration_dispatch::Observation>,
         read_started: TimePoint,
     },
     EnterHostConfigurationSend {
@@ -353,7 +353,7 @@ pub enum Command {
         identity: Identity,
         task: Id,
         read_started: TimePoint,
-        observation: Box<rx_domain::host_configuration::Observation>,
+        observation: Box<rx_application::configuration_dispatch::Observation>,
     },
     PrepareProcessChange {
         identity: Identity,
@@ -547,6 +547,100 @@ pub enum Command {
         identity: Identity,
         key: Id,
         input: rx_domain::workflow::Request,
+    },
+    BindExecutionObject {
+        identity: Identity,
+        key: Id,
+        input: rx_application::execution_inventory::BindObject,
+    },
+    GetExecutionObject {
+        identity: Identity,
+        run: Id,
+        ordinal: Counter,
+    },
+    NegotiateExecutionSession {
+        identity: Identity,
+        cell: Name,
+        binding: Digest,
+    },
+    StartExecutionRun {
+        identity: Identity,
+        request_key: String,
+        command: StartRun,
+    },
+    PrepareExecutionOperation {
+        identity: Identity,
+        key: Id,
+        command: rx_application::execution_inventory::SubmitNode,
+    },
+    CommitExecutionOperation(Box<rx_application::execution_inventory::PreparedOperation>),
+    PrepareExecutionPart {
+        identity: Identity,
+        key: Id,
+        command: rx_application::BeginPartRequest,
+    },
+    CommitExecutionPart(Box<rx_application::execution_inventory::PreparedPart>),
+    GetExecutionSnapshotV2 {
+        identity: Identity,
+        run: Id,
+        visit: Counter,
+    },
+    GetExecutionPart {
+        identity: Identity,
+        run: Id,
+        part: Id,
+    },
+    GetExecutionPartArtifact {
+        identity: Identity,
+        run: Id,
+        part: Id,
+        reference: ArtifactRef,
+    },
+    InitializeExecutionSlots {
+        identity: Identity,
+        key: Id,
+        input: rx_application::execution_inventory::Initialize,
+    },
+    GetExecutionSlotPool {
+        identity: Identity,
+        resource: rx_domain::definition::Reference,
+    },
+    CreateExecutionRun {
+        identity: Identity,
+        key: Id,
+        input: rx_application::execution_inventory::CreateRun,
+    },
+    GetExecutionRun {
+        identity: Identity,
+        run: Id,
+    },
+    PrepareExecutionPreview {
+        identity: Identity,
+        key: Id,
+        input: rx_application::workflow_publication::PreviewInput,
+    },
+    SaveExecutionPreview {
+        identity: Identity,
+        key: Id,
+        prepared: Box<rx_application::workflow_publication::PreparedPreview>,
+    },
+    GetExecutionPreview {
+        identity: Identity,
+        reference: rx_domain::definition::Reference,
+    },
+    PublishWorkflowExecution {
+        identity: Identity,
+        key: Id,
+        input: rx_application::workflow_publication::Publish,
+    },
+    CommitWorkflowPublication(Box<rx_application::workflow_publication::PreparedPublication>),
+    PrepareWorkflowConfiguration {
+        identity: Identity,
+        configuration: Box<CellConfiguration>,
+    },
+    GetWorkflowPublication {
+        identity: Identity,
+        reference: rx_domain::definition::Reference,
     },
     SaveWorkflowResolution {
         identity: Identity,
@@ -1105,6 +1199,21 @@ pub enum Reply {
     WorkflowModel(Box<rx_application::workflow_model::Version>),
     WorkflowModels(Box<rx_application::workflow_model::Page>),
     WorkflowResolutionPreparation(Box<rx_application::workflow_model::Preparation>),
+    ExecutionObjectBinding(Box<rx_application::execution_inventory::ObjectBinding>),
+    ExecutionSession(Box<rx_process_contract::execution_v2::executor::Session>),
+    ExecutionSnapshotV2(Box<rx_process_contract::execution_v2::snapshot::Snapshot>),
+    ExecutionOperationPreparation(Box<rx_application::execution_inventory::OperationPreparation>),
+    ExecutionPartPreparation(Box<rx_application::execution_inventory::PartPreparation>),
+    ExecutionPart(Box<rx_process_contract::execution_v2::executor::Part>),
+    ExecutionPartArtifact(Vec<u8>),
+    ExecutionSlotPool(Box<rx_application::execution_inventory::Pool>),
+    ExecutionRunBinding(Box<rx_application::execution_inventory::RunBinding>),
+    ExecutionPreviewPreparation(Box<rx_application::workflow_publication::Preparation>),
+    ExecutionPreview(Box<rx_application::workflow_publication::Preview>),
+    SavedExecutionPreview(Box<rx_application::workflow_publication::SavedPreview>),
+    WorkflowPublication(Box<rx_application::workflow_publication::Publication>),
+    WorkflowConfiguration(ArtifactRef),
+    WorkflowPublicationPreparation(Box<rx_application::workflow_publication::PublishPreparation>),
     WorkflowResolution(Box<rx_application::workflow_model::Receipt>),
     WorkflowResolutions(Box<rx_application::workflow_model::Reports>),
     DefinitionCatalog(Box<rx_application::definition_catalog::Catalog>),
@@ -2053,6 +2162,160 @@ impl<R: Repository + Send + 'static, C: Clock + 'static, A: QualificationAuthori
                 .engine
                 .prepare_workflow_resolution(&identity, &key, input)
                 .map(|v| Reply::WorkflowResolutionPreparation(Box::new(v))),
+            Command::BindExecutionObject {
+                identity,
+                key,
+                input,
+            } => self
+                .engine
+                .bind_execution_object(&identity, &key, input)
+                .map(|v| Reply::ExecutionObjectBinding(Box::new(v))),
+            Command::GetExecutionObject {
+                identity,
+                run,
+                ordinal,
+            } => self
+                .engine
+                .execution_object(&identity, &run, ordinal)
+                .map(|v| Reply::ExecutionObjectBinding(Box::new(v))),
+            Command::NegotiateExecutionSession {
+                identity,
+                cell,
+                binding,
+            } => self
+                .engine
+                .negotiate_execution_session(&identity, &cell, binding)
+                .map(|v| Reply::ExecutionSession(Box::new(v))),
+            Command::StartExecutionRun {
+                identity,
+                request_key,
+                command,
+            } => self
+                .engine
+                .start_execution_run(&identity, &request_key, command)
+                .map(Reply::Attempt),
+            Command::PrepareExecutionOperation {
+                identity,
+                key,
+                command,
+            } => self
+                .engine
+                .prepare_execution_operation(&identity, &key, command)
+                .map(|v| Reply::ExecutionOperationPreparation(Box::new(v))),
+            Command::CommitExecutionOperation(prepared) => self
+                .engine
+                .commit_execution_operation(*prepared)
+                .map(|v| Reply::Work(Box::new(v))),
+            Command::PrepareExecutionPart {
+                identity,
+                key,
+                command,
+            } => self
+                .engine
+                .prepare_execution_part(&identity, &key, command)
+                .map(|v| Reply::ExecutionPartPreparation(Box::new(v))),
+            Command::CommitExecutionPart(prepared) => self
+                .engine
+                .commit_execution_part(*prepared)
+                .map(|v| Reply::ExecutionPart(Box::new(v))),
+            Command::GetExecutionSnapshotV2 {
+                identity,
+                run,
+                visit,
+            } => self
+                .engine
+                .execution_snapshot_v2(&identity, &run, visit)
+                .map(|v| Reply::ExecutionSnapshotV2(Box::new(v))),
+            Command::GetExecutionPart {
+                identity,
+                run,
+                part,
+            } => self
+                .engine
+                .execution_part(&identity, &run, &part)
+                .map(|v| Reply::ExecutionPart(Box::new(v))),
+            Command::GetExecutionPartArtifact {
+                identity,
+                run,
+                part,
+                reference,
+            } => self
+                .engine
+                .execution_part_artifact(&identity, &run, &part, &reference)
+                .map(Reply::ExecutionPartArtifact),
+            Command::InitializeExecutionSlots {
+                identity,
+                key,
+                input,
+            } => self
+                .engine
+                .initialize_execution_slots(&identity, &key, input)
+                .map(|v| Reply::ExecutionSlotPool(Box::new(v))),
+            Command::GetExecutionSlotPool { identity, resource } => self
+                .engine
+                .execution_slot_pool(&identity, &resource)
+                .map(|v| Reply::ExecutionSlotPool(Box::new(v))),
+            Command::CreateExecutionRun {
+                identity,
+                key,
+                input,
+            } => self
+                .engine
+                .create_execution_run(&identity, &key, input)
+                .map(|v| Reply::ExecutionRunBinding(Box::new(v))),
+            Command::GetExecutionRun { identity, run } => self
+                .engine
+                .execution_run(&identity, &run)
+                .map(|v| Reply::ExecutionRunBinding(Box::new(v))),
+            Command::PrepareExecutionPreview {
+                identity,
+                key,
+                input,
+            } => self
+                .engine
+                .prepare_execution_preview(&identity, &key, input)
+                .map(|v| Reply::ExecutionPreviewPreparation(Box::new(v))),
+            Command::SaveExecutionPreview {
+                identity,
+                key,
+                prepared,
+            } => self
+                .engine
+                .save_execution_preview(&identity, &key, *prepared)
+                .map(|v| Reply::ExecutionPreview(Box::new(v))),
+            Command::GetExecutionPreview {
+                identity,
+                reference,
+            } => self
+                .engine
+                .execution_preview(&identity, &reference)
+                .map(|v| Reply::SavedExecutionPreview(Box::new(v))),
+            Command::PublishWorkflowExecution {
+                identity,
+                key,
+                input,
+            } => self
+                .engine
+                .prepare_workflow_publication(&identity, &key, input)
+                .map(|v| Reply::WorkflowPublicationPreparation(Box::new(v))),
+            Command::CommitWorkflowPublication(prepared) => self
+                .engine
+                .commit_workflow_publication(*prepared)
+                .map(|v| Reply::WorkflowPublication(Box::new(v))),
+            Command::PrepareWorkflowConfiguration {
+                identity,
+                configuration,
+            } => self
+                .engine
+                .prepare_workflow_configuration(&identity, *configuration)
+                .map(Reply::WorkflowConfiguration),
+            Command::GetWorkflowPublication {
+                identity,
+                reference,
+            } => self
+                .engine
+                .workflow_publication(&identity, &reference)
+                .map(|v| Reply::WorkflowPublication(Box::new(v))),
             Command::SaveWorkflowResolution {
                 identity,
                 key,

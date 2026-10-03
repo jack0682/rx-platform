@@ -91,6 +91,12 @@ pub struct OutboxRecord {
 /// All methods participate in the caller's single atomic transaction.
 /// Implementations must not silently retry the callback: it can allocate command identities.
 pub trait Transaction {
+    /// Opt-in reader barrier for explicit execution v2 publications and Run records.
+    fn require_workflow_execution_reader(&mut self) -> Result<()> {
+        Err(StoreError::Unavailable(
+            "workflow execution v2 reader barrier unsupported".into(),
+        ))
+    }
     /// Opt-in barrier for Supervisor role and authoritative resident execution records.
     fn require_resident_execution_reader(&mut self) -> Result<()> {
         Err(StoreError::Unavailable(

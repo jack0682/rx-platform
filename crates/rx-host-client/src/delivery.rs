@@ -58,6 +58,43 @@ pub trait DeliveryTransport: Send + Sync {
         work: &Work,
         permit: &Permit,
     ) -> Result<HostReceipt, Status>;
+    async fn prepare_execution(
+        &self,
+        _key: &Id,
+        _work: &Work,
+        _permit: &Permit,
+        _parameters: &[u8],
+    ) -> Result<HostReceipt, Status> {
+        Err(Status::unimplemented(
+            "explicit execution v2 transport required",
+        ))
+    }
+    async fn authorize_execution(
+        &self,
+        _key: &Id,
+        _work: &Work,
+        _permit: &Permit,
+    ) -> Result<HostReceipt, Status> {
+        Err(Status::unimplemented(
+            "explicit execution v2 transport required",
+        ))
+    }
+    async fn work_receipt(&self, work: &Work) -> Result<HostReceipt, Status> {
+        if work.execution.is_some() {
+            return Err(Status::unimplemented(
+                "explicit execution v2 query required",
+            ));
+        }
+        self.receipt(work.operation.id()).await
+    }
+    async fn work_evidence(&self, work: &Work) -> Result<EvidenceBatch, Status> {
+        if work.execution.is_some() {
+            return Err(Status::unimplemented(
+                "explicit execution v2 query required",
+            ));
+        }
+        self.reconcile(work.operation.id()).await
+    }
     async fn receipt(&self, operation: &Id) -> Result<HostReceipt, Status>;
     async fn reconcile(&self, operation: &Id) -> Result<EvidenceBatch, Status>;
     async fn handover(&self, operation: &Id) -> Result<Vec<HandoverObservation>, Status>;
@@ -108,6 +145,29 @@ impl DeliveryTransport for HostClient {
         permit: &Permit,
     ) -> Result<HostReceipt, Status> {
         HostClient::authorize(self, key, work, permit).await
+    }
+    async fn prepare_execution(
+        &self,
+        key: &Id,
+        work: &Work,
+        permit: &Permit,
+        parameters: &[u8],
+    ) -> Result<HostReceipt, Status> {
+        HostClient::prepare_execution(self, key, work, permit, parameters).await
+    }
+    async fn authorize_execution(
+        &self,
+        key: &Id,
+        work: &Work,
+        permit: &Permit,
+    ) -> Result<HostReceipt, Status> {
+        HostClient::authorize_execution(self, key, work, permit).await
+    }
+    async fn work_receipt(&self, work: &Work) -> Result<HostReceipt, Status> {
+        HostClient::work_receipt(self, work).await
+    }
+    async fn work_evidence(&self, work: &Work) -> Result<EvidenceBatch, Status> {
+        HostClient::work_evidence(self, work).await
     }
     async fn receipt(&self, operation: &Id) -> Result<HostReceipt, Status> {
         HostClient::receipt(self, operation).await
@@ -385,12 +445,30 @@ impl Dispatcher {
                 let receipt = if plan.first_emission {
                     match plan.payload {
                         Delivery::Prepare { .. } => {
-                            self.client.prepare(message, work, permit).await?
+                            if work.execution.is_some() {
+                                self.client
+                                    .prepare_execution(
+                                        message,
+                                        work,
+                                        permit,
+                                        plan.execution_parameters
+                                            .as_deref()
+                                            .ok_or(Error::Protocol("v2 parameters missing"))?,
+                                    )
+                                    .await?
+                            } else {
+                                self.client.prepare(message, work, permit).await?
+                            }
+                        }
+                        _ if work.execution.is_some() => {
+                            self.client
+                                .authorize_execution(message, work, permit)
+                                .await?
                         }
                         _ => self.client.authorize(message, work, permit).await?,
                     }
                 } else {
-                    match self.client.receipt(work.operation.id()).await {
+                    match self.client.work_receipt(work).await {
                         Ok(receipt) => receipt,
                         Err(error) if error.code() == Code::NotFound => {
                             self.attention(message, DeliveryIssue::RemoteNotFound)
@@ -420,7 +498,7 @@ impl Dispatcher {
         Ok(true)
     }
     async fn reconcile(&self, message: &Id, work: &Work) -> Result<(), Error> {
-        let receipt = self.client.receipt(work.operation.id()).await?;
+        let receipt = self.client.work_receipt(work).await?;
         if receipt.state == ReceiptState::Prepared {
             return Ok(());
         }
@@ -430,7 +508,7 @@ impl Dispatcher {
             receipt,
         })
         .await?;
-        let batch = self.client.reconcile(work.operation.id()).await?;
+        let batch = self.client.work_evidence(work).await?;
         if !batch.records.is_empty() {
             self.call(Command::IngestEvidence {
                 identity: self.identity.clone(),

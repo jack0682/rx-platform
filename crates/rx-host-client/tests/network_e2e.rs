@@ -191,6 +191,7 @@ async fn run_fixture(automatic: bool, wire: bool) {
         }),
     };
     let configuration = CellConfiguration {
+        execution: None,
         process: None,
         id: name("cell/sim"),
         environment: Environment::Simulation,

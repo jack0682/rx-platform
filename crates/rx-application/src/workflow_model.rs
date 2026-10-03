@@ -97,6 +97,58 @@ pub struct Snapshot {
     pub(crate) request: workflow::Request,
     pub(crate) definitions: BTreeMap<Reference, Definition>,
 }
+
+/// Server-read inputs for v2 candidate generation. Not an approval or Run permit.
+/// Definitions are retained once per candidate, never once per tray slot.
+pub struct ExecutionSnapshot {
+    pub(crate) candidates: Vec<Snapshot>,
+    pub(crate) slots: u16,
+}
+impl ExecutionSnapshot {
+    pub fn input_closure(&self) -> rx_process_contract::execution_v2::InputClosure {
+        let model = &self.candidates[0].model;
+        let mut definitions = BTreeMap::new();
+        for candidate in &self.candidates {
+            definitions.extend(candidate.definitions.clone());
+        }
+        rx_process_contract::execution_v2::InputClosure {
+            schema: Name::new("rx.execution-input-closure.v2").expect("static schema"),
+            workflow: model.reference.clone(),
+            label: model.label.clone(),
+            spec: model.spec.clone(),
+            definitions: definitions.into_values().collect(),
+            requests: self.candidates.iter().map(|c| c.request.clone()).collect(),
+        }
+    }
+    pub fn materialize(
+        &self,
+        policy: &rx_process_contract::execution_v2::Policy,
+        candidate: u8,
+        slot: u16,
+    ) -> Result<rx_process_contract::execution_v2::Materialized, String> {
+        if policy.slot_order.len() != usize::from(self.slots) {
+            return Err("published slot count differs from server snapshot".into());
+        }
+        rx_process_contract::execution_v2::materialize(
+            policy,
+            &self.input_closure(),
+            candidate,
+            slot,
+        )
+    }
+    pub fn resolve(&self, candidate: u8, slot: u16) -> Result<workflow::Report, String> {
+        let snapshot = self
+            .candidates
+            .get(usize::from(candidate))
+            .ok_or("candidate outside domain")?;
+        if slot >= self.slots {
+            return Err("slot outside domain".into());
+        }
+        let mut request = snapshot.request.clone();
+        request.slot_index = Counter(u64::from(slot));
+        workflow::resolve(&snapshot.model.spec, request, &snapshot.definitions)
+    }
+}
 pub enum Preparation {
     Recorded(Box<Receipt>),
     Pending(Box<Snapshot>),

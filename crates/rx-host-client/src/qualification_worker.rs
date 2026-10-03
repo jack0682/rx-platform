@@ -3,7 +3,7 @@ use crate::HostClient;
 use rx_application::{
     Identity,
     configuration_dispatch::{Issue, Phase},
-    qualification_activation::{Emission, Task},
+    qualification_activation::{Emission, Observation as Exchange, Request, Task},
 };
 use rx_domain::{
     host_qualification::{CellTarget, Observation},
@@ -15,6 +15,26 @@ type Error = Box<dyn std::error::Error + Send + Sync>;
 #[tonic::async_trait]
 pub trait Transport: Send + Sync {
     fn host(&self) -> &Name;
+    async fn inspect_execution(
+        &self,
+    ) -> Result<rx_process_contract::execution_v2::host_qualification::Observation, tonic::Status>
+    {
+        Err(tonic::Status::unimplemented("execution v2 qualification"))
+    }
+    async fn lookup_execution(
+        &self,
+        _id: &Id,
+    ) -> Result<rx_process_contract::execution_v2::host_qualification::Observation, tonic::Status>
+    {
+        Err(tonic::Status::unimplemented("execution v2 qualification"))
+    }
+    async fn apply_execution(
+        &self,
+        _request: &rx_process_contract::execution_v2::host_qualification::Request,
+    ) -> Result<rx_process_contract::execution_v2::host_qualification::Observation, tonic::Status>
+    {
+        Err(tonic::Status::unimplemented("execution v2 qualification"))
+    }
     async fn inspect(&self) -> Result<Observation, tonic::Status>;
     async fn open(&self, cells: &[CellTarget], clock: &str) -> Result<(), tonic::Status>;
     async fn lookup(&self, id: &Id) -> Result<Observation, tonic::Status>;
@@ -25,6 +45,26 @@ pub trait Transport: Send + Sync {
 }
 #[tonic::async_trait]
 impl Transport for HostClient {
+    async fn inspect_execution(
+        &self,
+    ) -> Result<rx_process_contract::execution_v2::host_qualification::Observation, tonic::Status>
+    {
+        self.inspect_execution_qualification().await
+    }
+    async fn lookup_execution(
+        &self,
+        id: &Id,
+    ) -> Result<rx_process_contract::execution_v2::host_qualification::Observation, tonic::Status>
+    {
+        self.lookup_execution_qualification(id).await
+    }
+    async fn apply_execution(
+        &self,
+        request: &rx_process_contract::execution_v2::host_qualification::Request,
+    ) -> Result<rx_process_contract::execution_v2::host_qualification::Observation, tonic::Status>
+    {
+        self.accept_execution_qualification(request).await
+    }
     fn host(&self) -> &Name {
         &self.host_id
     }
@@ -90,7 +130,7 @@ impl Coordinator {
     async fn record(
         &self,
         id: &Id,
-        observation: Observation,
+        observation: Exchange,
         read_started: TimePoint,
     ) -> Result<Task, Error> {
         let Reply::QualificationTask(t) = self
@@ -135,7 +175,12 @@ impl Coordinator {
             }
             if task.phase == Phase::AwaitingSnapshot {
                 let started = self.now().await?;
-                let observation = match self.transport.inspect().await {
+                let inspected = if task.execution_policies.is_empty() {
+                    self.transport.inspect().await.map(Exchange::from)
+                } else {
+                    self.transport.inspect_execution().await.map(Exchange::from)
+                };
+                let observation = match inspected {
                     Ok(v) => v,
                     Err(_) => {
                         self.issue(&task.id, Issue::TransportUnavailable).await?;
@@ -166,7 +211,15 @@ impl Coordinator {
             let mut retry = false;
             if task.phase == Phase::SendEntered {
                 let read_started = self.now().await?;
-                let observation = match self.transport.lookup(&task.id).await {
+                let found = if task.execution_policies.is_empty() {
+                    self.transport.lookup(&task.id).await.map(Exchange::from)
+                } else {
+                    self.transport
+                        .lookup_execution(&task.id)
+                        .await
+                        .map(Exchange::from)
+                };
+                let observation = match found {
                     Ok(v) => v,
                     Err(_) => {
                         self.issue(&task.id, Issue::TransportUnavailable).await?;
@@ -190,6 +243,7 @@ impl Coordinator {
                         .request
                         .as_ref()
                         .ok_or("qualification request missing")?
+                        .context()
                         .cells,
                     &now.clock_id,
                 )
@@ -220,7 +274,11 @@ impl Coordinator {
             };
             if let Emission::Send { request } = emission {
                 let read_started = self.now().await?;
-                match self.transport.apply(&request).await {
+                let result = match request.as_ref() {
+                    Request::V1(r) => self.transport.apply(r).await.map(Exchange::from),
+                    Request::V2(r) => self.transport.apply_execution(r).await.map(Exchange::from),
+                };
+                match result {
                     Ok(v) => {
                         self.record(&task.id, v, read_started).await?;
                     }

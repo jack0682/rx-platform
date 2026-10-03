@@ -128,6 +128,7 @@ pub fn export() -> Result<()> {
         }),
     };
     let configuration = CellConfiguration {
+        execution: None,
         process: None,
         id: name(CELL),
         environment: Environment::Simulation,

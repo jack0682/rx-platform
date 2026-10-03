@@ -588,3 +588,54 @@ fn invalid_literal_and_input_are_rejected_even_if_an_override_would_mask_them() 
     assert!(!report.valid);
     assert!(report.violations.iter().any(|v| v.code == "INPUT_INVALID"));
 }
+
+#[test]
+fn object_instances_inherit_models_keep_value_sources_and_obey_type_checks() {
+    let mut f = fixture();
+    let model = f.refs["model-a"].clone();
+    let instance = f.add(
+        "actual-a-1",
+        Body::ObjectInstance {
+            base: model.clone(),
+            values: BTreeMap::new(),
+        },
+    );
+    f.request
+        .contexts
+        .insert(n("object"), vec![instance.clone()]);
+    let inherited = f.report();
+    assert!(inherited.valid && inherited.concrete);
+    assert_eq!(value(&inherited, "target").value, q(12.0, 12.0, "mm"));
+    let effective = rx_domain::definition::resolve(&f.all[&instance], &f.all).unwrap();
+    assert_eq!(effective.values[&n("width")].declared_by, model);
+    let changed = f.add(
+        "actual-a-2",
+        Body::ObjectInstance {
+            base: model,
+            values: [(n("width"), Value::Number(r(15.0)))].into(),
+        },
+    );
+    f.request
+        .contexts
+        .insert(n("object"), vec![changed.clone()]);
+    let report = f.report();
+    assert!(report.valid);
+    assert_eq!(value(&report, "target").value, q(17.0, 17.0, "mm"));
+    let effective = rx_domain::definition::resolve(&f.all[&changed], &f.all).unwrap();
+    assert_eq!(effective.values[&n("width")].declared_by, changed);
+    assert!(!effective.shadowed[&n("width")].is_empty());
+    for base in [
+        f.refs["object-type"].clone(),
+        f.refs["actor-type"].clone(),
+        instance,
+    ] {
+        let invalid = f.add(
+            "wrong-base",
+            Body::ObjectInstance {
+                base,
+                values: BTreeMap::new(),
+            },
+        );
+        assert!(rx_domain::definition::resolve(&f.all[&invalid], &f.all).is_err());
+    }
+}

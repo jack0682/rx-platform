@@ -296,35 +296,48 @@ impl HostClient {
         work: &app::Work,
         permit: &app::Permit,
     ) -> Result<app::HostReceipt, Status> {
+        if work.execution.is_some() {
+            return Err(Status::failed_precondition(
+                "v2 requires explicit parameter delivery",
+            ));
+        }
+        receipt(
+            cell::cell_host_service_client::CellHostServiceClient::new(self.channel.clone())
+                .prepare(self.prepare_request(key, work, permit)?)
+                .await?
+                .into_inner(),
+        )
+    }
+    fn prepare_request(
+        &self,
+        key: &Id,
+        work: &app::Work,
+        permit: &app::Permit,
+    ) -> Result<cell::HostPrepareRequest, Status> {
         let context = self.context(key);
         let intent = rx_protocol::json::from_slice(
             &canonical::bytes(&work.intent).map_err(|e| Status::invalid_argument(e.to_string()))?,
         )?;
-        let result =
-            cell::cell_host_service_client::CellHostServiceClient::new(self.channel.clone())
-                .prepare(cell::HostPrepareRequest {
-                    call: Some(cell::CellCall {
-                        context: Some(context.clone()),
-                        cell_id: work.cell.to_string(),
-                        expected_cell_revision: None,
-                    }),
-                    base_request: Some(base::PrepareOperation {
-                        context: Some(context),
-                        operation_id: work.operation.id().to_string(),
-                        intent: Some(intent),
-                        intent_digest: work
-                            .intent
-                            .digest()
-                            .map_err(|e| Status::invalid_argument(e.to_string()))?
-                            .as_bytes()
-                            .to_vec(),
-                        grant: Some(grant_wire(permit)),
-                    }),
-                    permit: Some(permit_wire(permit)),
-                })
-                .await?
-                .into_inner();
-        receipt(result)
+        Ok(cell::HostPrepareRequest {
+            call: Some(cell::CellCall {
+                context: Some(context.clone()),
+                cell_id: work.cell.to_string(),
+                expected_cell_revision: None,
+            }),
+            base_request: Some(base::PrepareOperation {
+                context: Some(context),
+                operation_id: work.operation.id().to_string(),
+                intent: Some(intent),
+                intent_digest: work
+                    .intent
+                    .digest()
+                    .map_err(|e| Status::invalid_argument(e.to_string()))?
+                    .as_bytes()
+                    .to_vec(),
+                grant: Some(grant_wire(permit)),
+            }),
+            permit: Some(permit_wire(permit)),
+        })
     }
     pub async fn authorize(
         &self,
@@ -332,38 +345,47 @@ impl HostClient {
         work: &app::Work,
         permit: &app::Permit,
     ) -> Result<app::HostReceipt, Status> {
-        let context = self.context(key);
-        let result =
+        if work.execution.is_some() {
+            return self.authorize_execution(key, work, permit).await;
+        }
+        receipt(
             cell::cell_host_service_client::CellHostServiceClient::new(self.channel.clone())
-                .authorize(cell::HostAuthorizeRequest {
-                    call: Some(cell::CellCall {
-                        context: Some(context.clone()),
-                        cell_id: work.cell.to_string(),
-                        expected_cell_revision: None,
-                    }),
-                    base_request: Some(base::AuthorizeDispatch {
-                        context: Some(context),
-                        operation_id: work.operation.id().to_string(),
-                        invocation_id: work
-                            .invocation
-                            .as_ref()
-                            .ok_or_else(|| {
-                                Status::failed_precondition("Host invocation not yet known")
-                            })?
-                            .to_string(),
-                        intent_digest: work
-                            .intent
-                            .digest()
-                            .map_err(|e| Status::invalid_argument(e.to_string()))?
-                            .as_bytes()
-                            .to_vec(),
-                        grant: Some(grant_wire(permit)),
-                    }),
-                    permit: Some(permit_wire(permit)),
-                })
+                .authorize(self.authorize_request(key, work, permit)?)
                 .await?
-                .into_inner();
-        receipt(result)
+                .into_inner(),
+        )
+    }
+    fn authorize_request(
+        &self,
+        key: &Id,
+        work: &app::Work,
+        permit: &app::Permit,
+    ) -> Result<cell::HostAuthorizeRequest, Status> {
+        let context = self.context(key);
+        Ok(cell::HostAuthorizeRequest {
+            call: Some(cell::CellCall {
+                context: Some(context.clone()),
+                cell_id: work.cell.to_string(),
+                expected_cell_revision: None,
+            }),
+            base_request: Some(base::AuthorizeDispatch {
+                context: Some(context),
+                operation_id: work.operation.id().to_string(),
+                invocation_id: work
+                    .invocation
+                    .as_ref()
+                    .ok_or_else(|| Status::failed_precondition("Host invocation not yet known"))?
+                    .to_string(),
+                intent_digest: work
+                    .intent
+                    .digest()
+                    .map_err(|e| Status::invalid_argument(e.to_string()))?
+                    .as_bytes()
+                    .to_vec(),
+                grant: Some(grant_wire(permit)),
+            }),
+            permit: Some(permit_wire(permit)),
+        })
     }
     pub async fn receipt(&self, operation: &Id) -> Result<app::HostReceipt, Status> {
         let value = base::host_service_client::HostServiceClient::new(self.channel.clone())
@@ -633,7 +655,12 @@ pub mod configuration;
 pub mod configuration_worker;
 
 pub mod qualification;
+pub mod qualification_v2;
 
 pub mod qualification_worker;
 
 pub mod recovery;
+
+mod configuration_v2;
+
+mod execution_v2;

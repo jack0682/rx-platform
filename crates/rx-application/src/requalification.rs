@@ -6,6 +6,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 pub const MAX_ARTIFACT: u64 = 8 * 1024 * 1024;
 pub const MAX_TOTAL: u64 = 32 * 1024 * 1024;
+pub const DERIVED_POLICY: &str = "rx.requalification-policy.v3";
+pub const DERIVED_TICKET_TTL_NS: u64 = 600_000_000_000;
+pub const MAX_DERIVED_TOTAL: u64 = 128 * 1024 * 1024;
 fn hash(domain: &str, v: &impl Serialize) -> Result<Digest, String> {
     canonical::digest(domain, v).map_err(|e| e.to_string())
 }
@@ -58,6 +61,22 @@ pub struct Policy {
     pub keys: Vec<Key>,
 }
 impl Policy {
+    pub fn artifact_limit(&self, r: &ArtifactRef) -> u64 {
+        if self.schema.as_str() == DERIVED_POLICY
+            && r.schema_id.as_str() == "rx.execution-input-closure.v2"
+        {
+            rx_process_contract::execution_v2::MAX_DEFINITION_BYTES
+        } else {
+            MAX_ARTIFACT
+        }
+    }
+    pub fn total_limit(&self) -> u64 {
+        if self.schema.as_str() == DERIVED_POLICY {
+            MAX_DERIVED_TOTAL
+        } else {
+            MAX_TOTAL
+        }
+    }
     pub fn digest(&self) -> Result<Digest, String> {
         let all = BTreeSet::from([
             Area::Software,
@@ -69,7 +88,7 @@ impl Policy {
         ]);
         if !matches!(
             self.schema.as_str(),
-            "rx.requalification-policy.v1" | "rx.requalification-policy.v2"
+            "rx.requalification-policy.v1" | "rx.requalification-policy.v2" | DERIVED_POLICY
         ) || self.profiles.is_empty()
             || self.profiles.len() > 64
             || self.keys.is_empty()
@@ -103,12 +122,22 @@ impl Policy {
             }
         }
         for p in &self.profiles {
+            if p.configuration.schema_id.as_str() == "rx.cell-configuration.v2"
+                && self.schema.as_str() != DERIVED_POLICY
+            {
+                return Err("v2 configuration requires qualification policy v3".into());
+            }
+            if self.schema.as_str() == DERIVED_POLICY && p.environment != Environment::Simulation {
+                return Err("derived qualification v3 is SIMULATION only".into());
+            }
             if (self.schema.as_str() == "rx.requalification-policy.v1" && !p.purposes.is_empty())
-                || (self.schema.as_str() == "rx.requalification-policy.v2"
-                    && (p.purposes.is_empty()
-                        || p.purposes
-                            .iter()
-                            .any(|v| !matches!(v.as_str(), "PRODUCTION" | "SETUP" | "RECOVERY"))))
+                || (matches!(
+                    self.schema.as_str(),
+                    "rx.requalification-policy.v2" | DERIVED_POLICY
+                ) && (p.purposes.is_empty()
+                    || p.purposes
+                        .iter()
+                        .any(|v| !matches!(v.as_str(), "PRODUCTION" | "SETUP" | "RECOVERY"))))
             {
                 return Err("qualification policy purpose scope differs".into());
             }
@@ -122,12 +151,19 @@ impl Policy {
                     != p.criteria.len()
                 || p.criteria.iter().map(|c| c.area).collect::<BTreeSet<_>>() != all
                 || p.dependencies.is_empty()
-                || p.dependencies.len() > 128
+                || p.dependencies.len()
+                    > if self.schema.as_str() == DERIVED_POLICY
+                        && p.configuration.schema_id.as_str() == "rx.cell-configuration.v2"
+                    {
+                        rx_process_contract::execution_v2::MAX_DEPENDENCIES
+                    } else {
+                        128
+                    }
             {
                 return Err("all six qualification areas and exact dependencies required".into());
             }
             for a in p.references() {
-                if a.size_bytes.0 == 0 || a.size_bytes.0 > MAX_ARTIFACT {
+                if a.size_bytes.0 == 0 || a.size_bytes.0 > self.artifact_limit(a) {
                     return Err("qualification policy artifact bound".into());
                 }
             }
@@ -333,6 +369,8 @@ pub struct Submit {
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Version {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub derived: Vec<crate::execution_qualification::Verification>,
     pub review: Id,
     pub revision: Counter,
     pub report: Report,
@@ -382,6 +420,7 @@ pub struct Detail {
     pub activation_authorized: bool,
 }
 pub struct Verified {
+    pub(crate) derived: Vec<crate::execution_qualification::Verification>,
     pub(crate) report: Report,
     pub(crate) signature: SignatureEnvelope,
     pub(crate) blobs: BTreeMap<Digest, Vec<u8>>,
@@ -389,6 +428,9 @@ pub struct Verified {
     pub(crate) policy: Digest,
 }
 impl Verified {
+    pub fn derived(&self) -> &[crate::execution_qualification::Verification] {
+        &self.derived
+    }
     pub fn check(
         job: &Job,
         policy: &Policy,
@@ -473,7 +515,7 @@ impl Verified {
                 .get(&r.sha256)
                 .ok_or("qualification artifact missing")?;
             if r.size_bytes.0 == 0
-                || r.size_bytes.0 > MAX_ARTIFACT
+                || r.size_bytes.0 > policy.artifact_limit(r)
                 || r.size_bytes.0 != b.len() as u64
                 || rx_package::content_digest(b) != r.sha256
             {
@@ -485,10 +527,16 @@ impl Verified {
                     .ok_or("artifact size overflow")?;
             }
         }
-        if total > MAX_TOTAL || expected_blobs != blobs.keys().copied().collect() {
+        if total > policy.total_limit() || expected_blobs != blobs.keys().copied().collect() {
             return Err("qualification artifact set/total differs".into());
         }
+        let derived = if ready {
+            crate::execution_qualification::verify(policy, &report, &blobs)?
+        } else {
+            Vec::new()
+        };
         Ok(Self {
+            derived,
             report,
             signature,
             blobs,
@@ -552,7 +600,11 @@ impl DecisionTicket {
             self.version.signature.clone(),
             self.blobs.clone(),
         )?;
-        if v.policy != self.policy || !v.ready {
+        if v.policy != self.policy
+            || !v.ready
+            || canonical::bytes(&v.derived).map_err(|e| e.to_string())?
+                != canonical::bytes(&self.version.derived).map_err(|e| e.to_string())?
+        {
             return Err("qualification report is not fully verified PASS".into());
         }
         Ok(PreparedDecision { ticket: self })
@@ -574,6 +626,9 @@ pub fn required_dependencies(c: &crate::CellConfiguration) -> BTreeSet<Digest> {
         c.recipe.sha256,
         c.site_config_digest,
     ]);
+    if let Some(binding) = &c.execution {
+        set.insert(binding.policy.sha256);
+    }
     for s in &c.steps {
         set.insert(s.intent.profile_digest);
         set.insert(s.intent.site_config_digest);

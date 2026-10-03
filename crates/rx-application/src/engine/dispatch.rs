@@ -54,6 +54,7 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             let work = submit_transition(
                 tx,
                 DispatchState {
+                    execution: None,
                     activation: &mut activation,
                     activation_revision,
                     run: &mut run,
@@ -83,6 +84,7 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
 }
 
 pub(super) struct DispatchState<'a> {
+    pub execution: Option<ExecutionAdmission>,
     pub activation: &'a mut Activation,
     pub activation_revision: Counter,
     pub run: &'a mut Run,
@@ -95,6 +97,7 @@ pub(super) fn submit_transition(
     context: ProcessingContext<'_>,
 ) -> Result<Work> {
     let DispatchState {
+        execution,
         activation,
         activation_revision,
         run,
@@ -113,6 +116,9 @@ pub(super) fn submit_transition(
     let (cell_revision, cell): (_, Cell) = load(tx, "cell", &run.cell, CELL)?;
     check_revision(cell_revision, expected_cell)?;
     check_revision(run_revision, expected_run)?;
+    if cell.configuration.execution.is_some() != execution.is_some() {
+        return reject(Reject::UnsupportedSchema);
+    }
     active_run(tx, &cell, run, identity, meta, now)?;
     if cell.configuration.process.is_some() {
         super::process::eligible_node(tx, run, &cell, &activation.node, activation.visit)?;
@@ -124,8 +130,15 @@ pub(super) fn submit_transition(
         .iter()
         .find(|s| s.id == activation.node)
         .ok_or(StoreError::Rejected(Reject::CapabilityMissing))?;
-    if slot.as_str() != "main" || step.intent.digest().map_err(domain_error)? != digest {
+    if slot.as_str() != "main" {
         return reject(Reject::CapabilityMissing);
+    }
+    match &execution {
+        None if step.intent.digest().map_err(domain_error)? != digest => {
+            return reject(Reject::CapabilityMissing);
+        }
+        Some(e) => e.verify(&cell, run, activation, step, intent)?,
+        _ => {}
     }
     predecessors_done(tx, run, &activation.part, step)?;
     let proof = evaluate(tx, &cell, &step.conditions, now)?;
@@ -213,7 +226,11 @@ pub(super) fn submit_transition(
         condition_ids: step.condition_ids.clone(),
         condition_revision: step.condition_revision,
     };
+    let execution = execution
+        .map(|e| e.bind(operation_id.clone(), permit.mandate.clone()))
+        .transpose()?;
     let work = Work {
+        execution: execution.map(Box::new),
         operation: Operation::admitted(operation_id.clone(), digest),
         intent: command.intent.clone(),
         cell: run.cell.clone(),
@@ -267,4 +284,80 @@ pub(super) fn submit_transition(
     )?;
     event(tx, "rx.event.operation-admitted.v1", &work)?;
     Ok(work)
+}
+
+/// Constructed only by P's currentness-checked v2 operation commit path.
+pub(super) struct ExecutionAdmission {
+    pub selection: rx_process_contract::execution_v2::Selection,
+    pub publication: rx_domain::definition::Reference,
+    pub policy_reference: ArtifactRef,
+    pub policy: rx_process_contract::execution_v2::Policy,
+    pub index: rx_process_contract::execution_v2::ValidatedIndex,
+    pub report: ArtifactRef,
+    pub parameter_bytes: Vec<u8>,
+}
+impl ExecutionAdmission {
+    fn verify(
+        &self,
+        cell: &Cell,
+        run: &Run,
+        activation: &Activation,
+        step: &StepBinding,
+        intent: &rx_domain::intent::Intent,
+    ) -> Result<()> {
+        let binding = cell
+            .configuration
+            .execution
+            .as_ref()
+            .ok_or(StoreError::Rejected(Reject::UnsupportedSchema))?;
+        if binding.publication != self.publication
+            || binding.policy != self.policy_reference
+            || self.selection.run != run.id
+            || activation.part.as_ref() != Some(&self.selection.part)
+            || self.selection.ordinal != activation.visit
+            || self.selection.authority_generation != cell.epoch
+            || self.selection.configuration_digest
+                != cell
+                    .configuration
+                    .reference()
+                    .map_err(StoreError::Invalid)?
+                    .sha256
+            || binding.nodes.get(&activation.node) != Some(&self.selection.node)
+            || self
+                .policy
+                .templates
+                .get(&self.selection.node)
+                .is_none_or(|t| step.host != t.host)
+        {
+            return reject(Reject::InvalidInput);
+        }
+        self.selection
+            .verify_request(
+                &self.selection,
+                &self.policy,
+                &self.index,
+                &step.host,
+                intent,
+                &self.parameter_bytes,
+            )
+            .map_err(StoreError::Invalid)
+    }
+    fn bind(
+        self,
+        operation: Id,
+        mandate: Id,
+    ) -> Result<rx_process_contract::execution_v2::OperationBinding> {
+        let value = rx_process_contract::execution_v2::OperationBinding {
+            schema: name(rx_process_contract::execution_v2::OPERATION_SCHEMA),
+            operation,
+            mandate,
+            publication: self.publication,
+            policy: self.policy_reference,
+            report: self.report,
+            selection_digest: self.selection.digest().map_err(StoreError::Invalid)?,
+            selection: self.selection,
+        };
+        value.validate().map_err(StoreError::Invalid)?;
+        Ok(value)
+    }
 }

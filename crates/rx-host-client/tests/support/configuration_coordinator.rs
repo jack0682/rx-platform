@@ -191,6 +191,7 @@ fn prepare(
             admin,
             &id(),
             process_change::Create {
+                execution_configuration: None,
                 mode: process_change::Mode::Replace,
                 id: id(),
                 cell: cfg.id.clone(),
@@ -445,7 +446,7 @@ pub async fn run(
     let recovered = &tasks[0];
     assert_eq!(recovered.request_digest, Some(request.digest().unwrap()));
     assert_eq!(
-        recovered.receipt.as_ref().unwrap().status,
+        recovered.receipt.as_ref().unwrap().context().status,
         wire::Status::AppliedUnqualified
     );
     let Reply::ProcessChangeDetail(detail) = runtime
@@ -1262,7 +1263,7 @@ pub async fn run(
     assert!(tasks.is_empty());
     assert!(
         restarted
-            .enter_host_configuration_send(&current_host, &request.id, true)
+            .enter_host_configuration_send(&current_host, &request.context().id, true)
             .is_err()
     );
     let qafter = restarted

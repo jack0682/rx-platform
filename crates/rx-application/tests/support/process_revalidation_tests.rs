@@ -26,6 +26,7 @@ fn input(
     mode: Mode,
 ) -> Create {
     Create {
+        execution_configuration: None,
         mode,
         id: id(),
         cell: job.request.cell.clone(),
@@ -260,7 +261,7 @@ fn current_revalidation_keeps_review_fence_host_ack_and_unqualified_apply_gates_
         .authorize_host_configuration(&release, &id(), change_target(&c))
         .unwrap();
     let t = bind(&mut f, 0);
-    let host_request = t.request.as_ref().unwrap();
+    let host_request = t.request.as_ref().unwrap().context();
     assert!(
         host_request
             .cells

@@ -129,6 +129,105 @@ impl Repository for FaultRepository {
     }
 }
 type App = Engine<FaultRepository, ManualClock, SimulationAuthority>;
+
+#[test]
+fn legacy_run_and_qualification_entrypoints_refuse_v2_configuration_marker() {
+    // Deliberate state-level negative probe; authoritative binding has separate HTTP tests.
+    // This is not the frozen-deployed-binary compatibility counterexample.
+    let f = fixture(1, false);
+    let installation = f.app.installation.id.clone();
+    let clock = f.clock.clone();
+    let mut repository = f.app.into_repository();
+    repository
+        .transact(|tx| {
+            use rx_application::persistence::{load, save};
+            let (revision, mut cell): (_, Cell) =
+                load(tx, "cell", name("cell/a"), "rx.internal.cell.v1")?;
+            let legacy = rx_domain::canonical::bytes(&cell.configuration).unwrap();
+            assert!(
+                serde_json::from_slice::<serde_json::Value>(&legacy)
+                    .unwrap()
+                    .get("execution")
+                    .is_none()
+            );
+            let roundtrip: CellConfiguration = rx_domain::canonical::decode_json(&legacy).unwrap();
+            assert_eq!(rx_domain::canonical::bytes(&roundtrip).unwrap(), legacy);
+            cell.configuration.execution =
+                Some(Box::new(rx_process_contract::execution_v2::Binding {
+                    schema: name(rx_process_contract::execution_v2::BINDING_SCHEMA),
+                    publication: rx_domain::definition::Reference {
+                        catalog: id(),
+                        id: id(),
+                        revision: Counter(1),
+                        digest: Digest::from_bytes([1; 32]),
+                    },
+                    policy: artifact(2, "rx.execution-policy.v2"),
+                    nodes: [(name("step/0"), name("node"))].into(),
+                }));
+            tx.require_workflow_execution_reader()?;
+            save(
+                tx,
+                "cell",
+                name("cell/a"),
+                Some(revision),
+                "rx.internal.cell.v1",
+                &cell,
+            )?;
+            Ok(())
+        })
+        .unwrap();
+    let mut app = Engine::open(
+        repository,
+        clock,
+        SimulationAuthority,
+        installation,
+        principal(
+            "admin",
+            &[Role::AccountAdmin, Role::Engineer, Role::Verifier],
+        ),
+    )
+    .unwrap();
+    let login = app
+        .authenticated_session(&name("operator"), id(), expiry(100000))
+        .unwrap();
+    let operator = Identity {
+        principal: name("operator"),
+        session: login.id,
+        terminal: None,
+    };
+    let (revision, cell) = app.inspect_cell(&operator, &name("cell/a")).unwrap();
+    assert!(matches!(
+        app.create_run(
+            &operator,
+            id().as_str(),
+            CreateRun {
+                cell: name("cell/a"),
+                expected_cell: revision,
+                recipe_digest: cell.configuration.recipe.sha256,
+                site_config_digest: cell.configuration.site_config_digest
+            }
+        ),
+        Err(StoreError::Rejected(Rejection::UnsupportedSchema))
+    ));
+    let login = app
+        .authenticated_session(&name("admin"), id(), expiry(100000))
+        .unwrap();
+    let admin = Identity {
+        principal: name("admin"),
+        session: login.id,
+        terminal: None,
+    };
+    assert!(matches!(
+        app.qualify(
+            &admin,
+            &name("cell/a"),
+            revision,
+            vec![artifact(9, "rx.validation.simulation.v1")],
+            vec![]
+        ),
+        Err(StoreError::Rejected(Rejection::UnsupportedSchema))
+    ));
+}
 #[path = "support/component_intake_tests.rs"]
 mod component_intake_tests;
 #[path = "support/resident_component_tests.rs"]
@@ -241,6 +340,13 @@ fn fixture_configured(
     settings: (usize, bool, bool, bool, Option<TestProcess>, bool, bool),
     configure: impl FnOnce(CellConfiguration) -> CellConfiguration,
 ) -> Fixture {
+    fixture_configured_peer(settings, configure, None)
+}
+fn fixture_configured_peer(
+    settings: (usize, bool, bool, bool, Option<TestProcess>, bool, bool),
+    configure: impl FnOnce(CellConfiguration) -> CellConfiguration,
+    peer: Option<(Id, Digest, Digest)>,
+) -> Fixture {
     let (host_count, qualify, maintained, native_result, process, peer_mode, register) = settings;
     let directory = tempfile::tempdir().unwrap();
     let failure = Arc::new(AtomicU8::new(0));
@@ -287,8 +393,25 @@ fn fixture_configured(
             None,
         )
         .unwrap();
+        let (boot, authentication) = if let Some((boot, fingerprint, release)) = peer {
+            (
+                boot,
+                rx_domain::canonical::digest(
+                    "RX-EXECUTOR-AUTH-v1",
+                    &(
+                        fingerprint,
+                        app.installation.id.clone(),
+                        app.installation.store_generation.clone(),
+                        release,
+                    ),
+                )
+                .unwrap(),
+            )
+        } else {
+            (id(), Digest::from_bytes([71; 32]))
+        };
         let session = app
-            .open_executor_peer(&name("executor"), id(), Digest::from_bytes([71; 32]))
+            .open_executor_peer(&name("executor"), boot, authentication)
             .unwrap();
         Identity {
             principal: name("executor"),
@@ -378,6 +501,7 @@ fn fixture_configured(
         }
     }
     let configuration = CellConfiguration {
+        execution: None,
         process: None,
         id: name("cell/a"),
         environment: Environment::Simulation,
@@ -471,6 +595,15 @@ fn register_hosts(
     hosts: &[Identity],
     c: &CellConfiguration,
 ) -> Vec<HostRegistration> {
+    register_hosts_with_grant(app, hosts, c, expiry(50000), Counter(1))
+}
+fn register_hosts_with_grant(
+    app: &mut App,
+    hosts: &[Identity],
+    c: &CellConfiguration,
+    valid_until: TimePoint,
+    ttl_ms: Counter,
+) -> Vec<HostRegistration> {
     let (_, cell) = app.inspect_cell(&hosts[0], &c.id).unwrap();
     hosts
         .iter()
@@ -499,8 +632,8 @@ fn register_hosts(
                         .flat_map(|s| s.intent.resource_set.clone())
                         .collect(),
                     owner: name(app.installation.id.as_str()),
-                    valid_until: expiry(50000),
-                    ttl_ms: Counter(1),
+                    valid_until: valid_until.clone(),
+                    ttl_ms,
                 },
             };
             app.register_host(h, r.clone()).unwrap();
@@ -8397,6 +8530,7 @@ fn change_proposal(
     change_id: Id,
 ) -> process_change::Prepared {
     let input = process_change::Create {
+        execution_configuration: None,
         mode: process_change::Mode::Replace,
         id: change_id,
         cell: job.request.cell.clone(),
@@ -8525,6 +8659,7 @@ fn process_change_proposal_failure_is_atomic_and_lost_reply_recovers_original_pl
         f.failure.store(failure, Ordering::SeqCst);
         assert!(f.app.commit_process_change(prepared).is_err());
         let input = process_change::Create {
+            execution_configuration: None,
             mode: process_change::Mode::Replace,
             id: cid.clone(),
             cell: job.request.cell.clone(),
@@ -8680,6 +8815,7 @@ fn process_change_shared_host_closure_requires_rights_for_every_affected_cell() 
         Err(StoreError::Rejected(Rejection::Forbidden))
     ));
     let create = process_change::Create {
+        execution_configuration: None,
         mode: process_change::Mode::Replace,
         id: id(),
         cell: c.cell,

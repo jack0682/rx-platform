@@ -4,22 +4,18 @@ use crate::{
     process_review::{Choice, Decision, Job, Version},
 };
 const CHANGE: &str = "rx.process-change.v1";
-const CONFIG: &str = "rx.cell-configuration.v1";
 fn fingerprint<T: Serialize>(v: &T) -> Result<Digest> {
     canonical::digest("RX-PROCESS-CHANGE-CONTEXT-v1", v).map_err(domain_error)
 }
 pub(super) fn config_ref(c: &CellConfiguration) -> Result<ArtifactRef> {
-    let b = canonical::bytes(c).map_err(domain_error)?;
-    Ok(ArtifactRef {
-        sha256: rx_package::content_digest(&b),
-        schema_id: name(CONFIG),
-        size_bytes: Counter(b.len() as u64),
-    })
+    c.reference().map_err(StoreError::Invalid)
 }
+
 pub(super) fn store_config(tx: &mut dyn Transaction, c: &CellConfiguration) -> Result<ArtifactRef> {
+    execution_configuration::verify(tx, c)?;
     let r = config_ref(c)?;
     let k = key("changeconfiguration", r.sha256);
-    let d = doc(CONFIG, c)?;
+    let d = doc(c.schema(), c)?;
     if let Some(old) = tx.get(&k)? {
         if old.document != d {
             return Err(StoreError::Integrity(
@@ -32,13 +28,42 @@ pub(super) fn store_config(tx: &mut dyn Transaction, c: &CellConfiguration) -> R
     Ok(r)
 }
 pub(super) fn read_config(tx: &mut dyn Transaction, r: &ArtifactRef) -> Result<CellConfiguration> {
-    let (_, c): (_, CellConfiguration) = load(tx, "changeconfiguration", r.sha256, CONFIG)?;
+    if !matches!(
+        r.schema_id.as_str(),
+        "rx.cell-configuration.v1" | "rx.cell-configuration.v2"
+    ) {
+        return reject(Reject::UnsupportedSchema);
+    }
+    let (_, c): (_, CellConfiguration) =
+        load(tx, "changeconfiguration", r.sha256, r.schema_id.as_str())?;
     if &config_ref(&c)? != r {
         return Err(StoreError::Integrity(
             "change configuration integrity differs".into(),
         ));
     }
     Ok(c)
+}
+pub(super) fn execution_target(
+    tx: &mut dyn Transaction,
+    meta: &Installation,
+    cell: &Name,
+    reference: &Option<ArtifactRef>,
+) -> Result<Option<CellConfiguration>> {
+    reference
+        .as_ref()
+        .map(|r| {
+            if r.schema_id.as_str() != "rx.cell-configuration.v2" {
+                return reject(Reject::UnsupportedSchema);
+            }
+            let target = read_config(tx, r)?;
+            if &target.id != cell || target.execution.is_none() {
+                return reject(Reject::InvalidInput);
+            }
+            validate_configuration(&target)?;
+            requalification::derived_current(tx, meta, &target)?;
+            Ok(target)
+        })
+        .transpose()
 }
 fn impact(tx: &mut dyn Transaction, origin: &Name) -> Result<Impact> {
     prospective_impact(tx, origin, &BTreeSet::new(), &BTreeSet::new())
@@ -225,6 +250,20 @@ fn plan_digest(v: &Change) -> Result<Digest> {
     } else {
         base
     };
+    let base = if let Some(reference) = &v.execution_configuration {
+        if reference != &v.after
+            || reference.schema_id.as_str() != "rx.cell-configuration.v2"
+            || v.host_binding_plan.is_some()
+        {
+            return Err(StoreError::Integrity(
+                "execution change binding differs".into(),
+            ));
+        }
+        canonical::digest("RX-PROCESS-EXECUTION-CHANGE-PLAN-v2", &(base, reference))
+            .map_err(domain_error)?
+    } else {
+        base
+    };
     if let Some(plan) = &v.host_binding_plan {
         if plan.cell != v.cell
             || plan.before_configuration != v.before
@@ -290,6 +329,7 @@ pub(super) fn record(
     event(tx, "rx.event.process-change-recorded.v1", c)
 }
 pub(super) fn current(tx: &mut dyn Transaction, meta: &Installation, c: &Change) -> Result<()> {
+    execution_target(tx, meta, &c.cell, &c.execution_configuration)?;
     if c.builder_digest != builder_digest()
         || fingerprint(&change_impact(tx, c)?)? != fingerprint(&c.impact)?
     {
@@ -378,6 +418,12 @@ pub(super) fn check_prepared(
         }
         revalidation_root_available(tx, &t.job.request.cell, &before, own_change.as_ref())?;
     }
+    if let Some(target) = &t.execution_configuration {
+        if config_ref(&p.target)? != config_ref(target)? {
+            return reject(Reject::StaleRevision);
+        }
+        requalification::derived_current(tx, meta, target)?;
+    }
     validate_configuration(&p.target)
 }
 impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
@@ -434,7 +480,13 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             let registration = package_intake::current(tx, meta)?.ok_or(
                 StoreError::Unavailable("package verifier unavailable".into()),
             )?;
+            let execution_configuration =
+                execution_target(tx, meta, &input.cell, &input.execution_configuration)?;
+            if job.configuration.execution.is_some() && execution_configuration.is_none() {
+                return reject(Reject::UnsupportedSchema);
+            }
             Ok(Preflight::Verify(Box::new(Ticket {
+                execution_configuration,
                 mode: input.mode,
                 action: Action::Propose(input),
                 identity: identity.clone(),
@@ -485,6 +537,7 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             let before = store_config(tx, &t.job.configuration)?;
             let after = store_config(tx, &p.target)?;
             let mut c = Change {
+                execution_configuration: input.execution_configuration.clone(),
                 mode: input.mode,
                 host_binding_plan: p.host_binding_plan,
                 qualification_activation: None,
@@ -608,7 +661,10 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             let registration = package_intake::current(tx, meta)?.ok_or(
                 StoreError::Unavailable("package verifier unavailable".into()),
             )?;
+            let execution_configuration =
+                execution_target(tx, meta, &input.cell, &c.execution_configuration)?;
             Ok(Preflight::Verify(Box::new(Ticket {
+                execution_configuration,
                 mode: c.mode,
                 action: Action::Stage(input),
                 identity: identity.clone(),
