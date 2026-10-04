@@ -151,6 +151,43 @@ pub(super) fn exercise(f: &mut Fixture, target: &CellConfiguration, part: &wire:
             unknown.operation.disposition(),
             rx_domain::operation::Disposition::Quarantined
         );
+        f.app
+            .request_reconciliation(&f.executor, work.operation.id())
+            .unwrap();
+        let before = unknown.operation.revision();
+        let view = f.app.runtime_skill_result(&f.operator, &work.run).unwrap();
+        let observed = view
+            .work
+            .iter()
+            .find(|v| v.operation.id() == work.operation.id())
+            .unwrap();
+        assert_eq!(
+            observed.operation.knowledge(),
+            rx_domain::operation::Knowledge::Unknown
+        );
+        assert!(!observed.resources.is_empty());
+        assert!(
+            observed
+                .resources
+                .iter()
+                .all(|r| r.value.holder.as_ref() == Some(work.operation.id()))
+        );
+        assert_eq!(
+            observed.reconciliation.as_ref().unwrap().operation,
+            *work.operation.id()
+        );
+        assert_eq!(
+            observed.reconciliation.as_ref().unwrap().state,
+            ReconciliationState::Pending
+        );
+        assert_eq!(
+            f.app
+                .inspect_work(&f.executor, work.operation.id())
+                .unwrap()
+                .operation
+                .revision(),
+            before
+        );
         let binding = f.app.execution_run(&f.operator, &work.run).unwrap();
         for pin in binding.pools {
             let pool = f
