@@ -108,7 +108,21 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                 }
                 work_count += 1;
                 if work.len() < 256 {
+                    let mut resources = Vec::new();
+                    for resource in &value.intent.resource_set {
+                        let (revision, resource) = load(tx, "resource", resource, RESOURCE)?;
+                        resources.push(Versioned {
+                            revision,
+                            value: resource,
+                        });
+                    }
+                    let reconciliation = tx
+                        .get(&key("reconciliation", value.operation.id()))?
+                        .map(|row| decode(&row, "rx.internal.reconciliation-request.v1"))
+                        .transpose()?;
                     work.push(view::Work {
+                        resources,
+                        reconciliation,
                         execution: value.execution,
                         operation: value.operation,
                         part: value.part,

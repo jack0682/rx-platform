@@ -329,25 +329,39 @@ impl Dispatcher {
             if host != &self.identity.principal || self.delayed(&message.id) {
                 continue;
             }
-            match self.send(&message.id).await {
-                Ok(done) => {
-                    if done {
-                        self.retries.remove(&message.id);
-                    } else {
-                        self.retry(&message.id);
-                    }
+            let mut next = Some(message.id.clone());
+            // Prepare and its newly recorded Authorize share the existing finite
+            // permit window. Do not spend that window waiting for another scan.
+            // send() obtains a fresh writer plan for both phases; an uncertain send
+            // still performs receipt lookup only. At most one follow-up is drained.
+            for _ in 0..2 {
+                let Some(id) = next.take() else { break };
+                if self.delayed(&id) {
+                    break;
                 }
-                Err(error) => {
-                    let issue = match &error {
-                        Error::Rpc(status) if status.code() == Code::Unauthenticated => {
-                            DeliveryIssue::PeerChanged
+                match self.send(&id).await {
+                    Ok((done, follow_up)) => {
+                        if done {
+                            self.retries.remove(&id);
+                        } else {
+                            self.retry(&id);
                         }
-                        Error::Writer(WriterError::Rejected(_)) => DeliveryIssue::PolicyRejected,
-                        _ => DeliveryIssue::ResponseUnknown,
-                    };
-                    let _ = self.attention(&message.id, issue).await;
-                    self.report_error(&error);
-                    self.retry(&message.id);
+                        next = follow_up;
+                    }
+                    Err(error) => {
+                        let issue = match &error {
+                            Error::Rpc(status) if status.code() == Code::Unauthenticated => {
+                                DeliveryIssue::PeerChanged
+                            }
+                            Error::Writer(WriterError::Rejected(_)) => {
+                                DeliveryIssue::PolicyRejected
+                            }
+                            _ => DeliveryIssue::ResponseUnknown,
+                        };
+                        let _ = self.attention(&id, issue).await;
+                        self.report_error(&error);
+                        self.retry(&id);
+                    }
                 }
             }
         }
@@ -375,7 +389,7 @@ impl Dispatcher {
         self.query_tick().await?;
         Ok(())
     }
-    async fn send(&mut self, message: &Id) -> Result<bool, Error> {
+    async fn send(&mut self, message: &Id) -> Result<(bool, Option<Id>), Error> {
         let Reply::DeliveryPlan(plan) = self
             .call(Command::PlanDelivery {
                 identity: self.identity.clone(),
@@ -385,6 +399,7 @@ impl Dispatcher {
         else {
             return Err(Error::Protocol("delivery plan reply"));
         };
+        let mut follow_up = None;
         match &plan.payload {
             Delivery::Arm {
                 attempt,
@@ -473,7 +488,7 @@ impl Dispatcher {
                         Err(error) if error.code() == Code::NotFound => {
                             self.attention(message, DeliveryIssue::RemoteNotFound)
                                 .await?;
-                            return Ok(false);
+                            return Ok((false, None));
                         }
                         Err(error) => return Err(error.into()),
                     }
@@ -485,17 +500,20 @@ impl Dispatcher {
                     receipt,
                 })
                 .await?;
+                if prepared && matches!(plan.payload, Delivery::Prepare { .. }) {
+                    follow_up = Some(authorization_delivery_id(work.operation.id()));
+                }
                 if prepared && matches!(plan.payload, Delivery::Authorize { .. }) {
                     // An entered authorization is not replayed with its old grant/permit.
                     self.attention(message, DeliveryIssue::ReauthorizationRequired)
                         .await?;
-                    return Ok(false);
+                    return Ok((false, None));
                 }
             }
         }
         self.report
             .send_modify(|r| r.delivered = r.delivered.saturating_add(1));
-        Ok(true)
+        Ok((true, follow_up))
     }
     async fn reconcile(&self, message: &Id, work: &Work) -> Result<(), Error> {
         let receipt = self.client.work_receipt(work).await?;
