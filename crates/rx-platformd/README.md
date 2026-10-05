@@ -132,6 +132,19 @@ usual restart invalidation to the restored cells. Semantics:
 
 The same P image includes `rx-package-store`. It verifies/stores signed packages from pinned local policy and an import root, and revalidates them under current policy. This explicit administration tool is separate from default daemon startup and does not modify cell ledgers, approvals, or activation. Configuration, volumes, and failure/rerun semantics are in the [package storage specification](../rx-package/STORE.md).
 
+It can also prepare an existing qualification report's canonical signing input offline:
+
+```sh
+rx-package-store qualification-signing-request REPORT_JSON KEY_ID NEW_REQUEST_JSON
+```
+
+This delegates to the existing report digest/signing-message definition. The output contains
+the message bytes as hex, the report/message digests and `activation_authorized=false`.
+It neither holds a private key nor signs, verifies the report's factual claims, uploads it,
+or grants qualification. Use the existing external signer and review/activation APIs;
+their current role, policy, evidence and context checks still apply. Existing output files
+are never overwritten. This avoids a source-tree/test signing helper in external package work.
+
 Optional startup configuration `package_intake` can configure an online intake worker per user/cell. Configuration, currentness, and failure boundaries are in [intake acceptance](../rx-application/PACKAGE_INTAKE.md). The Store exclusively owns `packages` under the data directory and rechecks the policy file pin on each new acquisition.
 
 Supplying pinned verifier public keys/allowed validator materials in `package_intake.review_authority` activates the process review worker. It does not read private keys. Follow the [approval scope and startup configuration](../rx-application/PROCESS_REVIEW.md).
