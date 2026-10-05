@@ -24,10 +24,34 @@ fn main() {
 }
 fn run() -> Result<()> {
     let args = std::env::args().skip(1).collect::<Vec<_>>();
+    if matches!(args.as_slice(), [verb,_,_,_] if verb=="qualification-signing-request") {
+        use std::io::Write;
+        let report: rx_application::requalification::Report =
+            policy::read(std::path::Path::new(&args[1]))?;
+        let key = Name::new(&args[2])?;
+        let message = report.signing_message(&key)?;
+        let request = serde_json::json!({
+            "schema":"rx.qualification-report-signing-request.v1", "key":key,
+            "report_digest":report.digest()?, "message_digest":rx_package::content_digest(&message),
+            "message_hex":message.iter().map(|byte|format!("{byte:02x}")).collect::<String>(),
+            "activation_authorized":false
+        });
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&args[3])?;
+        file.write_all(&rx_domain::canonical::bytes(&request)?)?;
+        file.sync_all()?;
+        println!(
+            "{}",
+            serde_json::json!({"status":"QUALIFICATION_REPORT_SIGNATURE_REQUIRED","report_digest":report.digest()?,"activation_authorized":false})
+        );
+        return Ok(());
+    }
     let importing = matches!(args.as_slice(), [verb,_,_] if verb=="import");
     let verifying = matches!(args.as_slice(), [verb,_,_,_] if verb=="verify");
     if !importing && !verifying {
-        return Err("usage: rx-package-store import ABSOLUTE_CONFIG RELATIVE_PACKAGE | verify ABSOLUTE_CONFIG MANIFEST_SHA256 SIGNATURE_SHA256".into());
+        return Err("usage: rx-package-store qualification-signing-request REPORT KEY_ID OUT | import ABSOLUTE_CONFIG RELATIVE_PACKAGE | verify ABSOLUTE_CONFIG MANIFEST_SHA256 SIGNATURE_SHA256".into());
     }
     let config_path = PathBuf::from(&args[1]);
     if !config_path.is_absolute() {
