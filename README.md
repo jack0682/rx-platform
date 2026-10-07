@@ -1,5 +1,10 @@
 # RX Platform
 
+> **Development has moved to [RobotTransformation](https://github.com/jack0682/RobotTransformation).**
+> New product and documentation work belongs in that repository. Development here has ended.
+> This repository preserves its original history, tags and existing references; the instructions below describe the legacy source tree.
+> This move does not accept the preserved CP2 Run or authorize changes to its environment or physical equipment.
+
 The [local simulation skill service](crates/rx-api/SOFTWARE_SKILLS.md) reuses RX's
 application rules, state writer, storage and Operation model for authored Python
 computations. Its installer and execution worker are provided by rx-solutions.
