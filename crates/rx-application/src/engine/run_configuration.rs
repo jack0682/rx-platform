@@ -93,6 +93,7 @@ mod tests {
             size_bytes: Counter(1),
         };
         let cfg = CellConfiguration {
+            execution: None,
             process: None,
             id: name("cell/a"),
             environment: Environment::Simulation,

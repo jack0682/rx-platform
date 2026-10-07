@@ -1,30 +1,57 @@
 //! One bounded coordinator per authenticated Host; native operation replay rules are unchanged.
 use crate::HostClient;
+use rx_application::configuration_dispatch::{Observation, Request};
 use rx_application::{
     Identity,
     configuration_dispatch::{CellProjection, Emission, Issue, Phase, Task},
 };
-use rx_domain::{host_configuration::Observation, types::*};
+use rx_domain::host_configuration::Observation as LegacyObservation;
+use rx_domain::types::*;
+use rx_process_contract::execution_v2::host_configuration as execution;
 use rx_runtime::application::{ApplicationPort, Command, Reply};
 use std::sync::Arc;
 type Error = Box<dyn std::error::Error + Send + Sync>;
 #[tonic::async_trait]
 pub trait Transport: Send + Sync {
     fn host(&self) -> &Name;
-    async fn inspect(&self) -> Result<Observation, tonic::Status>;
+    async fn inspect_execution(&self) -> Result<execution::Observation, tonic::Status> {
+        Err(tonic::Status::unimplemented("Host v2 transport required"))
+    }
+    async fn lookup_execution(&self, _: &Id) -> Result<execution::Observation, tonic::Status> {
+        Err(tonic::Status::unimplemented("Host v2 transport required"))
+    }
+    async fn apply_execution(
+        &self,
+        _: &execution::Request,
+    ) -> Result<execution::Observation, tonic::Status> {
+        Err(tonic::Status::unimplemented("Host v2 transport required"))
+    }
+    async fn inspect(&self) -> Result<LegacyObservation, tonic::Status>;
     async fn open(&self, cells: &[CellProjection], clock: &str) -> Result<(), tonic::Status>;
-    async fn lookup(&self, id: &Id) -> Result<Observation, tonic::Status>;
+    async fn lookup(&self, id: &Id) -> Result<LegacyObservation, tonic::Status>;
     async fn apply(
         &self,
         request: &rx_domain::host_configuration::Request,
-    ) -> Result<Observation, tonic::Status>;
+    ) -> Result<LegacyObservation, tonic::Status>;
 }
 #[tonic::async_trait]
 impl Transport for HostClient {
+    async fn inspect_execution(&self) -> Result<execution::Observation, tonic::Status> {
+        self.inspect_execution_configuration().await
+    }
+    async fn lookup_execution(&self, id: &Id) -> Result<execution::Observation, tonic::Status> {
+        self.lookup_execution_configuration(id).await
+    }
+    async fn apply_execution(
+        &self,
+        r: &execution::Request,
+    ) -> Result<execution::Observation, tonic::Status> {
+        self.accept_execution_configuration(r).await
+    }
     fn host(&self) -> &Name {
         &self.host_id
     }
-    async fn inspect(&self) -> Result<Observation, tonic::Status> {
+    async fn inspect(&self) -> Result<LegacyObservation, tonic::Status> {
         self.inspect_process_configuration().await
     }
     async fn open(&self, cells: &[CellProjection], clock: &str) -> Result<(), tonic::Status> {
@@ -34,13 +61,13 @@ impl Transport for HostClient {
         }
         Ok(())
     }
-    async fn lookup(&self, id: &Id) -> Result<Observation, tonic::Status> {
+    async fn lookup(&self, id: &Id) -> Result<LegacyObservation, tonic::Status> {
         self.lookup_process_configuration(id).await
     }
     async fn apply(
         &self,
         r: &rx_domain::host_configuration::Request,
-    ) -> Result<Observation, tonic::Status> {
+    ) -> Result<LegacyObservation, tonic::Status> {
         self.accept_process_configuration(r).await
     }
 }
@@ -197,7 +224,11 @@ impl Coordinator {
             }
             if task.phase == Phase::AwaitingSnapshot {
                 let started = self.now().await?;
-                let observation = match self.transport.inspect().await {
+                let observation = match if task.execution_policies.is_empty() {
+                    self.transport.inspect().await.map(Into::into)
+                } else {
+                    self.transport.inspect_execution().await.map(Into::into)
+                } {
                     Ok(v) => v,
                     Err(_) => {
                         self.issue(&task.id, Issue::TransportUnavailable).await?;
@@ -228,7 +259,14 @@ impl Coordinator {
             let mut retry = false;
             if task.phase == Phase::SendEntered {
                 let read_started = self.now().await?;
-                let observation = match self.transport.lookup(&task.id).await {
+                let observation = match if task.execution_policies.is_empty() {
+                    self.transport.lookup(&task.id).await.map(Into::into)
+                } else {
+                    self.transport
+                        .lookup_execution(&task.id)
+                        .await
+                        .map(Into::into)
+                } {
                     Ok(v) => v,
                     Err(_) => {
                         self.issue(&task.id, Issue::TransportUnavailable).await?;
@@ -275,7 +313,10 @@ impl Coordinator {
             };
             if let Emission::Send { request } = emission {
                 let read_started = self.now().await?;
-                match self.transport.apply(&request).await {
+                match match &*request {
+                    Request::V1(r) => self.transport.apply(r).await.map(Into::into),
+                    Request::V2(r) => self.transport.apply_execution(r).await.map(Into::into),
+                } {
                     Ok(v) => {
                         self.record(&task.id, v, read_started).await?;
                     }
@@ -344,19 +385,19 @@ mod tests {
         fn host(&self) -> &Name {
             &self.0
         }
-        async fn inspect(&self) -> Result<Observation, tonic::Status> {
+        async fn inspect(&self) -> Result<LegacyObservation, tonic::Status> {
             panic!("no task authorized")
         }
         async fn open(&self, _: &[CellProjection], _: &str) -> Result<(), tonic::Status> {
             panic!("no task authorized")
         }
-        async fn lookup(&self, _: &Id) -> Result<Observation, tonic::Status> {
+        async fn lookup(&self, _: &Id) -> Result<LegacyObservation, tonic::Status> {
             panic!("no task authorized")
         }
         async fn apply(
             &self,
             _: &rx_domain::host_configuration::Request,
-        ) -> Result<Observation, tonic::Status> {
+        ) -> Result<LegacyObservation, tonic::Status> {
             panic!("no task authorized")
         }
     }
@@ -426,8 +467,8 @@ mod binding_reader_tests {
             ticks_ns: Counter(100),
         }
     }
-    fn observation() -> Observation {
-        Observation {
+    fn observation() -> LegacyObservation {
+        LegacyObservation {
             schema: n("rx.host-process-configuration-observation.v1"),
             snapshot: data::Snapshot {
                 schema: n("rx.host-process-configuration-snapshot.v1"),
@@ -551,7 +592,7 @@ mod binding_reader_tests {
         fn host(&self) -> &Name {
             &self.host
         }
-        async fn inspect(&self) -> Result<Observation, tonic::Status> {
+        async fn inspect(&self) -> Result<LegacyObservation, tonic::Status> {
             self.reads.fetch_add(1, Ordering::SeqCst);
             if self.fail {
                 Err(tonic::Status::unavailable("test reply lost"))
@@ -562,10 +603,10 @@ mod binding_reader_tests {
         async fn open(&self, _: &[CellProjection], _: &str) -> Result<(), tonic::Status> {
             panic!("no open for metadata reads")
         }
-        async fn lookup(&self, _: &Id) -> Result<Observation, tonic::Status> {
+        async fn lookup(&self, _: &Id) -> Result<LegacyObservation, tonic::Status> {
             panic!("no configuration lookup")
         }
-        async fn apply(&self, _: &data::Request) -> Result<Observation, tonic::Status> {
+        async fn apply(&self, _: &data::Request) -> Result<LegacyObservation, tonic::Status> {
             panic!("no mutation")
         }
     }

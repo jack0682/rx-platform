@@ -38,6 +38,11 @@ pub struct Catalog {
 }
 #[derive(Clone, Debug, Serialize)]
 pub struct Work {
+    /// Current P-owned resource state, observed in the same read transaction.
+    pub resources: Vec<Versioned<crate::Resource>>,
+    pub reconciliation: Option<crate::ReconciliationRequest>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub execution: Option<Box<rx_process_contract::execution_v2::OperationBinding>>,
     pub operation: Operation,
     pub part: Option<Id>,
     pub slot: Name,

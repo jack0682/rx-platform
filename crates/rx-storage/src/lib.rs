@@ -1,6 +1,7 @@
 //! Local SQLite adapter. One process owns the lock and one worker owns this connection.
 //! No network or native-device calls may be made from a transaction callback.
 mod ownership;
+mod sealing;
 pub use ownership::ExclusiveFileLock;
 
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
@@ -62,12 +63,33 @@ fn prefix_range(prefix: &str) -> Result<(&str, String)> {
 }
 
 impl SqliteRepository {
+    /// Actual on-disk location for an explicitly enrolled local runtime; not a remote attestation.
+    pub fn canonical_path(&self) -> Result<std::path::PathBuf> {
+        let path = self
+            .connection()?
+            .path()
+            .ok_or_else(|| integrity("on-disk database required"))?;
+        std::fs::canonicalize(path).map_err(unavailable)
+    }
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
-        let path = path.as_ref();
+        Self::open_mode(path.as_ref(), false)
+    }
+    /// Existing sealed source only. Never creates or upgrades an unsealed source database.
+    pub fn open_sealed_existing(path: impl AsRef<Path>) -> Result<Self> {
+        Self::open_mode(path.as_ref(), true)
+    }
+    fn open_mode(path: &Path, sealed: bool) -> Result<Self> {
         let parent = path
             .parent()
             .ok_or_else(|| StoreError::Invalid("database needs parent path".into()))?;
-        std::fs::create_dir_all(parent).map_err(unavailable)?;
+        if sealed {
+            let meta = std::fs::symlink_metadata(path).map_err(unavailable)?;
+            if !meta.is_file() || meta.file_type().is_symlink() || meta.len() == 0 {
+                return Err(integrity("existing regular sealed source required"));
+            }
+        } else {
+            std::fs::create_dir_all(parent).map_err(unavailable)?;
+        }
         let ownership = ExclusiveFileLock::acquire(path.with_extension("writer.lock"))?;
         // Version pin alone is insufficient; check the SQLite library actually linked.
         if rusqlite::version_number() < 3_051_003 {
@@ -75,7 +97,21 @@ impl SqliteRepository {
                 "SQLite with WAL-reset fix (3.51.3+) required".into(),
             ));
         }
-        let connection = Connection::open(path).map_err(unavailable)?;
+        let connection = if sealed {
+            Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE)
+        } else {
+            Connection::open(path)
+        }
+        .map_err(unavailable)?;
+        if sealed {
+            let version: i64 = connection
+                .query_row("PRAGMA user_version", [], |r| r.get(0))
+                .map_err(unavailable)?;
+            if !matches!(version, 7..=9) {
+                return Err(integrity("source is not a sealed reader format"));
+            }
+            sealing::verify(&connection)?;
+        }
         let repository = Self {
             connection: Some(connection),
             ownership: Some(ownership),
@@ -103,7 +139,7 @@ impl SqliteRepository {
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .map_err(unavailable)?;
-        if version > 6 {
+        if version > 10 {
             return Err(StoreError::Unavailable(
                 "newer store schema: downgrade refused".into(),
             ));
@@ -137,6 +173,9 @@ impl SqliteRepository {
             connection
                 .execute_batch(include_str!("../migrations/0006.sql"))
                 .map_err(unavailable)?;
+        }
+        if version == 7 || (matches!(version, 8..=10) && sealing::present(connection)?) {
+            sealing::verify(connection)?;
         }
         Ok(())
     }
@@ -411,11 +450,96 @@ struct SqliteTransaction<'a, 'b> {
     creator: u32,
 }
 impl SqliteTransaction<'_, '_> {
+    fn promote_reader(&self, minimum: i64) -> Result<()> {
+        self.check_process()?;
+        let current: i64 = self
+            .transaction
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .map_err(unavailable)?;
+        if !(6..=10).contains(&current) {
+            return Err(integrity("unsupported reader promotion"));
+        }
+        self.transaction
+            .pragma_update(None, "user_version", current.max(minimum))
+            .map_err(unavailable)
+    }
     fn check_process(&self) -> Result<()> {
         Ok(ownership::check_creator(self.creator)?)
     }
 }
 impl rx_ports::Transaction for SqliteTransaction<'_, '_> {
+    fn require_workflow_execution_reader(&mut self) -> Result<()> {
+        self.promote_reader(10)
+    }
+
+    fn require_resident_execution_reader(&mut self) -> Result<()> {
+        self.promote_reader(9)
+    }
+
+    fn insert_archive(&mut self, key: &Name, document: &Document) -> Result<Record> {
+        self.put(key, None, document)
+    }
+    fn scan_page(
+        &mut self,
+        prefix: &str,
+        after: Option<&Name>,
+        limit: usize,
+    ) -> Result<Vec<Record>> {
+        self.check_process()?;
+        if !(1..=128).contains(&limit) || after.is_some_and(|k| !k.as_str().starts_with(prefix)) {
+            return Err(StoreError::Invalid("bounded prefix cursor/limit".into()));
+        }
+        let (lower, upper) = prefix_range(prefix)?;
+        let mut statement=self.transaction.prepare("SELECT key,revision,document FROM entities WHERE key>=?1 AND key<?2 AND (?3 IS NULL OR key>?3) ORDER BY key LIMIT ?4").map_err(unavailable)?;
+        let values = statement
+            .query_map(
+                params![lower, upper, after.map(Name::as_str), limit as i64],
+                |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, i64>(1)?,
+                        r.get::<_, Vec<u8>>(2)?,
+                    ))
+                },
+            )
+            .map_err(unavailable)?;
+        values
+            .map(|v| {
+                let (k, r, d) = v.map_err(unavailable)?;
+                Ok(Record {
+                    key: Name::new(k).map_err(integrity)?,
+                    revision: counter(r)?,
+                    document: decode(d)?,
+                })
+            })
+            .collect()
+    }
+    fn require_component_intake_reader(&mut self) -> Result<()> {
+        self.promote_reader(8)
+    }
+    fn insert_revision(
+        &mut self,
+        key: &Name,
+        revision: Counter,
+        document: &Document,
+    ) -> Result<Record> {
+        self.check_process()?;
+        revision.nonzero("import revision").map_err(integrity)?;
+        if self.get(key)?.is_some() {
+            return Err(StoreError::RevisionConflict(key.to_string()));
+        }
+        self.transaction
+            .execute(
+                "INSERT INTO entities(key,revision,document) VALUES(?1,?2,?3)",
+                params![key.as_str(), signed(revision)?, encode(document)?],
+            )
+            .map_err(unavailable)?;
+        Ok(Record {
+            key: key.clone(),
+            revision,
+            document: document.clone(),
+        })
+    }
     fn control_head(&mut self) -> Result<Counter> {
         self.check_process()?;
         read_head(self.transaction, "control_events")
@@ -820,3 +944,9 @@ mod scan_tests {
 }
 
 pub mod mailbox;
+
+impl rx_ports::SealedRepository for SqliteRepository {
+    fn sealed_namespaces(&self) -> Result<Vec<Name>> {
+        self.sealed_prefixes()
+    }
+}

@@ -33,7 +33,7 @@ fn prepared_materials(
         .unwrap();
     (p, job, release, c)
 }
-fn fences(f: &mut Fixture, c: &process_change::Change) {
+pub(super) fn fences(f: &mut Fixture, c: &process_change::Change) {
     for (i, fence) in c.preparation.as_ref().unwrap().fences.iter().enumerate() {
         let host = f.hosts.iter().find(|h| h.principal == fence.host).unwrap();
         let reg = f.registrations.iter().find(|h| h.id == fence.host).unwrap();
@@ -63,7 +63,7 @@ fn task(f: &mut Fixture, index: usize) -> Task {
         .unwrap()
         .remove(0)
 }
-fn inspect(t: &Task) -> wire::Observation {
+pub(super) fn inspect(t: &Task) -> wire::Observation {
     wire::Observation {
         schema: name("rx.host-process-configuration-observation.v1"),
         snapshot: wire::Snapshot {
@@ -101,9 +101,9 @@ fn bind(f: &mut Fixture, index: usize) -> Task {
         .bind_host_configuration(&f.hosts[index], &t.id, inspect(&t), f.clock.now())
         .unwrap()
 }
-fn applied(t: &Task) -> wire::Observation {
+pub(super) fn applied(t: &Task) -> wire::Observation {
     let mut o = inspect(t);
-    let r = t.request.clone().unwrap();
+    let r = t.request.as_ref().unwrap().context().clone();
     for cell in &mut o.snapshot.cells {
         let target = r.cells.iter().find(|c| c.cell == cell.cell).unwrap();
         cell.applied = Some(wire::AppliedContext {
@@ -815,7 +815,7 @@ fn configuration_apply_rejects_expired_host_read_even_with_a_fresh_release_sessi
 }
 
 #[path = "requalification_tests.rs"]
-mod requalification_tests;
+pub(crate) mod requalification_tests;
 
 #[path = "process_revalidation_tests.rs"]
 mod process_revalidation_tests;

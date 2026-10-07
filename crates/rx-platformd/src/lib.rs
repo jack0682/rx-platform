@@ -337,8 +337,18 @@ pub async fn serve<C: Clock + 'static>(
             loaded.host_links.clone(),
         )?);
         recovery.register().await?;
-        let https = rx_api::terminal_https::TerminalHttps::new_with_host_recovery(
+        handle
+            .call(Command::ConfigureResidentSupervisors(
+                config.resident_supervisors.clone(),
+            ))
+            .await?;
+        let component_intake = rx_runtime::component_intake::Service::configure(
             Arc::new(handle.clone()),
+            config.registration_sources.clone(),
+        )
+        .await?;
+        let https = rx_api::terminal_https::TerminalHttps::new_with_host_recovery(
+            component_intake,
             loaded.credentials,
             rx_api::terminal_https::HttpsPolicy::new(&config.https.origin)?,
             loaded.https_tls,

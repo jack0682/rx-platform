@@ -19,7 +19,19 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                 &run.cell,
             )?;
             let configuration = run_configuration::read(tx, &run, &cell.configuration)?;
-            let admission_allowed = match active_run(tx, &cell, &run, identity, meta, &now) {
+            let admission_allowed = match active_run(tx, &cell, &run, identity, meta, &now)
+                .and_then(|()| {
+                    execution_inventory::production_current(
+                        tx,
+                        ProcessingContext {
+                            identity,
+                            meta,
+                            now: &now,
+                        },
+                        &cell,
+                        &run,
+                    )
+                }) {
                 Ok(()) => true,
                 Err(StoreError::Rejected(_)) => false,
                 Err(e) => return Err(e),

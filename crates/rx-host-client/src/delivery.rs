@@ -58,6 +58,43 @@ pub trait DeliveryTransport: Send + Sync {
         work: &Work,
         permit: &Permit,
     ) -> Result<HostReceipt, Status>;
+    async fn prepare_execution(
+        &self,
+        _key: &Id,
+        _work: &Work,
+        _permit: &Permit,
+        _parameters: &[u8],
+    ) -> Result<HostReceipt, Status> {
+        Err(Status::unimplemented(
+            "explicit execution v2 transport required",
+        ))
+    }
+    async fn authorize_execution(
+        &self,
+        _key: &Id,
+        _work: &Work,
+        _permit: &Permit,
+    ) -> Result<HostReceipt, Status> {
+        Err(Status::unimplemented(
+            "explicit execution v2 transport required",
+        ))
+    }
+    async fn work_receipt(&self, work: &Work) -> Result<HostReceipt, Status> {
+        if work.execution.is_some() {
+            return Err(Status::unimplemented(
+                "explicit execution v2 query required",
+            ));
+        }
+        self.receipt(work.operation.id()).await
+    }
+    async fn work_evidence(&self, work: &Work) -> Result<EvidenceBatch, Status> {
+        if work.execution.is_some() {
+            return Err(Status::unimplemented(
+                "explicit execution v2 query required",
+            ));
+        }
+        self.reconcile(work.operation.id()).await
+    }
     async fn receipt(&self, operation: &Id) -> Result<HostReceipt, Status>;
     async fn reconcile(&self, operation: &Id) -> Result<EvidenceBatch, Status>;
     async fn handover(&self, operation: &Id) -> Result<Vec<HandoverObservation>, Status>;
@@ -108,6 +145,29 @@ impl DeliveryTransport for HostClient {
         permit: &Permit,
     ) -> Result<HostReceipt, Status> {
         HostClient::authorize(self, key, work, permit).await
+    }
+    async fn prepare_execution(
+        &self,
+        key: &Id,
+        work: &Work,
+        permit: &Permit,
+        parameters: &[u8],
+    ) -> Result<HostReceipt, Status> {
+        HostClient::prepare_execution(self, key, work, permit, parameters).await
+    }
+    async fn authorize_execution(
+        &self,
+        key: &Id,
+        work: &Work,
+        permit: &Permit,
+    ) -> Result<HostReceipt, Status> {
+        HostClient::authorize_execution(self, key, work, permit).await
+    }
+    async fn work_receipt(&self, work: &Work) -> Result<HostReceipt, Status> {
+        HostClient::work_receipt(self, work).await
+    }
+    async fn work_evidence(&self, work: &Work) -> Result<EvidenceBatch, Status> {
+        HostClient::work_evidence(self, work).await
     }
     async fn receipt(&self, operation: &Id) -> Result<HostReceipt, Status> {
         HostClient::receipt(self, operation).await
@@ -269,25 +329,39 @@ impl Dispatcher {
             if host != &self.identity.principal || self.delayed(&message.id) {
                 continue;
             }
-            match self.send(&message.id).await {
-                Ok(done) => {
-                    if done {
-                        self.retries.remove(&message.id);
-                    } else {
-                        self.retry(&message.id);
-                    }
+            let mut next = Some(message.id.clone());
+            // Prepare and its newly recorded Authorize share the existing finite
+            // permit window. Do not spend that window waiting for another scan.
+            // send() obtains a fresh writer plan for both phases; an uncertain send
+            // still performs receipt lookup only. At most one follow-up is drained.
+            for _ in 0..2 {
+                let Some(id) = next.take() else { break };
+                if self.delayed(&id) {
+                    break;
                 }
-                Err(error) => {
-                    let issue = match &error {
-                        Error::Rpc(status) if status.code() == Code::Unauthenticated => {
-                            DeliveryIssue::PeerChanged
+                match self.send(&id).await {
+                    Ok((done, follow_up)) => {
+                        if done {
+                            self.retries.remove(&id);
+                        } else {
+                            self.retry(&id);
                         }
-                        Error::Writer(WriterError::Rejected(_)) => DeliveryIssue::PolicyRejected,
-                        _ => DeliveryIssue::ResponseUnknown,
-                    };
-                    let _ = self.attention(&message.id, issue).await;
-                    self.report_error(&error);
-                    self.retry(&message.id);
+                        next = follow_up;
+                    }
+                    Err(error) => {
+                        let issue = match &error {
+                            Error::Rpc(status) if status.code() == Code::Unauthenticated => {
+                                DeliveryIssue::PeerChanged
+                            }
+                            Error::Writer(WriterError::Rejected(_)) => {
+                                DeliveryIssue::PolicyRejected
+                            }
+                            _ => DeliveryIssue::ResponseUnknown,
+                        };
+                        let _ = self.attention(&id, issue).await;
+                        self.report_error(&error);
+                        self.retry(&id);
+                    }
                 }
             }
         }
@@ -315,7 +389,7 @@ impl Dispatcher {
         self.query_tick().await?;
         Ok(())
     }
-    async fn send(&mut self, message: &Id) -> Result<bool, Error> {
+    async fn send(&mut self, message: &Id) -> Result<(bool, Option<Id>), Error> {
         let Reply::DeliveryPlan(plan) = self
             .call(Command::PlanDelivery {
                 identity: self.identity.clone(),
@@ -325,6 +399,7 @@ impl Dispatcher {
         else {
             return Err(Error::Protocol("delivery plan reply"));
         };
+        let mut follow_up = None;
         match &plan.payload {
             Delivery::Arm {
                 attempt,
@@ -385,17 +460,35 @@ impl Dispatcher {
                 let receipt = if plan.first_emission {
                     match plan.payload {
                         Delivery::Prepare { .. } => {
-                            self.client.prepare(message, work, permit).await?
+                            if work.execution.is_some() {
+                                self.client
+                                    .prepare_execution(
+                                        message,
+                                        work,
+                                        permit,
+                                        plan.execution_parameters
+                                            .as_deref()
+                                            .ok_or(Error::Protocol("v2 parameters missing"))?,
+                                    )
+                                    .await?
+                            } else {
+                                self.client.prepare(message, work, permit).await?
+                            }
+                        }
+                        _ if work.execution.is_some() => {
+                            self.client
+                                .authorize_execution(message, work, permit)
+                                .await?
                         }
                         _ => self.client.authorize(message, work, permit).await?,
                     }
                 } else {
-                    match self.client.receipt(work.operation.id()).await {
+                    match self.client.work_receipt(work).await {
                         Ok(receipt) => receipt,
                         Err(error) if error.code() == Code::NotFound => {
                             self.attention(message, DeliveryIssue::RemoteNotFound)
                                 .await?;
-                            return Ok(false);
+                            return Ok((false, None));
                         }
                         Err(error) => return Err(error.into()),
                     }
@@ -407,20 +500,23 @@ impl Dispatcher {
                     receipt,
                 })
                 .await?;
+                if prepared && matches!(plan.payload, Delivery::Prepare { .. }) {
+                    follow_up = Some(authorization_delivery_id(work.operation.id()));
+                }
                 if prepared && matches!(plan.payload, Delivery::Authorize { .. }) {
                     // An entered authorization is not replayed with its old grant/permit.
                     self.attention(message, DeliveryIssue::ReauthorizationRequired)
                         .await?;
-                    return Ok(false);
+                    return Ok((false, None));
                 }
             }
         }
         self.report
             .send_modify(|r| r.delivered = r.delivered.saturating_add(1));
-        Ok(true)
+        Ok((true, follow_up))
     }
     async fn reconcile(&self, message: &Id, work: &Work) -> Result<(), Error> {
-        let receipt = self.client.receipt(work.operation.id()).await?;
+        let receipt = self.client.work_receipt(work).await?;
         if receipt.state == ReceiptState::Prepared {
             return Ok(());
         }
@@ -430,7 +526,7 @@ impl Dispatcher {
             receipt,
         })
         .await?;
-        let batch = self.client.reconcile(work.operation.id()).await?;
+        let batch = self.client.work_evidence(work).await?;
         if !batch.records.is_empty() {
             self.call(Command::IngestEvidence {
                 identity: self.identity.clone(),

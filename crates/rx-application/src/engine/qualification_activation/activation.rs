@@ -77,8 +77,9 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             if let Some(b) = prior(tx, &scope, fp, BATCH)? {
                 return Ok(b);
             }
+            let limit = requalification::ticket_limit(&requalification::policy(tx, meta)?);
             if b.revision != input.expected
-                || now.age_ns(&t.issued).is_none_or(|age| age >= TICKET_TTL_NS)
+                || now.age_ns(&t.issued).is_none_or(|age| age >= limit)
                 || t.registration != b.registration
             {
                 return reject(Reject::StaleRevision);

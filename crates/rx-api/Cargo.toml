@@ -18,7 +18,7 @@ rx-protocol-adapter = { path = "../rx-protocol-adapter" }
 tonic.workspace = true
 tokio-stream = {version="0.1",features=["net"]}
 axum = { version = "0.8", features = ["json", "tokio", "http1"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "time", "sync"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "time", "sync", "process", "io-util"] }
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
@@ -47,3 +47,6 @@ workspace = true
 [[bin]]
 name = "rx-platform-local"
 path = "src/bin/local.rs"
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+rustix = {version="=1.1.4",features=["time"]}

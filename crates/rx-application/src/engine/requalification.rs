@@ -123,6 +123,7 @@ pub(super) fn current(tx: &mut dyn Transaction, meta: &Installation, j: &q::Job)
     device_restrictions::current(tx, meta, j)?;
     for t in &j.request.cells {
         let (rev, cell): (_, Cell) = load(tx, "cell", &t.profile.cell, CELL)?;
+        derived_current(tx, meta, &cell.configuration)?;
         if rev != t.expected_revision
             || cell.epoch != t.epoch
             || cell.scope_epochs != t.scopes
@@ -136,6 +137,36 @@ pub(super) fn current(tx: &mut dyn Transaction, meta: &Installation, j: &q::Job)
         }
     }
     Ok(())
+}
+pub(super) fn derived_current(
+    tx: &mut dyn Transaction,
+    meta: &Installation,
+    configuration: &CellConfiguration,
+) -> Result<()> {
+    let Some(binding) = &configuration.execution else {
+        return Ok(());
+    };
+    execution_configuration::verify(tx, configuration)?;
+    let (_, publication): (_, crate::workflow_publication::Publication) = load(
+        tx,
+        "workflowpublication",
+        &binding.publication.id,
+        "rx.workflow-publication.v2",
+    )?;
+    let current = package_intake::current(tx, meta)?
+        .ok_or(StoreError::Rejected(Reject::QualificationRequired))?;
+    // Store identity persists across ordinary restarts; replacement/revocation is not continuity.
+    if current != publication.registration {
+        return reject(Reject::StaleRevision);
+    }
+    Ok(())
+}
+pub(super) fn ticket_limit(policy: &q::Policy) -> u64 {
+    if policy.schema.as_str() == q::DERIVED_POLICY {
+        q::DERIVED_TICKET_TTL_NS
+    } else {
+        TICKET_TTL_NS
+    }
 }
 pub(super) fn fences_confirmed(tx: &mut dyn Transaction, j: &q::Job) -> Result<bool> {
     let acks = tx.scan("fenceack/")?;
@@ -171,6 +202,22 @@ pub(super) fn latest(tx: &mut dyn Transaction, id: &Id) -> Result<Option<q::Vers
         .transpose()
 }
 pub(super) fn version_digest(v: &q::Version) -> Result<Digest> {
+    if !v.derived.is_empty() {
+        return canonical::digest(
+            "RX-REQUALIFICATION-VERSION-v2",
+            &(
+                &v.review,
+                v.revision,
+                &v.report,
+                &v.signature,
+                v.ready_for_review,
+                &v.recorded_by,
+                &v.recorded_at,
+                &v.derived,
+            ),
+        )
+        .map_err(domain_error);
+    }
     canonical::digest(
         "RX-REQUALIFICATION-VERSION-v1",
         &(
@@ -185,86 +232,15 @@ pub(super) fn version_digest(v: &q::Version) -> Result<Digest> {
     )
     .map_err(domain_error)
 }
-const CHUNK: usize = 256 * 1024;
-#[derive(serde::Serialize, serde::Deserialize)]
-struct Blob {
-    size: Counter,
-    chunks: Vec<Digest>,
-}
+const BLOBS: crate::artifact_storage::BlobStore = crate::artifact_storage::BlobStore::new(
+    "qualification",
+    rx_process_contract::execution_v2::MAX_DEFINITION_BYTES,
+);
 fn put_blob(tx: &mut dyn Transaction, hash: Digest, bytes: &[u8]) -> Result<()> {
-    use base64::Engine as _;
-    let mut chunks = Vec::new();
-    for (index, part) in bytes.chunks(CHUNK).enumerate() {
-        chunks.push(rx_package::content_digest(part));
-        let k = key("qualificationchunk", (hash, Counter(index as u64)));
-        let d = doc(
-            "rx.internal.qualification-chunk.v1",
-            &base64::engine::general_purpose::STANDARD.encode(part),
-        )?;
-        if let Some(old) = tx.get(&k)? {
-            if old.document != d {
-                return Err(StoreError::Integrity(
-                    "qualification chunk collision".into(),
-                ));
-            }
-        } else {
-            tx.put(&k, None, &d)?;
-        }
-    }
-    let k = key("qualificationblob", hash);
-    let d = doc(
-        "rx.internal.qualification-blob.v1",
-        &Blob {
-            size: Counter(bytes.len() as u64),
-            chunks,
-        },
-    )?;
-    if let Some(old) = tx.get(&k)? {
-        if old.document != d {
-            return Err(StoreError::Integrity("qualification blob collision".into()));
-        }
-    } else {
-        tx.put(&k, None, &d)?;
-    }
-    Ok(())
+    BLOBS.put(tx, hash, bytes)
 }
 pub(super) fn read_blob(tx: &mut dyn Transaction, r: &ArtifactRef) -> Result<Vec<u8>> {
-    use base64::Engine as _;
-    let (_, blob): (_, Blob) = load(
-        tx,
-        "qualificationblob",
-        r.sha256,
-        "rx.internal.qualification-blob.v1",
-    )?;
-    if blob.size != r.size_bytes
-        || blob.size.0 == 0
-        || blob.size.0 > q::MAX_ARTIFACT
-        || blob.chunks.len() != blob.size.0.div_ceil(CHUNK as u64) as usize
-    {
-        return Err(StoreError::Integrity("qualification blob shape".into()));
-    }
-    let mut bytes = Vec::with_capacity(blob.size.0 as usize);
-    for (index, hash) in blob.chunks.iter().enumerate() {
-        let (_, s): (_, String) = load(
-            tx,
-            "qualificationchunk",
-            (r.sha256, Counter(index as u64)),
-            "rx.internal.qualification-chunk.v1",
-        )?;
-        let part = base64::engine::general_purpose::STANDARD
-            .decode(s)
-            .map_err(|_| StoreError::Integrity("qualification artifact encoding".into()))?;
-        if part.len() > CHUNK || rx_package::content_digest(&part) != *hash {
-            return Err(StoreError::Integrity("qualification chunk differs".into()));
-        }
-        bytes.extend(part);
-    }
-    if bytes.len() as u64 != r.size_bytes.0 || rx_package::content_digest(&bytes) != r.sha256 {
-        return Err(StoreError::Integrity(
-            "qualification artifact differs".into(),
-        ));
-    }
-    Ok(bytes)
+    BLOBS.read(tx, r)
 }
 impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
     pub fn configure_requalification(&mut self, p: Option<q::Policy>) -> Result<()> {
@@ -339,6 +315,7 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             let mut fences = Vec::new();
             for target in &a.cells {
                 let (rev, mut cell): (_, Cell) = load(tx, "cell", &target.cell, CELL)?;
+                derived_current(tx, meta, &cell.configuration)?;
                 check_revision(rev, input.expected_cells[&target.cell])?;
                 if process_change::config_ref(&cell.configuration)? != target.after
                     || cell.qualification.is_some()
@@ -485,7 +462,8 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                 return Ok(v);
             }
             current(tx, meta, &t.job)?;
-            if now.age_ns(&t.issued).is_none_or(|n| n >= TICKET_TTL_NS)
+            let limit = ticket_limit(&policy(tx, meta)?);
+            if now.age_ns(&t.issued).is_none_or(|n| n >= limit)
                 || p.verified.policy != t.policy
                 || latest(tx, &t.input.review)?.as_ref().map(|v| v.revision) != t.input.expected
             {
@@ -499,6 +477,7 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                 .expected
                 .map_or(Ok(Counter(1)), |r| r.increment().map_err(domain_error))?;
             let mut v = q::Version {
+                derived: p.verified.derived,
                 review: t.input.review.clone(),
                 revision: rev,
                 report: p.verified.report,
@@ -616,7 +595,8 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             }
             current(tx, meta, &t.job)?;
             let v = latest(tx, &t.input.review)?.ok_or(StoreError::Rejected(Reject::NotFound))?;
-            if now.age_ns(&t.issued).is_none_or(|a| a >= TICKET_TTL_NS)
+            let limit = ticket_limit(&policy(tx, meta)?);
+            if now.age_ns(&t.issued).is_none_or(|a| a >= limit)
                 || v.digest != t.version.digest
                 || v.revision != t.input.report_revision
                 || !v.ready_for_review
@@ -746,4 +726,25 @@ fn make_decision(
     )?;
     event(tx, "rx.event.requalification-decision.v1", &d)?;
     Ok(d)
+}
+
+#[cfg(test)]
+mod computation_deadline_tests {
+    use super::*;
+    #[test]
+    fn derived_ticket_extension_never_changes_legacy_deadlines() {
+        for (schema, expected) in [
+            ("rx.requalification-policy.v1", 30_000_000_000),
+            ("rx.requalification-policy.v2", 30_000_000_000),
+            (q::DERIVED_POLICY, 600_000_000_000),
+        ] {
+            // Selector-only unit test; issuance/activation tests exercise valid full policies.
+            let policy = q::Policy {
+                schema: name(schema),
+                profiles: vec![],
+                keys: vec![],
+            };
+            assert_eq!(ticket_limit(&policy), expected);
+        }
+    }
 }

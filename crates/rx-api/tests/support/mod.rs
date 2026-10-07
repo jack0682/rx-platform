@@ -18,6 +18,7 @@ pub fn configuration(cell: &str) -> CellConfiguration {
         expected: TypedValue::Boolean(true),
     };
     CellConfiguration {
+        execution: None,
         process: None,
         id: name(cell),
         environment: Environment::Simulation,

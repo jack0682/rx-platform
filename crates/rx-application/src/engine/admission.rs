@@ -201,17 +201,25 @@ pub(super) fn predecessors_done(
     Ok(())
 }
 
-pub(super) fn validate_configuration(c: &CellConfiguration) -> Result<()> {
+pub(crate) fn validate_configuration(c: &CellConfiguration) -> Result<()> {
     if let Some(process) = &c.process {
         rx_process_contract::validation::validate(process).map_err(StoreError::Invalid)?;
-        let encoded = canonical::bytes(process).map_err(domain_error)?;
-        if c.recipe.schema_id != process.schema || c.recipe.size_bytes.0 != encoded.len() as u64 {
-            return reject(Reject::InvalidInput);
-        }
-        if rx_process_contract::frontier::resolved_digest(process).map_err(StoreError::Invalid)?
-            != c.recipe.sha256
-        {
-            return reject(Reject::InvalidInput);
+        if let Some(plan) = execution_configuration::plan(c)? {
+            if plan.reference().map_err(StoreError::Invalid)? != c.recipe {
+                return reject(Reject::InvalidInput);
+            }
+        } else {
+            let encoded = canonical::bytes(process).map_err(domain_error)?;
+            if c.recipe.schema_id != process.schema || c.recipe.size_bytes.0 != encoded.len() as u64
+            {
+                return reject(Reject::InvalidInput);
+            }
+            if rx_process_contract::frontier::resolved_digest(process)
+                .map_err(StoreError::Invalid)?
+                != c.recipe.sha256
+            {
+                return reject(Reject::InvalidInput);
+            }
         }
         let mut required = BTreeMap::new();
         for node in rx_process_contract::validation::nodes(process) {
@@ -234,6 +242,9 @@ pub(super) fn validate_configuration(c: &CellConfiguration) -> Result<()> {
                 return reject(Reject::InvalidInput);
             }
         }
+    }
+    if c.execution.is_some() && c.process.is_none() {
+        return reject(Reject::InvalidInput);
     }
     if c.scopes.is_empty()
         || c.hosts.is_empty()
@@ -337,6 +348,55 @@ pub(super) fn domain_fact(spec: &FactSpec, f: &FactRecord) -> Fact {
         value: FactValue::Scalar(f.value.clone()),
         evidence_id: f.evidence_id.clone(),
     }
+}
+
+/// Shared quiescence boundary for qualification and explicit simulation stock changes.
+pub(super) fn quiet_cells(tx: &mut dyn Transaction, cells: &BTreeSet<Name>) -> Result<()> {
+    for row in tx.scan("run/")? {
+        let r: Run = decode(&row, RUN)?;
+        if cells.contains(&r.cell) && !matches!(r.state, RunState::Completed | RunState::Abandoned)
+        {
+            return reject(Reject::Busy);
+        }
+    }
+    let mut resources = BTreeSet::new();
+    for name in cells {
+        let (_, c): (_, Cell) = load(tx, "cell", name, CELL)?;
+        resources.extend(
+            c.configuration
+                .steps
+                .iter()
+                .flat_map(|s| s.intent.resource_set.iter().cloned()),
+        );
+    }
+    for row in tx.scan("work/")? {
+        let w: Work = decode(&row, WORK)?;
+        if cells.contains(&w.cell) {
+            resources.extend(w.intent.resource_set.iter().cloned());
+            if matches!(w.operation.outcome(), Outcome::None | Outcome::Unresolved)
+                || w.operation.integrity() == Integrity::Disputed
+            {
+                return reject(Reject::ContinuityUnproven);
+            }
+        }
+    }
+    for r in resources {
+        if let Some(row) = tx.get(&key("resource", &r))? {
+            let r: Resource = decode(&row, RESOURCE)?;
+            if r.holder.is_some() || r.quarantined {
+                return reject(Reject::Busy);
+            }
+        }
+    }
+    for row in tx.scan("case/")? {
+        let c: crate::intervention::Case = decode(&row, "rx.internal.intervention-case.v1")?;
+        if c.state != crate::intervention::CaseState::Closed
+            && (cells.contains(&c.cell) || c.effective_cells.iter().any(|c| cells.contains(c)))
+        {
+            return reject(Reject::BlockedByCase);
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

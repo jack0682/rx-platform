@@ -34,6 +34,7 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                 .map_err(|e| missing_as(e, Reject::Unauthenticated))?;
             if !p.active
                 || p.roles.is_empty()
+                || p.roles.contains(&Role::Supervisor)
                 || p.roles.contains(&Role::Host)
                 || p.roles.contains(&Role::Executor)
                 || p.roles.contains(&Role::OperatorApi)
@@ -98,6 +99,7 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
         self.repository.transact(|tx| {
             let (_, p): (_, Principal) = load(tx, "principal", principal, PRINCIPAL)?;
             if !p.active
+                || p.roles.contains(&Role::Supervisor)
                 || now.clock_id != expires_at.clock_id
                 || now.ticks_ns >= expires_at.ticks_ns
             {
@@ -153,6 +155,9 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                         }
                     }
                 }
+            }
+            if value.roles.contains(&Role::Supervisor) {
+                tx.require_resident_execution_reader()?;
             }
             let revision = save(tx, "principal", &value.id, expected, PRINCIPAL, &value)?;
             event(tx, "rx.event.principal-changed.v1", &value)?;

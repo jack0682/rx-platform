@@ -87,7 +87,7 @@ Original designs and contracts live in [rx_docs](https://github.com/jack0682/rx_
 
 The platform command `python3 tools/check_host_sdk.py ../rx-solutions/sdk` checks agreement with the current platform source. Standalone solutions CI checks its SDK's own inventory; it does not prove compatibility with the latest platform. Run the cross-repository synchronization check when both repositories change. Regenerate SDK copies from platform sources instead of editing them directly.
 
-The required repository job checks all seven optional binding manifests with `--check`, including metadata that the Rust build's source-hash check does not compare. It never regenerates those manifests.
+The required repository job checks all eight optional binding manifests with `--check`, including metadata that the Rust build's source-hash check does not compare. It never regenerates those manifests.
 
 The [CI guard boundaries](docs/ci-guards.md) explain why the two base protobuf schemas remain separate from those optional bindings and what the existing checks do not prove.
 

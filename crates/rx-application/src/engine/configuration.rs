@@ -56,6 +56,7 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             }
             lifecycle::require_serving(tx)?;
             validate_configuration(&configuration)?;
+            execution_configuration::verify(tx, &configuration)?;
             let cell = Cell {
                 mode: Some(OperatingMode::Setup),
                 commissioning: Some(Commissioning::NotCommissioned),
@@ -110,6 +111,9 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             lifecycle::require_serving(tx)?;
             let (revision, mut cell): (_, Cell) = load(tx, "cell", cell_id, CELL)?;
             check_revision(revision, expected)?;
+            if cell.configuration.execution.is_some() {
+                return reject(Reject::UnsupportedSchema);
+            }
             if evidence.is_empty()
                 || !authority.verify(&cell.configuration, &evidence, &dependencies)
             {

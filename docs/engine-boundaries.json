@@ -6,16 +6,21 @@
   "groups": {
     "core": {
       "description": "Generic runtime: admission, identity and access, lifecycle, evidence and delivery, dispatch, reconciliation and settlement, invalidation, observation, host link and recovery, peers, requests, queries, diagnostics, runtime and device restriction reads, store restore.",
-      "may_reference": ["core"],
+      "may_reference": [
+        "core"
+      ],
       "modules": [
-        "mod",
         "access",
         "admission",
+        "component_intake",
+        "definition_catalog",
         "delivery",
         "device_restrictions",
         "diagnostics",
         "dispatch",
         "evidence",
+        "execution_configuration",
+        "execution_session",
         "executor_peer",
         "host_link",
         "host_readmission",
@@ -23,6 +28,7 @@
         "identity",
         "invalidation",
         "lifecycle",
+        "mod",
         "observation",
         "operator_peer",
         "pause",
@@ -30,19 +36,27 @@
         "queries",
         "reconciliation",
         "requests",
+        "resident_component",
+        "resident_execution",
+        "resident_reporting",
         "runtime_restrictions",
         "settlement",
-        "store_restore"
+        "store_restore",
+        "workflow_model"
       ]
     },
     "cell": {
       "description": "Cell and production domain: workflow, production, handover, operator start, assignment, run configuration, closure, intervention, procedure, process execution and checkpoints, executor requests, runtime skills, cell configuration.",
-      "may_reference": ["cell", "core"],
+      "may_reference": [
+        "cell",
+        "core"
+      ],
       "modules": [
         "assignment",
         "checkpoint_change",
         "closure",
         "configuration",
+        "execution_inventory",
         "execution_read",
         "executor_requests",
         "handover",
@@ -59,7 +73,10 @@
     },
     "change_control": {
       "description": "Change control and qualification: package intake, drafts and their bindings, reviews, process change, apply, host configuration dispatch, host binding intents, requalification, qualification activation.",
-      "may_reference": ["change_control", "core"],
+      "may_reference": [
+        "change_control",
+        "core"
+      ],
       "modules": [
         "configuration_dispatch",
         "device_binding",
@@ -72,7 +89,8 @@
         "process_draft",
         "process_review",
         "qualification_activation",
-        "requalification"
+        "requalification",
+        "workflow_publication"
       ]
     }
   },

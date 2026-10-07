@@ -126,7 +126,8 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             if let Some(b) = prior(tx, &scope, fp, BATCH)? {
                 return Ok(b);
             }
-            if now.age_ns(&t.issued).is_none_or(|age| age >= TICKET_TTL_NS)
+            let limit = requalification::ticket_limit(&requalification::policy(tx, meta)?);
+            if now.age_ns(&t.issued).is_none_or(|age| age >= limit)
                 || package_intake::current(tx, meta)?.as_ref() != Some(&t.registration)
             {
                 return reject(Reject::StaleRevision);
@@ -179,7 +180,7 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                 return Ok(b);
             }
             for row in tx.scan("qualificationtask/")? {
-                let task: a::Task = decode(&row, TASK)?;
+                let task = decode_task(tx, &row)?;
                 let old = batch(tx, &task.batch)?;
                 if old.change == t.job.request.change
                     && task.phase == Phase::SendEntered
@@ -250,7 +251,9 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                 }
                 let (boot, journal, session) =
                     generation.ok_or(StoreError::Rejected(Reject::InvalidInput))?;
+                let execution_policies = policy_bindings(tx, &t.job, &host, &names)?;
                 let task = a::Task {
+                    execution_policies,
                     id: id(),
                     batch: bid.clone(),
                     host,

@@ -109,6 +109,7 @@ mod tests {
             }),
         };
         let mut work = Work {
+            execution: None,
             operation: d::Operation::admitted(id(1), intent.digest().unwrap()),
             intent,
             cell: name("cell/a"),

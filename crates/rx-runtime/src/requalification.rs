@@ -67,13 +67,13 @@ impl Worker {
                 if blobs.contains_key(&r.sha256) {
                     continue;
                 }
-                if r.size_bytes.0 == 0 || r.size_bytes.0 > q::MAX_ARTIFACT {
+                if r.size_bytes.0 == 0 || r.size_bytes.0 > policy.artifact_limit(&r) {
                     return Err("qualification artifact bound".into());
                 }
                 total = total
                     .checked_add(r.size_bytes.0)
                     .ok_or("qualification size overflow")?;
-                if total > q::MAX_TOTAL {
+                if total > policy.total_limit() {
                     return Err("qualification bundle too large".into());
                 }
                 let p = PackagePath::new(format!(

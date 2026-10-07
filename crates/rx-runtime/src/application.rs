@@ -8,6 +8,148 @@ use rx_domain::types::*;
 use rx_ports::{Repository, StoreError};
 
 pub enum Command {
+    ConfigureResidentSupervisors(
+        std::collections::BTreeMap<Name, rx_domain::resident_execution::Enrollment>,
+    ),
+    OpenResidentSupervisor {
+        principal: Name,
+        peer_boot: Id,
+        authentication_binding: Digest,
+        registry: Digest,
+    },
+    ProposeResidentExecution {
+        identity: Identity,
+        key: Id,
+        input: rx_domain::resident_execution::Propose,
+    },
+    GetResidentExecution {
+        identity: Identity,
+        id: Id,
+    },
+    InspectResidentExecution {
+        identity: resident_execution::Identity,
+        id: Id,
+    },
+    PrepareResidentExecution {
+        identity: resident_execution::Identity,
+        key: Id,
+        input: rx_domain::resident_execution::Preparation,
+    },
+    ApproveResidentExecution {
+        identity: Identity,
+        key: Id,
+        input: rx_domain::resident_execution::Approve,
+    },
+    StopResidentExecution {
+        identity: Identity,
+        key: Id,
+        input: rx_domain::resident_execution::Stop,
+    },
+    ObserveResidentExecution {
+        identity: resident_execution::Identity,
+        key: Id,
+        input: rx_domain::resident_execution::Observation,
+    },
+    RegistrationTargetAcceptance {
+        identity: resident_reporting::ReporterIdentity,
+        scope: Id,
+        freeze: Id,
+    },
+    ConfigureComponentSources(component_intake::Bindings),
+    ComponentIntakeContext {
+        identity: Identity,
+        source: Name,
+    },
+    ImportComponents {
+        identity: Identity,
+        key: Id,
+        input: component_intake::Submit,
+    },
+    PrepareComponentIntake {
+        identity: Identity,
+        key: Id,
+        input: component_intake::Submit,
+    },
+    BeginComponentIntake(Box<component_intake::Begin>),
+    StageComponentDeclarations(Box<component_intake::Declarations>),
+    StageComponentHistory(Box<component_intake::History>),
+    FinishComponentIntake(Box<component_intake::Finish>),
+    ComponentIntakeProgress {
+        identity: Identity,
+        id: Id,
+    },
+    ComponentIntakeReceipt {
+        identity: Identity,
+        id: Id,
+    },
+    ComponentIntakeHistory {
+        identity: Identity,
+        id: Id,
+        after: Counter,
+    },
+    ContinueResidentReporting {
+        identity: Identity,
+        key: Id,
+        input: rx_application::resident_reporting::Continue,
+    },
+    ResidentReportHead {
+        identity: rx_application::resident_reporting::ReporterIdentity,
+        scope: Id,
+        instance: Id,
+    },
+    ReadResidentReportingScope {
+        identity: Identity,
+        scope: Id,
+    },
+    OpenResidentReporter {
+        principal: Name,
+        peer_boot: Id,
+        authentication_binding: Digest,
+    },
+    IssueResidentReporting {
+        identity: Identity,
+        key: Id,
+        input: rx_application::resident_reporting::Issue,
+    },
+    RevokeResidentReporting {
+        identity: Identity,
+        key: Id,
+        input: rx_application::resident_reporting::Revoke,
+    },
+    InspectResidentReporting {
+        identity: rx_application::resident_reporting::ReporterIdentity,
+        scope: Id,
+    },
+    PublishResidentReport {
+        identity: rx_application::resident_reporting::ReporterIdentity,
+        key: Id,
+        report: rx_domain::resident_reporting::Report,
+    },
+    GetResidentReport {
+        identity: Identity,
+        component: Id,
+        instance: Id,
+    },
+    CreateComponent {
+        identity: Identity,
+        key: Id,
+        input: rx_application::resident_component::Create,
+    },
+    UpdateComponent {
+        identity: Identity,
+        key: Id,
+        input: rx_application::resident_component::Update,
+    },
+    RetireComponent {
+        identity: Identity,
+        key: Id,
+        input: rx_application::resident_component::Retire,
+    },
+    GetComponent {
+        identity: Identity,
+        id: Id,
+        revision: Option<Counter>,
+    },
     RegisterHostRecoveryTransport {
         host: Name,
         pin: rx_application::host_recovery::TransportPin,
@@ -102,7 +244,7 @@ pub enum Command {
     BindQualificationRequest {
         identity: Identity,
         task: Id,
-        observation: Box<rx_domain::host_qualification::Observation>,
+        observation: Box<rx_application::qualification_activation::Observation>,
         read_started: TimePoint,
     },
     EnterQualificationSend {
@@ -118,7 +260,7 @@ pub enum Command {
     RecordQualificationObservation {
         identity: Identity,
         task: Id,
-        observation: Box<rx_domain::host_qualification::Observation>,
+        observation: Box<rx_application::qualification_activation::Observation>,
         read_started: TimePoint,
     },
 
@@ -194,7 +336,7 @@ pub enum Command {
     BindHostConfiguration {
         identity: Identity,
         task: Id,
-        observation: Box<rx_domain::host_configuration::Observation>,
+        observation: Box<rx_application::configuration_dispatch::Observation>,
         read_started: TimePoint,
     },
     EnterHostConfigurationSend {
@@ -211,7 +353,7 @@ pub enum Command {
         identity: Identity,
         task: Id,
         read_started: TimePoint,
-        observation: Box<rx_domain::host_configuration::Observation>,
+        observation: Box<rx_application::configuration_dispatch::Observation>,
     },
     PrepareProcessChange {
         identity: Identity,
@@ -385,6 +527,181 @@ pub enum Command {
         id: Id,
         revision: Option<Counter>,
     },
+    SaveWorkflowModel {
+        identity: Identity,
+        key: Id,
+        prepared: rx_application::workflow_model::PreparedSave,
+    },
+    GetWorkflowModel {
+        identity: Identity,
+        catalog: Id,
+        id: Id,
+        revision: Option<Counter>,
+    },
+    ListWorkflowModels {
+        identity: Identity,
+        catalog: Id,
+        after: Option<Name>,
+    },
+    PrepareWorkflowResolution {
+        identity: Identity,
+        key: Id,
+        input: rx_domain::workflow::Request,
+    },
+    BindExecutionObject {
+        identity: Identity,
+        key: Id,
+        input: rx_application::execution_inventory::BindObject,
+    },
+    GetExecutionObject {
+        identity: Identity,
+        run: Id,
+        ordinal: Counter,
+    },
+    NegotiateExecutionSession {
+        identity: Identity,
+        cell: Name,
+        binding: Digest,
+    },
+    StartExecutionRun {
+        identity: Identity,
+        request_key: String,
+        command: StartRun,
+    },
+    PrepareExecutionOperation {
+        identity: Identity,
+        key: Id,
+        command: rx_application::execution_inventory::SubmitNode,
+    },
+    CommitExecutionOperation(Box<rx_application::execution_inventory::PreparedOperation>),
+    PrepareExecutionPart {
+        identity: Identity,
+        key: Id,
+        command: rx_application::BeginPartRequest,
+    },
+    CommitExecutionPart(Box<rx_application::execution_inventory::PreparedPart>),
+    GetExecutionSnapshotV2 {
+        identity: Identity,
+        run: Id,
+        visit: Counter,
+    },
+    GetExecutionPart {
+        identity: Identity,
+        run: Id,
+        part: Id,
+    },
+    GetExecutionRunReport {
+        identity: Identity,
+        run: Id,
+        report: Digest,
+    },
+    GetExecutionPartArtifact {
+        identity: Identity,
+        run: Id,
+        part: Id,
+        reference: ArtifactRef,
+    },
+    InitializeExecutionSlots {
+        identity: Identity,
+        key: Id,
+        input: rx_application::execution_inventory::Initialize,
+    },
+    GetExecutionSlotPool {
+        identity: Identity,
+        resource: rx_domain::definition::Reference,
+    },
+    CreateExecutionRun {
+        identity: Identity,
+        key: Id,
+        input: rx_application::execution_inventory::CreateRun,
+    },
+    GetExecutionRun {
+        identity: Identity,
+        run: Id,
+    },
+    PrepareExecutionPreview {
+        identity: Identity,
+        key: Id,
+        input: rx_application::workflow_publication::PreviewInput,
+    },
+    SaveExecutionPreview {
+        identity: Identity,
+        key: Id,
+        prepared: Box<rx_application::workflow_publication::PreparedPreview>,
+    },
+    GetExecutionPreview {
+        identity: Identity,
+        reference: rx_domain::definition::Reference,
+    },
+    PublishWorkflowExecution {
+        identity: Identity,
+        key: Id,
+        input: rx_application::workflow_publication::Publish,
+    },
+    CommitWorkflowPublication(Box<rx_application::workflow_publication::PreparedPublication>),
+    PrepareWorkflowConfiguration {
+        identity: Identity,
+        configuration: Box<CellConfiguration>,
+    },
+    GetWorkflowPublication {
+        identity: Identity,
+        reference: rx_domain::definition::Reference,
+    },
+    SaveWorkflowResolution {
+        identity: Identity,
+        key: Id,
+        prepared: rx_application::workflow_model::PreparedResolution,
+    },
+    ListWorkflowResolutions {
+        identity: Identity,
+        catalog: Id,
+        after: Option<Name>,
+    },
+    GetWorkflowResolution {
+        identity: Identity,
+        catalog: Id,
+        id: Id,
+    },
+    SaveDefinitionCatalog {
+        identity: Identity,
+        key: Id,
+        input: rx_application::definition_catalog::CatalogSave,
+    },
+    ListDefinitionCatalogs {
+        identity: Identity,
+        after: Option<Name>,
+    },
+    GetDefinitionCatalog {
+        identity: Identity,
+        id: Id,
+    },
+    SaveDefinition {
+        identity: Identity,
+        key: Id,
+        prepared: rx_application::definition_catalog::Prepared,
+    },
+    GetDefinition {
+        identity: Identity,
+        catalog: Id,
+        id: Id,
+        revision: Option<Counter>,
+    },
+    ListDefinitions {
+        identity: Identity,
+        catalog: Id,
+        after: Option<Name>,
+        filter: rx_application::definition_catalog::Filter,
+    },
+    DefinitionPoints {
+        identity: Identity,
+        query: rx_domain::definition::pattern::Query,
+    },
+    DefinitionHistory {
+        identity: Identity,
+        catalog: Id,
+        id: Id,
+        before: Option<Counter>,
+    },
     SaveProcessDraft {
         identity: Identity,
         key: Id,
@@ -400,6 +717,13 @@ pub enum Command {
         identity: Identity,
         cell: Name,
         after: Option<Id>,
+        filter: rx_application::process_draft::Filter,
+    },
+    ListProcessDraftHistory {
+        identity: Identity,
+        cell: Name,
+        id: Id,
+        before: Option<Counter>,
     },
     ConfigureHostServices(Vec<rx_application::service_health::Target>),
     ReplaceHostService(rx_application::service_health::Owner),
@@ -672,6 +996,10 @@ pub enum Command {
         identity: Identity,
         cell: Name,
     },
+    GetOperatorExecutionStartContext {
+        identity: Identity,
+        input: rx_application::operator_start::ContextRequest,
+    },
     GetOperatorStartContext {
         identity: Identity,
         input: rx_application::operator_start::ContextRequest,
@@ -793,6 +1121,25 @@ pub enum Command {
     },
 }
 pub enum Reply {
+    ResidentSupervisorsConfigured,
+    ResidentSupervisor(Box<rx_domain::resident_execution::Peer>),
+    ResidentExecution(Box<rx_domain::resident_execution::View>),
+    ResidentExecutionContent(Box<rx_domain::resident_execution::ContentReceipt>),
+    ResidentExecutionObservation(Box<rx_domain::resident_execution::ObservationReceipt>),
+    RegistrationTargetAcceptance(Box<rx_domain::component_transfer::TargetAcceptance>),
+    ComponentSourcesConfigured,
+    ComponentIntakeContext(Box<component_intake::Context>),
+    ComponentIntakePreflight(component_intake::Preflight),
+    ComponentIntakeProgress(Box<component_intake::Progress>),
+    ComponentIntakeReceipt(Box<component_intake::Receipt>),
+    ComponentIntakeHistory(Box<component_intake::ArchivePage>),
+    ResidentReportHead(Box<rx_domain::resident_reporting::Head>),
+    ResidentReporter(Box<rx_domain::resident_reporting::Peer>),
+    ResidentReportingScope(Box<rx_domain::resident_reporting::Scope>),
+    ResidentReportingScopeView(Box<rx_application::resident_reporting::ScopeView>),
+    ResidentReportReceipt(Box<rx_domain::resident_reporting::Receipt>),
+    ResidentReportView(Box<rx_domain::resident_reporting::View>),
+    Component(Box<rx_application::resident_component::View>),
     Settlement(Box<rx_application::settlement::Authorization>),
     HostRecoveryContext(Box<rx_application::host_recovery::Context>),
     HostRecoveryBinding(Box<rx_application::host_recovery::Binding>),
@@ -858,7 +1205,34 @@ pub enum Reply {
     DraftBindingVersion(Box<rx_application::draft_bindings::Version>),
     DraftBindingView(Box<rx_application::draft_bindings::View>),
     ProcessDraft(Box<rx_application::process_draft::Detail>),
+    WorkflowModel(Box<rx_application::workflow_model::Version>),
+    WorkflowModels(Box<rx_application::workflow_model::Page>),
+    WorkflowResolutionPreparation(Box<rx_application::workflow_model::Preparation>),
+    ExecutionObjectBinding(Box<rx_application::execution_inventory::ObjectBinding>),
+    ExecutionSession(Box<rx_process_contract::execution_v2::executor::Session>),
+    ExecutionSnapshotV2(Box<rx_process_contract::execution_v2::snapshot::Snapshot>),
+    ExecutionOperationPreparation(Box<rx_application::execution_inventory::OperationPreparation>),
+    ExecutionPartPreparation(Box<rx_application::execution_inventory::PartPreparation>),
+    ExecutionPart(Box<rx_process_contract::execution_v2::executor::Part>),
+    ExecutionPartArtifact(Vec<u8>),
+    ExecutionSlotPool(Box<rx_application::execution_inventory::Pool>),
+    ExecutionRunBinding(Box<rx_application::execution_inventory::RunBinding>),
+    ExecutionPreviewPreparation(Box<rx_application::workflow_publication::Preparation>),
+    ExecutionPreview(Box<rx_application::workflow_publication::Preview>),
+    SavedExecutionPreview(Box<rx_application::workflow_publication::SavedPreview>),
+    WorkflowPublication(Box<rx_application::workflow_publication::Publication>),
+    WorkflowConfiguration(ArtifactRef),
+    WorkflowPublicationPreparation(Box<rx_application::workflow_publication::PublishPreparation>),
+    WorkflowResolution(Box<rx_application::workflow_model::Receipt>),
+    WorkflowResolutions(Box<rx_application::workflow_model::Reports>),
+    DefinitionCatalog(Box<rx_application::definition_catalog::Catalog>),
+    DefinitionCatalogs(Box<rx_application::definition_catalog::CatalogPage>),
+    Definition(Box<rx_application::definition_catalog::View>),
+    Definitions(Box<rx_application::definition_catalog::Page>),
+    DefinitionHistory(Box<rx_application::definition_catalog::History>),
+    DefinitionPoints(Box<rx_domain::definition::pattern::Page>),
     ProcessDrafts(Box<rx_application::process_draft::Page>),
+    ProcessDraftHistory(Box<rx_application::process_draft::History>),
     HostServiceOwners(Vec<rx_application::service_health::Owner>),
     HostServiceOwner(Box<rx_application::service_health::Owner>),
     Observations(rx_application::observation::BatchReceipt),
@@ -940,7 +1314,9 @@ impl<R: Repository + Send + 'static, C: Clock + 'static, A: QualificationAuthori
     type Error = StoreError;
     fn priority(command: &Command) -> Priority {
         match command {
-            Command::SuspendQualification { .. }
+            Command::StopResidentExecution { .. }
+            | Command::ConfigureResidentSupervisors(_)
+            | Command::SuspendQualification { .. }
             | Command::BeginProcessChangePreparation { .. }
             | Command::BeginRequalification { .. }
             | Command::ConfigureRequalification(_)
@@ -967,6 +1343,222 @@ impl<R: Repository + Send + 'static, C: Clock + 'static, A: QualificationAuthori
     }
     fn process(&mut self, command: Command) -> rx_ports::Result<Reply> {
         match command {
+            Command::ConfigureResidentSupervisors(v) => self
+                .engine
+                .configure_resident_supervisors(v)
+                .map(|_| Reply::ResidentSupervisorsConfigured),
+            Command::OpenResidentSupervisor {
+                principal,
+                peer_boot,
+                authentication_binding,
+                registry,
+            } => self
+                .engine
+                .open_resident_supervisor(&principal, peer_boot, authentication_binding, registry)
+                .map(|v| Reply::ResidentSupervisor(Box::new(v))),
+            Command::ProposeResidentExecution {
+                identity,
+                key,
+                input,
+            } => self
+                .engine
+                .propose_resident_execution(&identity, key.as_str(), input)
+                .map(|v| Reply::ResidentExecution(Box::new(v))),
+            Command::GetResidentExecution { identity, id } => self
+                .engine
+                .resident_execution(&identity, &id)
+                .map(|v| Reply::ResidentExecution(Box::new(v))),
+            Command::InspectResidentExecution { identity, id } => self
+                .engine
+                .inspect_resident_execution(&identity, &id)
+                .map(|v| Reply::ResidentExecution(Box::new(v))),
+            Command::PrepareResidentExecution {
+                identity,
+                key,
+                input,
+            } => self
+                .engine
+                .prepare_resident_execution(&identity, key.as_str(), input)
+                .map(|v| Reply::ResidentExecutionContent(Box::new(v))),
+            Command::ApproveResidentExecution {
+                identity,
+                key,
+                input,
+            } => self
+                .engine
+                .approve_resident_execution(&identity, key.as_str(), input)
+                .map(|v| Reply::ResidentExecution(Box::new(v))),
+            Command::StopResidentExecution {
+                identity,
+                key,
+                input,
+            } => self
+                .engine
+                .stop_resident_execution(&identity, key.as_str(), input)
+                .map(|v| Reply::ResidentExecution(Box::new(v))),
+            Command::ObserveResidentExecution {
+                identity,
+                key,
+                input,
+            } => self
+                .engine
+                .observe_resident_execution(&identity, key.as_str(), input)
+                .map(|v| Reply::ResidentExecutionObservation(Box::new(v))),
+            Command::RegistrationTargetAcceptance {
+                identity,
+                scope,
+                freeze,
+            } => self
+                .engine
+                .registration_target_acceptance(&identity, &scope, &freeze)
+                .map(|v| Reply::RegistrationTargetAcceptance(Box::new(v))),
+            Command::ConfigureComponentSources(sources) => self
+                .engine
+                .configure_component_sources(sources)
+                .map(|_| Reply::ComponentSourcesConfigured),
+            Command::ComponentIntakeContext { identity, source } => self
+                .engine
+                .component_intake_context(&identity, &source)
+                .map(|v| Reply::ComponentIntakeContext(Box::new(v))),
+            Command::ImportComponents { .. } => Err(StoreError::Unavailable(
+                "registration source service not configured".into(),
+            )),
+            Command::PrepareComponentIntake {
+                identity,
+                key,
+                input,
+            } => self
+                .engine
+                .prepare_component_intake(&identity, key, input)
+                .map(Reply::ComponentIntakePreflight),
+            Command::BeginComponentIntake(input) => self
+                .engine
+                .begin_component_intake(*input)
+                .map(|v| Reply::ComponentIntakeProgress(Box::new(v))),
+            Command::StageComponentDeclarations(input) => self
+                .engine
+                .stage_component_declarations(*input)
+                .map(|v| Reply::ComponentIntakeProgress(Box::new(v))),
+            Command::StageComponentHistory(input) => self
+                .engine
+                .stage_component_history(*input)
+                .map(|v| Reply::ComponentIntakeProgress(Box::new(v))),
+            Command::FinishComponentIntake(input) => self
+                .engine
+                .finish_component_intake(*input)
+                .map(|v| Reply::ComponentIntakeReceipt(Box::new(v))),
+            Command::ComponentIntakeProgress { identity, id } => self
+                .engine
+                .component_intake_progress(&identity, &id)
+                .map(|v| Reply::ComponentIntakeProgress(Box::new(v))),
+            Command::ComponentIntakeReceipt { identity, id } => self
+                .engine
+                .component_intake_receipt(&identity, &id)
+                .map(|v| Reply::ComponentIntakeReceipt(Box::new(v))),
+            Command::ComponentIntakeHistory {
+                identity,
+                id,
+                after,
+            } => self
+                .engine
+                .component_intake_history(&identity, &id, after)
+                .map(|v| Reply::ComponentIntakeHistory(Box::new(v))),
+            Command::ContinueResidentReporting {
+                identity,
+                key,
+                input,
+            } => self
+                .engine
+                .continue_resident_reporting(&identity, key.as_str(), input)
+                .map(|v| Reply::ResidentReportingScopeView(Box::new(v))),
+            Command::ResidentReportHead {
+                identity,
+                scope,
+                instance,
+            } => self
+                .engine
+                .resident_report_head(&identity, &scope, &instance)
+                .map(|v| Reply::ResidentReportHead(Box::new(v))),
+            Command::ReadResidentReportingScope { identity, scope } => self
+                .engine
+                .inspect_resident_reporting(&identity, &scope)
+                .map(|v| Reply::ResidentReportingScopeView(Box::new(v))),
+            Command::OpenResidentReporter {
+                principal,
+                peer_boot,
+                authentication_binding,
+            } => self
+                .engine
+                .open_resident_reporter(&principal, peer_boot, authentication_binding)
+                .map(|v| Reply::ResidentReporter(Box::new(v))),
+            Command::IssueResidentReporting {
+                identity,
+                key,
+                input,
+            } => self
+                .engine
+                .issue_resident_reporting(&identity, key.as_str(), input)
+                .map(|v| Reply::ResidentReportingScopeView(Box::new(v))),
+            Command::RevokeResidentReporting {
+                identity,
+                key,
+                input,
+            } => self
+                .engine
+                .revoke_resident_reporting(&identity, key.as_str(), input)
+                .map(|v| Reply::ResidentReportingScopeView(Box::new(v))),
+            Command::InspectResidentReporting { identity, scope } => self
+                .engine
+                .resident_reporting_scope(&identity, &scope)
+                .map(|v| Reply::ResidentReportingScope(Box::new(v))),
+            Command::PublishResidentReport {
+                identity,
+                key,
+                report,
+            } => self
+                .engine
+                .publish_resident_report(&identity, key.as_str(), report)
+                .map(|v| Reply::ResidentReportReceipt(Box::new(v))),
+            Command::GetResidentReport {
+                identity,
+                component,
+                instance,
+            } => self
+                .engine
+                .resident_report(&identity, &component, &instance)
+                .map(|v| Reply::ResidentReportView(Box::new(v))),
+            Command::CreateComponent {
+                identity,
+                key,
+                input,
+            } => self
+                .engine
+                .create_component(&identity, key.as_str(), input)
+                .map(|view| Reply::Component(Box::new(view))),
+            Command::UpdateComponent {
+                identity,
+                key,
+                input,
+            } => self
+                .engine
+                .update_component(&identity, key.as_str(), input)
+                .map(|view| Reply::Component(Box::new(view))),
+            Command::RetireComponent {
+                identity,
+                key,
+                input,
+            } => self
+                .engine
+                .retire_component(&identity, key.as_str(), input)
+                .map(|view| Reply::Component(Box::new(view))),
+            Command::GetComponent {
+                identity,
+                id,
+                revision,
+            } => self
+                .engine
+                .component(&identity, &id, revision)
+                .map(|view| Reply::Component(Box::new(view))),
             Command::RegisterHostRecoveryTransport { host, pin } => self
                 .engine
                 .register_host_recovery_transport(host, pin)
@@ -1546,6 +2138,280 @@ impl<R: Repository + Send + 'static, C: Clock + 'static, A: QualificationAuthori
                 .engine
                 .draft_bindings(&identity, &cell, &id, revision)
                 .map(|v| Reply::DraftBindingView(Box::new(v))),
+            Command::SaveWorkflowModel {
+                identity,
+                key,
+                prepared,
+            } => self
+                .engine
+                .save_workflow_model(&identity, &key, prepared)
+                .map(|v| Reply::WorkflowModel(Box::new(v))),
+            Command::GetWorkflowModel {
+                identity,
+                catalog,
+                id,
+                revision,
+            } => self
+                .engine
+                .workflow_model(&identity, &catalog, &id, revision)
+                .map(|v| Reply::WorkflowModel(Box::new(v))),
+            Command::ListWorkflowModels {
+                identity,
+                catalog,
+                after,
+            } => self
+                .engine
+                .workflow_models(&identity, &catalog, after.as_ref())
+                .map(|v| Reply::WorkflowModels(Box::new(v))),
+            Command::PrepareWorkflowResolution {
+                identity,
+                key,
+                input,
+            } => self
+                .engine
+                .prepare_workflow_resolution(&identity, &key, input)
+                .map(|v| Reply::WorkflowResolutionPreparation(Box::new(v))),
+            Command::BindExecutionObject {
+                identity,
+                key,
+                input,
+            } => self
+                .engine
+                .bind_execution_object(&identity, &key, input)
+                .map(|v| Reply::ExecutionObjectBinding(Box::new(v))),
+            Command::GetExecutionObject {
+                identity,
+                run,
+                ordinal,
+            } => self
+                .engine
+                .execution_object(&identity, &run, ordinal)
+                .map(|v| Reply::ExecutionObjectBinding(Box::new(v))),
+            Command::NegotiateExecutionSession {
+                identity,
+                cell,
+                binding,
+            } => self
+                .engine
+                .negotiate_execution_session(&identity, &cell, binding)
+                .map(|v| Reply::ExecutionSession(Box::new(v))),
+            Command::StartExecutionRun {
+                identity,
+                request_key,
+                command,
+            } => self
+                .engine
+                .start_execution_run(&identity, &request_key, command)
+                .map(Reply::Attempt),
+            Command::PrepareExecutionOperation {
+                identity,
+                key,
+                command,
+            } => self
+                .engine
+                .prepare_execution_operation(&identity, &key, command)
+                .map(|v| Reply::ExecutionOperationPreparation(Box::new(v))),
+            Command::CommitExecutionOperation(prepared) => self
+                .engine
+                .commit_execution_operation(*prepared)
+                .map(|v| Reply::Work(Box::new(v))),
+            Command::PrepareExecutionPart {
+                identity,
+                key,
+                command,
+            } => self
+                .engine
+                .prepare_execution_part(&identity, &key, command)
+                .map(|v| Reply::ExecutionPartPreparation(Box::new(v))),
+            Command::CommitExecutionPart(prepared) => self
+                .engine
+                .commit_execution_part(*prepared)
+                .map(|v| Reply::ExecutionPart(Box::new(v))),
+            Command::GetExecutionSnapshotV2 {
+                identity,
+                run,
+                visit,
+            } => self
+                .engine
+                .execution_snapshot_v2(&identity, &run, visit)
+                .map(|v| Reply::ExecutionSnapshotV2(Box::new(v))),
+            Command::GetExecutionPart {
+                identity,
+                run,
+                part,
+            } => self
+                .engine
+                .execution_part(&identity, &run, &part)
+                .map(|v| Reply::ExecutionPart(Box::new(v))),
+            Command::GetExecutionRunReport {
+                identity,
+                run,
+                report,
+            } => self
+                .engine
+                .execution_run_report(&identity, &run, report)
+                .map(Reply::ExecutionPartArtifact),
+            Command::GetExecutionPartArtifact {
+                identity,
+                run,
+                part,
+                reference,
+            } => self
+                .engine
+                .execution_part_artifact(&identity, &run, &part, &reference)
+                .map(Reply::ExecutionPartArtifact),
+            Command::InitializeExecutionSlots {
+                identity,
+                key,
+                input,
+            } => self
+                .engine
+                .initialize_execution_slots(&identity, &key, input)
+                .map(|v| Reply::ExecutionSlotPool(Box::new(v))),
+            Command::GetExecutionSlotPool { identity, resource } => self
+                .engine
+                .execution_slot_pool(&identity, &resource)
+                .map(|v| Reply::ExecutionSlotPool(Box::new(v))),
+            Command::CreateExecutionRun {
+                identity,
+                key,
+                input,
+            } => self
+                .engine
+                .create_execution_run(&identity, &key, input)
+                .map(|v| Reply::ExecutionRunBinding(Box::new(v))),
+            Command::GetExecutionRun { identity, run } => self
+                .engine
+                .execution_run(&identity, &run)
+                .map(|v| Reply::ExecutionRunBinding(Box::new(v))),
+            Command::PrepareExecutionPreview {
+                identity,
+                key,
+                input,
+            } => self
+                .engine
+                .prepare_execution_preview(&identity, &key, input)
+                .map(|v| Reply::ExecutionPreviewPreparation(Box::new(v))),
+            Command::SaveExecutionPreview {
+                identity,
+                key,
+                prepared,
+            } => self
+                .engine
+                .save_execution_preview(&identity, &key, *prepared)
+                .map(|v| Reply::ExecutionPreview(Box::new(v))),
+            Command::GetExecutionPreview {
+                identity,
+                reference,
+            } => self
+                .engine
+                .execution_preview(&identity, &reference)
+                .map(|v| Reply::SavedExecutionPreview(Box::new(v))),
+            Command::PublishWorkflowExecution {
+                identity,
+                key,
+                input,
+            } => self
+                .engine
+                .prepare_workflow_publication(&identity, &key, input)
+                .map(|v| Reply::WorkflowPublicationPreparation(Box::new(v))),
+            Command::CommitWorkflowPublication(prepared) => self
+                .engine
+                .commit_workflow_publication(*prepared)
+                .map(|v| Reply::WorkflowPublication(Box::new(v))),
+            Command::PrepareWorkflowConfiguration {
+                identity,
+                configuration,
+            } => self
+                .engine
+                .prepare_workflow_configuration(&identity, *configuration)
+                .map(Reply::WorkflowConfiguration),
+            Command::GetWorkflowPublication {
+                identity,
+                reference,
+            } => self
+                .engine
+                .workflow_publication(&identity, &reference)
+                .map(|v| Reply::WorkflowPublication(Box::new(v))),
+            Command::SaveWorkflowResolution {
+                identity,
+                key,
+                prepared,
+            } => self
+                .engine
+                .save_workflow_resolution(&identity, &key, prepared)
+                .map(|v| Reply::WorkflowResolution(Box::new(v))),
+            Command::ListWorkflowResolutions {
+                identity,
+                catalog,
+                after,
+            } => self
+                .engine
+                .workflow_resolutions(&identity, &catalog, after.as_ref())
+                .map(|v| Reply::WorkflowResolutions(Box::new(v))),
+            Command::GetWorkflowResolution {
+                identity,
+                catalog,
+                id,
+            } => self
+                .engine
+                .workflow_resolution(&identity, &catalog, &id)
+                .map(|v| Reply::WorkflowResolution(Box::new(v))),
+            Command::SaveDefinitionCatalog {
+                identity,
+                key,
+                input,
+            } => self
+                .engine
+                .save_definition_catalog(&identity, &key, input)
+                .map(|v| Reply::DefinitionCatalog(Box::new(v))),
+            Command::ListDefinitionCatalogs { identity, after } => self
+                .engine
+                .definition_catalogs(&identity, after.as_ref())
+                .map(|v| Reply::DefinitionCatalogs(Box::new(v))),
+            Command::GetDefinitionCatalog { identity, id } => self
+                .engine
+                .definition_catalog(&identity, &id)
+                .map(|v| Reply::DefinitionCatalog(Box::new(v))),
+            Command::SaveDefinition {
+                identity,
+                key,
+                prepared,
+            } => self
+                .engine
+                .save_definition(&identity, &key, prepared)
+                .map(|v| Reply::Definition(Box::new(v))),
+            Command::GetDefinition {
+                identity,
+                catalog,
+                id,
+                revision,
+            } => self
+                .engine
+                .definition(&identity, &catalog, &id, revision)
+                .map(|v| Reply::Definition(Box::new(v))),
+            Command::ListDefinitions {
+                identity,
+                catalog,
+                after,
+                filter,
+            } => self
+                .engine
+                .definitions(&identity, &catalog, after.as_ref(), &filter)
+                .map(|v| Reply::Definitions(Box::new(v))),
+            Command::DefinitionPoints { identity, query } => self
+                .engine
+                .definition_points(&identity, &query)
+                .map(|v| Reply::DefinitionPoints(Box::new(v))),
+            Command::DefinitionHistory {
+                identity,
+                catalog,
+                id,
+                before,
+            } => self
+                .engine
+                .definition_history(&identity, &catalog, &id, before)
+                .map(|v| Reply::DefinitionHistory(Box::new(v))),
             Command::SaveProcessDraft {
                 identity,
                 key,
@@ -1567,10 +2433,20 @@ impl<R: Repository + Send + 'static, C: Clock + 'static, A: QualificationAuthori
                 identity,
                 cell,
                 after,
+                filter,
             } => self
                 .engine
-                .process_drafts(&identity, &cell, after.as_ref())
+                .process_drafts(&identity, &cell, after.as_ref(), &filter)
                 .map(|d| Reply::ProcessDrafts(Box::new(d))),
+            Command::ListProcessDraftHistory {
+                identity,
+                cell,
+                id,
+                before,
+            } => self
+                .engine
+                .process_draft_history(&identity, &cell, &id, before)
+                .map(|d| Reply::ProcessDraftHistory(Box::new(d))),
             Command::ConfigureHostServices(targets) => {
                 if targets.len() > 64
                     || targets
@@ -2017,6 +2893,10 @@ impl<R: Repository + Send + 'static, C: Clock + 'static, A: QualificationAuthori
                 .engine
                 .device_restrictions(&identity, &cell)
                 .map(|v| Reply::DeviceRestrictions(Box::new(v))),
+            Command::GetOperatorExecutionStartContext { identity, input } => self
+                .engine
+                .operator_execution_start_context(&identity, input)
+                .map(|v| Reply::OperatorStartContext(Box::new(v))),
             Command::GetOperatorStartContext { identity, input } => self
                 .engine
                 .operator_start_context(&identity, input)

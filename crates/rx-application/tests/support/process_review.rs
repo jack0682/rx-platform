@@ -36,10 +36,25 @@ pub fn fixture(cfg: &CellConfiguration, validator: Digest) -> Fixture {
     fixture_mode(cfg, validator, false)
 }
 pub fn fixture_mode(cfg: &CellConfiguration, validator: Digest, device: bool) -> Fixture {
+    fixture_shape(cfg, validator, device, false)
+}
+#[allow(dead_code)] // Only the v2 application integration needs a sequence template.
+pub fn fixture_sequence(cfg: &CellConfiguration, validator: Digest) -> Fixture {
+    fixture_shape(cfg, validator, false, true)
+}
+fn fixture_shape(
+    cfg: &CellConfiguration,
+    validator: Digest,
+    device: bool,
+    sequence: bool,
+) -> Fixture {
     let dir = tempfile::tempdir().unwrap();
     let package = dir.path().join("package");
     std::fs::create_dir(&package).unwrap();
-    let source:ProcessSource=serde_json::from_value(serde_json::json!({"schema":"rx.process-source.v1","process":"test/review","entry":"main","conditions":{},"flows":[{"id":"main","root":"work","nodes":[{"id":"work","body":{"kind":"OPERATION","binding":"load"}}]}]})).unwrap();
+    let mut source:ProcessSource=serde_json::from_value(serde_json::json!({"schema":"rx.process-source.v1","process":"test/review","entry":"main","conditions":{},"flows":[{"id":"main","root":"work","nodes":[{"id":"work","body":{"kind":"OPERATION","binding":"load"}}]}]})).unwrap();
+    if sequence {
+        source = serde_json::from_value(serde_json::json!({"schema":"rx.process-source.v1","process":"test/review","entry":"main","conditions":{},"flows":[{"id":"main","root":"sequence","nodes":[{"id":"sequence","body":{"kind":"SEQUENCE","children":["work"]}},{"id":"work","body":{"kind":"OPERATION","binding":"load"}}]}]})).unwrap();
+    }
     let bindings = BTreeMap::from([(
         name("load"),
         ActionBinding {
@@ -196,7 +211,7 @@ pub fn fixture_mode(cfg: &CellConfiguration, validator: Digest, device: bool) ->
         "node/{}",
         canonical::digest("RX-PROCESS-NODE-v1", &(&source.process, &location)).unwrap()
     ));
-    let resolved = ResolvedProcess {
+    let mut resolved = ResolvedProcess {
         schema: name("rx.resolved-process.v1"),
         package_digest: Some(verified.digest()),
         source_digest: content_digest(&bytes(&source)),
@@ -211,6 +226,23 @@ pub fn fixture_mode(cfg: &CellConfiguration, validator: Digest, device: bool) ->
         bindings,
         conditions: BTreeMap::new(),
     };
+    if sequence {
+        let location = SourceLocation {
+            flow: name("main"),
+            node: name("sequence"),
+            instantiation: vec![],
+        };
+        resolved.root = CompiledNode {
+            id: name(&format!(
+                "node/{}",
+                canonical::digest("RX-PROCESS-NODE-v1", &(&resolved.process, &location)).unwrap()
+            )),
+            source: location,
+            body: CompiledBody::Sequence {
+                children: vec![resolved.root],
+            },
+        };
+    }
     let authority = Authority {
         schema: name("rx.process-verification-authority.v1"),
         keys: vec![VerifierKey {

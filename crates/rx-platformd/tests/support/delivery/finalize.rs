@@ -402,6 +402,8 @@ pub fn export() -> Result<()> {
         return Err("public P/S package policy bytes changed".into());
     }
     let mut config = Config {
+        registration_sources: Default::default(),
+        resident_supervisors: Default::default(),
         operator_ui: None,
         package_intake: Some(PackageIntake {
             import_root: PathBuf::from("/import"),

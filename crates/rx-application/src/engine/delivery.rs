@@ -132,7 +132,19 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
             if first {
                 tx.transition_outbox(message, OutboxState::New, OutboxState::EmitEntered)?;
             }
+            let execution_parameters = work
+                .as_ref()
+                .and_then(|w| w.execution.as_ref())
+                .map(|e| {
+                    crate::artifact_storage::BlobStore::new(
+                        "executionpart",
+                        rx_process_contract::execution_v2::MAX_DEFINITION_BYTES,
+                    )
+                    .read(tx, &e.selection.parameter)
+                })
+                .transpose()?;
             Ok(DeliveryPlan {
+                execution_parameters,
                 message: message.clone(),
                 first_emission: first,
                 cell: cell_id,
@@ -380,12 +392,29 @@ fn validate_emission(
             {
                 return reject(Reject::StaleEpoch);
             }
+            let (_, activation): (_, Activation) =
+                load(tx, "activationid", &work.activation, ACTIVATION)?;
             let step = cell
                 .configuration
                 .steps
                 .iter()
-                .find(|s| s.intent.digest().ok() == work.intent.digest().ok())
+                .find(|s| s.id == activation.node)
                 .ok_or(StoreError::Rejected(Reject::CapabilityMissing))?;
+            if activation.run != work.run
+                || activation.part != work.part
+                || activation.slots.get(&work.slot) != Some(work.operation.id())
+                || step.host != work.host
+                || cell.configuration.execution.is_some() != work.execution.is_some()
+            {
+                return reject(Reject::InvalidInput);
+            }
+            if work.execution.is_some() {
+                execution_configuration::operation_current(tx, &cell, &run, &work, &permit, step)?;
+            } else if step.intent.digest().map_err(domain_error)?
+                != work.intent.digest().map_err(domain_error)?
+            {
+                return reject(Reject::CapabilityMissing);
+            }
             evaluate(tx, &cell, &step.conditions, now)?;
         }
         Delivery::Arm {

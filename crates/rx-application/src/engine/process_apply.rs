@@ -57,14 +57,14 @@ fn proofs(
             .as_ref()
             .ok_or(StoreError::Rejected(Reject::ContinuityUnproven))?;
         observation.validate().map_err(StoreError::Integrity)?;
-        if receipt.status != wire::Status::AppliedUnqualified
-            || !observation.context_matches_current_host
-            || observation.snapshot.cells.len() != t.cells.len()
+        if receipt.context().status != wire::Status::AppliedUnqualified
+            || !observation.context_matches_current_host()
+            || observation.snapshot().cells.len() != t.cells.len()
         {
             return reject(Reject::HostNotPrepared);
         }
         for target in &t.cells {
-            if !observation.snapshot.cells.iter().any(|v| {
+            if !observation.snapshot().cells.iter().any(|v| {
                 v.cell == target.cell
                     && v.definition == target.definition
                     && v.envelope == target.envelope
@@ -74,8 +74,7 @@ fn proofs(
                 return reject(Reject::ContinuityUnproven);
             }
         }
-        let digest = canonical::digest("RX-HOST-CONFIGURATION-OBSERVATION-v1", observation)
-            .map_err(domain_error)?;
+        let digest = observation.digest().map_err(StoreError::Invalid)?;
         let (at, known) = reads
             .get(&id)
             .ok_or(StoreError::Rejected(Reject::Expired))?;
@@ -85,9 +84,8 @@ fn proofs(
         proofs.push(HostProof {
             host,
             task: id,
-            request_digest: receipt.request_digest,
-            receipt_digest: canonical::digest("RX-HOST-CONFIGURATION-RECEIPT-v1", receipt)
-                .map_err(domain_error)?,
+            request_digest: receipt.request_digest(),
+            receipt_digest: receipt.digest().map_err(StoreError::Invalid)?,
             read_started: at.clone(),
             observation_digest: digest,
         });
@@ -141,6 +139,12 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                 StoreError::Unavailable("package verifier unavailable".into()),
             )?;
             Ok(Preflight::Verify(Box::new(Ticket {
+                execution_configuration: process_change::execution_target(
+                    tx,
+                    meta,
+                    &input.cell,
+                    &c.execution_configuration,
+                )?,
                 mode: c.mode,
                 action: Action::Apply(input),
                 identity: identity.clone(),

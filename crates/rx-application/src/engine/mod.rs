@@ -49,6 +49,7 @@ mod checkpoint_change;
 mod closure;
 mod configuration;
 mod configuration_dispatch;
+mod definition_catalog;
 mod delivery;
 mod device_binding;
 mod device_restrictions;
@@ -57,7 +58,10 @@ mod diagnostics;
 mod dispatch;
 mod draft_bindings;
 mod evidence;
+mod execution_configuration;
+mod execution_inventory;
 mod execution_read;
+mod execution_session;
 mod executor_peer;
 mod executor_requests;
 mod handover;
@@ -85,12 +89,17 @@ mod queries;
 mod reconciliation;
 mod requalification;
 mod requests;
+mod resident_component;
+mod resident_execution;
+mod resident_reporting;
 mod run_configuration;
 mod runtime_restrictions;
 mod runtime_skill;
 mod workflow;
+mod workflow_publication;
 
 use access::*;
+pub(crate) use admission::validate_configuration;
 use admission::*;
 use invalidation::*;
 use requests::*;
@@ -228,3 +237,7 @@ mod host_readmission;
 pub mod store_restore;
 
 mod host_binding_transition;
+
+mod component_intake;
+
+mod workflow_model;

@@ -20,7 +20,8 @@ def references(value:object) -> dict[str,dict]:
         if isinstance(node,dict):
             if set(node)=={'sha256','schema_id','size_bytes'}:
                 previous=result.setdefault(node['sha256'],node)
-                if previous!=node:raise ValueError('one digest has conflicting artifact declarations')
+                # v2 retains both a package-file pin and its typed role for the same bytes.
+                if previous['size_bytes']!=node['size_bytes']:raise ValueError('one digest has conflicting artifact sizes')
             else:
                 for child in node.values():walk(child)
         elif isinstance(node,list):

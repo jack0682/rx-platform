@@ -105,14 +105,14 @@ impl Dispatcher {
                 .await?;
                 return Ok(false);
             };
-            let receipt = bounded(self.client.receipt(&request.operation)).await?;
+            let receipt = bounded(self.client.work_receipt(&plan.work)).await?;
             self.call(Command::RecordReceipt {
                 identity: self.identity.clone(),
                 message: message.clone(),
                 receipt,
             })
             .await?;
-            let batch = bounded(self.client.reconcile(&request.operation)).await?;
+            let batch = bounded(self.client.work_evidence(&plan.work)).await?;
             if !batch.records.is_empty() {
                 self.call(Command::IngestEvidence {
                     identity: self.identity.clone(),

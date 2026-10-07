@@ -19,14 +19,10 @@ pub(super) fn transition(
     prepared_at: &TimePoint,
     seed: Option<&ProcessCheckpoint>,
 ) -> Result<Transition> {
-    let process = cell
-        .configuration
-        .process
-        .as_ref()
-        .ok_or(StoreError::Rejected(Reject::UnsupportedSchema))?;
+    let process = execution_inventory::part_process(tx, run, cell, target.visit)?;
     let (mut cp, view) = super::process::process_view(tx, run, cell, target.visit)?;
-    let next = frontier::plan(process, &view).map_err(StoreError::Integrity)?;
-    let node = rx_process_contract::validation::nodes(process)
+    let next = frontier::plan(&process, &view).map_err(StoreError::Integrity)?;
+    let node = rx_process_contract::validation::nodes(&process)
         .into_iter()
         .find(|n| n.id == target.node)
         .ok_or(StoreError::Rejected(Reject::InvalidInput))?;

@@ -1,11 +1,12 @@
 //! P-owned issuance, durable Host exchange and explicit global qualification activation.
+pub use crate::qualification_exchange::{Observation, Receipt, Request};
 use crate::{
     Identity, Qualification,
     configuration_dispatch::{Issue, Phase, Sender},
     package_intake::Registration,
     requalification as q,
 };
-use rx_domain::{host_qualification as host, types::*};
+use rx_domain::types::*;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -70,6 +71,9 @@ pub struct Batch {
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Task {
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub execution_policies:
+        BTreeMap<Name, rx_process_contract::execution_v2::host_qualification::PolicyBinding>,
     pub id: Id,
     pub batch: Id,
     pub host: Name,
@@ -78,18 +82,24 @@ pub struct Task {
     pub session: Id,
     pub cells: Vec<Name>,
     pub phase: Phase,
-    pub request: Option<host::Request>,
+    pub request: Option<Request>,
     pub digest: Option<Digest>,
-    pub receipt: Option<host::Receipt>,
-    pub observation: Option<host::Observation>,
+    pub receipt: Option<Receipt>,
+    pub observation: Option<Observation>,
     pub issue: Option<Issue>,
     pub disputed: bool,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "action", rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum Emission {
-    Send { request: Box<host::Request> },
-    Lookup { request: Id },
+    Send {
+        request: Box<Request>,
+    },
+    Lookup {
+        request: Id,
+        #[serde(default, skip_serializing_if = "is_false")]
+        execution_v2: bool,
+    },
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct View {
@@ -147,8 +157,14 @@ impl Prepared {
             ticket.version.signature.clone(),
             ticket.blobs.clone(),
         )?;
+        if rx_domain::canonical::bytes(&proof.derived()).map_err(|e| e.to_string())?
+            != rx_domain::canonical::bytes(&ticket.version.derived).map_err(|e| e.to_string())?
+        {
+            return Err("activation derived proof differs from reviewed version".into());
+        }
         if !proof.ready
-            || policy.schema.as_str() != "rx.requalification-policy.v2"
+            || !(policy.schema.as_str() == "rx.requalification-policy.v2"
+                || (policy.schema.as_str() == q::DERIVED_POLICY && !proof.derived().is_empty()))
             || ticket
                 .job
                 .request
@@ -156,7 +172,7 @@ impl Prepared {
                 .iter()
                 .any(|c| c.profile.purposes.is_empty())
         {
-            return Err("activation requires reviewed v2 purpose constraints".into());
+            return Err("activation requires reviewed v2/v3 purpose constraints and explicit derived-domain proof".into());
         }
         Ok(Self { ticket })
     }
@@ -164,4 +180,8 @@ impl Prepared {
 pub enum Preflight {
     Recorded(Box<Batch>),
     Verify(Box<Ticket>),
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }

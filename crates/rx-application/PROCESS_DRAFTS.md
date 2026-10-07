@@ -56,3 +56,51 @@ Visual selection of equipment capabilities/bindings, complete condition and inte
 Results were also retained from processing source saved/exported in the actual browser together with simulated bindings through the compiler in the final S image. The result is COMPILED_NOT_QUALIFIED; package signing/activation/native execution were not performed.
 
 [Equipment operation bindings](DRAFT_BINDINGS.md) that select registered steps in the current cell and matched compile input export are connected. Creating bindings for new equipment/profiles and package approval remain separate.
+
+## Canvas presentation metadata
+
+The Save request optionally includes `presentation: {flows: {FLOW: {NODE: {x, y}}}}`.
+Coordinates are bounded nonnegative integers. The layout is limited to 128 flow maps,
+1024 positions per flow and 128 KiB overall; it never defines child order or conditions.
+It is stored in the same immutable Version as the source revision and returned in
+`Detail.version.presentation`. Moving a node creates a reviewed draft revision but
+keeps the source document digest and executable binding content unchanged. Exported
+compile input still records the latest draft revision; its entire serialized envelope
+is not byte-identical across revisions. Saved-request recovery,
+authorization and CAS conflicts cover the layout as part of the original request.
+
+Omitting presentation preserves the previous layout, including when an older client
+only changes title/source. Sending an explicit empty flows map clears it. Historical
+versions preserve their own layout. Old records decode without presentation. The
+response field is additive; clients that reject unknown response fields must be
+upgraded before reading a draft with a saved layout. An old strict server refuses
+those version records instead of silently overwriting them. No installed cell,
+execution authority, device binding or frozen wire contract changes here.
+
+## Library classification, archive and history
+
+Save/Version/Summary optionally include `library: {site, service, archived}`.
+Site and service are nullable, trimmed labels of at most 120 characters, not
+registered operating-area identities or access grants. Omission preserves the
+previous library value. Older records have no labels and are active drafts.
+
+Archive is an ordinary immutable draft revision under the same Engineer/cell,
+CAS and original-request checks. An archived draft rejects saves until a request
+explicitly sets archived=false without changing its content, title, layout or
+labels. The original archive request can still recover its own response. Archive
+and restore never mutate the installed configuration or revoke a published run.
+There is no Published state in this library metadata.
+
+GET `/api/v1/process-drafts` also accepts optional `q`, `site`, `service` and
+`archived`. Title search is trimmed, case-insensitive and limited to 120 characters;
+site/service match the exact labels. Filters apply before the 50-item pagination.
+Omitting archived keeps the existing all-drafts API behavior. Every read checks
+current Engineer/Verifier and cell scope. The current summary scan is not a
+large-library indexed query; indexed scale/retention remains a separate work item.
+
+GET `/api/v1/process-draft-history?cell=...&id=...&before=...` returns cell, draft,
+versions and next. Versions are descending summaries, bounded to 50; before is
+an exclusive positive revision cursor. Use the existing exact-revision detail
+read for source and layout. A historical edit is a new draft copy, never an update
+to the immutable historical record. Unknown optional fields require paired strict
+client upgrades as for presentation metadata.

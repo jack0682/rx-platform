@@ -30,6 +30,43 @@ fn scope() -> RequestScope {
 }
 
 #[test]
+fn execution_v2_reader_barrier_is_opt_in_atomic_and_monotonic() {
+    let (temp, mut store) = open();
+    let result: Result<()> = store.transact(|tx| {
+        tx.require_workflow_execution_reader()?;
+        Err(StoreError::Invalid("rollback".into()))
+    });
+    assert!(result.is_err());
+    drop(store);
+    let connection = rusqlite::Connection::open(temp.path().join("platform.db")).unwrap();
+    assert_eq!(
+        connection
+            .query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
+            .unwrap(),
+        6
+    );
+    drop(connection);
+    let mut store = SqliteRepository::open(temp.path().join("platform.db")).unwrap();
+    store
+        .transact(|tx| {
+            tx.require_workflow_execution_reader()?;
+            tx.require_resident_execution_reader()?;
+            tx.require_component_intake_reader()
+        })
+        .unwrap();
+    drop(store);
+    let connection = rusqlite::Connection::open(temp.path().join("platform.db")).unwrap();
+    assert_eq!(
+        connection
+            .query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
+            .unwrap(),
+        10
+    );
+    drop(connection);
+    assert!(SqliteRepository::open(temp.path().join("platform.db")).is_ok());
+}
+
+#[test]
 fn prefix_scan_returns_exactly_the_keys_under_the_prefix_in_key_order() {
     let (_temp, mut store) = open();
     let keys = [
@@ -418,7 +455,7 @@ fn metadata_compatibility_upgrade_preserves_record_bytes_and_rejects_future_stor
         assert_eq!(saved, bytes);
     }
     let connection = rusqlite::Connection::open(&path).unwrap();
-    connection.pragma_update(None, "user_version", 7).unwrap();
+    connection.pragma_update(None, "user_version", 11).unwrap();
     drop(connection);
     assert!(
         matches!(SqliteRepository::open(&path), Err(StoreError::Unavailable(message)) if message.contains("downgrade refused"))

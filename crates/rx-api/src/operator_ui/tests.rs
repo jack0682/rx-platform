@@ -92,6 +92,7 @@ fn rejects_unlisted_missing_tampered_and_oversized_files() {
 fn strict_manifest_and_asset_namespace_reject_aliases_and_unsupported_inputs() {
     for (field, value) in [
         ("schema", json!("unknown")),
+        ("schema", json!("rx.operator-ui-bundle.v1")),
         ("api_schema", json!("future")),
         ("unknown", json!(true)),
     ] {
@@ -258,4 +259,22 @@ fn acquisition_rejects_component_links_replaced_after_inventory() {
     fs::remove_dir_all(f.root.join("assets")).unwrap();
     symlink(other.root.join("assets"), f.root.join("assets")).unwrap();
     assert!(read_file(&f.root, "assets/app.js", MAX_FILE_BYTES).is_err());
+}
+
+#[test]
+#[ignore = "requires frozen and current installed operator bundle paths"]
+fn installed_bundle_version_isolation() {
+    let old = PathBuf::from(std::env::var("RX_FROZEN_OPERATOR_BUNDLE").unwrap());
+    let current = PathBuf::from(std::env::var("RX_CURRENT_OPERATOR_BUNDLE").unwrap());
+    let old_bytes = fs::read(old.join(MANIFEST_FILENAME)).unwrap();
+    assert_eq!(
+        hash(&old_bytes).to_string(),
+        "37ce55aa9f6bef0246c83237e18e6504c2ebf237aec8084800ed1ff79f269e40"
+    );
+    let error = OperatorBundle::load(&old, &old.join(MANIFEST_FILENAME), hash(&old_bytes))
+        .err()
+        .expect("frozen v1 UI must not load in the v2 installation");
+    assert!(error.contains("operator manifest schema"), "{error}");
+    let bytes = fs::read(current.join(MANIFEST_FILENAME)).unwrap();
+    OperatorBundle::load(&current, &current.join(MANIFEST_FILENAME), hash(&bytes)).unwrap();
 }

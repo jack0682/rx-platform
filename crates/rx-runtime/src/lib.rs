@@ -14,3 +14,5 @@ pub mod requalification;
 pub mod host_recovery;
 
 pub mod software_skill;
+
+pub mod component_intake;

@@ -1,0 +1,251 @@
+//! Check v2 publication links before persisting configuration; this grants no authority.
+use super::*;
+use rx_process_contract::execution_v2 as v2;
+const BLOBS: crate::artifact_storage::BlobStore =
+    crate::artifact_storage::BlobStore::new("executionv2", v2::MAX_DEFINITION_BYTES);
+pub(super) fn plan(c: &CellConfiguration) -> Result<Option<v2::Plan>> {
+    c.execution
+        .as_ref()
+        .map(|binding| {
+            if c.environment != Environment::Simulation {
+                return reject(Reject::InvalidInput);
+            }
+            let process = c
+                .process
+                .as_ref()
+                .ok_or(StoreError::Rejected(Reject::InvalidInput))?;
+            let plan = v2::Plan {
+                schema: name(v2::PLAN_SCHEMA),
+                binding: (**binding).clone(),
+                process: (**process).clone(),
+            };
+            plan.validate().map_err(StoreError::Invalid)?;
+            Ok(plan)
+        })
+        .transpose()
+}
+pub(super) struct Domain {
+    pub policy: v2::Policy,
+    pub inputs: v2::InputClosure,
+    pub index: v2::ValidatedIndex,
+}
+pub(super) fn verify(tx: &mut dyn Transaction, c: &CellConfiguration) -> Result<()> {
+    domain(tx, c).map(|_| ())
+}
+pub(super) fn domain(tx: &mut dyn Transaction, c: &CellConfiguration) -> Result<Option<Domain>> {
+    let Some(plan) = plan(c)? else {
+        return Ok(None);
+    };
+    if plan.reference().map_err(StoreError::Invalid)? != c.recipe {
+        return reject(Reject::InvalidInput);
+    }
+    let (revision, p): (_, crate::workflow_publication::Publication) = load(
+        tx,
+        "workflowpublication",
+        &plan.binding.publication.id,
+        "rx.workflow-publication.v2",
+    )?;
+    if revision != Counter(1)
+        || p.reference != plan.binding.publication
+        || p.cell != c.id
+        || p.policy != plan.binding.policy
+        || p.reference.digest != p.digest().map_err(StoreError::Integrity)?
+    {
+        return reject(Reject::InvalidInput);
+    }
+    let (revision, preview): (_, crate::workflow_publication::Preview) = load(
+        tx,
+        "executionpreview",
+        &p.preview.id,
+        "rx.execution-preview.v2",
+    )?;
+    if revision != Counter(1)
+        || preview.reference != p.preview
+        || preview.reference.digest != preview.digest().map_err(StoreError::Integrity)?
+        || preview.policy != p.policy
+    {
+        return Err(StoreError::Integrity("publication preview differs".into()));
+    }
+    let policy = v2::Policy::decode(&BLOBS.read(tx, &p.policy)?).map_err(StoreError::Integrity)?;
+    let inputs = v2::InputClosure::decode(&BLOBS.read(tx, &policy.definition_closure)?, &policy)
+        .map_err(StoreError::Integrity)?;
+    let index = v2::ReportIndex::decode(&BLOBS.read(tx, &policy.report_index)?, &policy)
+        .map_err(StoreError::Integrity)?;
+    if preview.inputs != policy.definition_closure
+        || preview.index != policy.report_index
+        || preview.workflow != policy.workflow
+    {
+        return Err(StoreError::Integrity(
+            "execution policy provenance differs".into(),
+        ));
+    }
+    let order = inputs
+        .spec
+        .steps
+        .iter()
+        .map(|s| s.id.clone())
+        .collect::<Vec<_>>();
+    plan.verify_policy(&policy, &order)
+        .map_err(StoreError::Invalid)?;
+    let current = match workflow_model::current_snapshot(
+        tx,
+        &inputs.requests,
+        policy.slot_order.len() as u16,
+    ) {
+        // Authoring retains detailed reference diagnostics; eligibility exposes a stale revision
+        // so historical qualification views remain readable with current=false.
+        Err(StoreError::Invalid(detail)) if detail.starts_with("STALE_EXECUTION_REFERENCE ") => {
+            return reject(Reject::StaleRevision);
+        }
+        result => result?,
+    };
+    if canonical::bytes(&current.input_closure()).map_err(domain_error)?
+        != canonical::bytes(&inputs).map_err(domain_error)?
+    {
+        return reject(Reject::StaleRevision);
+    }
+    tx.require_workflow_execution_reader()?;
+    Ok(Some(Domain {
+        policy,
+        inputs,
+        index,
+    }))
+}
+pub(super) fn host_policy(
+    tx: &mut dyn Transaction,
+    c: &CellConfiguration,
+    host: &Name,
+) -> Result<Option<v2::host_configuration::CellPolicy>> {
+    let Some(binding) = &c.execution else {
+        return Ok(None);
+    };
+    verify(tx, c)?;
+    let (_, p): (_, crate::workflow_publication::Publication) = load(
+        tx,
+        "workflowpublication",
+        &binding.publication.id,
+        "rx.workflow-publication.v2",
+    )?;
+    let policy = v2::Policy::decode(&BLOBS.read(tx, &p.policy)?).map_err(StoreError::Integrity)?;
+    let mut packages = BTreeMap::new();
+    for (node, _) in policy.templates.iter().filter(|(_, a)| &a.host == host) {
+        let source = p
+            .bindings
+            .get(node)
+            .ok_or(StoreError::Rejected(Reject::InvalidInput))?;
+        let package = p
+            .packages
+            .get(&source.intake)
+            .ok_or(StoreError::Rejected(Reject::InvalidInput))?;
+        packages.insert(
+            node.clone(),
+            v2::host_configuration::Package {
+                manifest: package.object.manifest,
+                signature: package.object.signature,
+                catalog: package.catalog.clone(),
+                template: source.template.clone(),
+            },
+        );
+    }
+    Ok(Some(v2::host_configuration::CellPolicy {
+        publication: p.reference,
+        reference: p.policy,
+        policy,
+        packages,
+    }))
+}
+
+/// Revalidate the immutable v2 selection immediately before a new emission.
+pub(super) fn operation_current(
+    tx: &mut dyn Transaction,
+    cell: &Cell,
+    run: &Run,
+    work: &Work,
+    permit: &Permit,
+    step: &StepBinding,
+) -> Result<()> {
+    let binding = work
+        .execution
+        .as_ref()
+        .ok_or(StoreError::Rejected(Reject::UnsupportedSchema))?;
+    binding.validate().map_err(StoreError::Integrity)?;
+    let domain =
+        domain(tx, &cell.configuration)?.ok_or(StoreError::Rejected(Reject::UnsupportedSchema))?;
+    let source = cell
+        .configuration
+        .execution
+        .as_ref()
+        .ok_or(StoreError::Rejected(Reject::UnsupportedSchema))?;
+    let selection = &binding.selection;
+    let (_, part): (_, v2::executor::PartBinding) = load(
+        tx,
+        "executionpart",
+        &selection.part,
+        v2::executor::PART_BINDING_SCHEMA,
+    )?;
+    part.validate().map_err(StoreError::Integrity)?;
+    if binding.operation != *work.operation.id()
+        || binding.mandate != permit.mandate
+        || run.mandate.as_ref() != Some(&binding.mandate)
+        || binding.publication != source.publication
+        || binding.policy != source.policy
+        || selection.run != work.run
+        || selection.run != run.id
+        || work.part.as_ref() != Some(&selection.part)
+        || part.run != run.id
+        || part.part != selection.part
+        || part.ordinal != selection.ordinal
+        || part.slot_ordinal != selection.slot_ordinal
+        || part.slot != selection.slot
+        || part.object != selection.object
+        || part.object_values_digest != selection.object_values_digest
+        || part.candidate != selection.candidate
+        || part.report != binding.report
+        || part.parameters.get(&selection.node) != Some(&selection.parameter)
+        || part.publication != binding.publication
+        || part.policy != binding.policy
+        || selection.configuration_digest
+            != cell
+                .configuration
+                .reference()
+                .map_err(StoreError::Invalid)?
+                .sha256
+        || part.configuration.sha256 != selection.configuration_digest
+        || selection.authority_generation != cell.epoch
+        || permit.epoch != cell.epoch
+        || permit.operation != *work.operation.id()
+        || permit.cell != work.cell
+        || permit.intent_digest != selection.intent_digest
+        || work.operation.intent_digest() != selection.intent_digest
+        || source.nodes.get(&step.id) != Some(&selection.node)
+    {
+        return reject(Reject::StaleRevision);
+    }
+    let actual =
+        definition_catalog::version(tx, &selection.object.catalog, &selection.object.id, None)?;
+    if actual.archived || actual.definition.reference != selection.object {
+        return reject(Reject::StaleRevision);
+    }
+    let projection = domain
+        .inputs
+        .object_projection(&domain.policy, &actual.definition)
+        .map_err(StoreError::Invalid)?;
+    if projection.candidate != selection.candidate
+        || projection.values_digest != selection.object_values_digest
+        || projection.model != part.model
+    {
+        return reject(Reject::StaleRevision);
+    }
+    let bytes = crate::artifact_storage::BlobStore::new("executionpart", v2::MAX_DEFINITION_BYTES)
+        .read(tx, &selection.parameter)?;
+    selection
+        .verify_request(
+            selection,
+            &domain.policy,
+            &domain.index,
+            &work.host,
+            &work.intent,
+            &bytes,
+        )
+        .map_err(StoreError::Invalid)
+}

@@ -24,6 +24,9 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                 &run.cell,
             )?;
             let configuration = run_configuration::read(tx, &run, &cell.configuration)?;
+            if configuration.execution.is_some() {
+                return reject(Reject::UnsupportedSchema);
+            }
             let mut historical = cell.clone();
             historical.configuration = configuration.clone();
             let (process_checkpoint, progress) =
@@ -95,6 +98,9 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                 return crate::checkpoint_artifact::read_artifact(tx, run_id, reference);
             }
             let configuration = run_configuration::read(tx, &run, &cell.configuration)?;
+            if configuration.execution.is_some() {
+                return reject(Reject::UnsupportedSchema);
+            }
             if reference != &configuration.recipe || reference.sha256 != run.recipe_digest {
                 return reject(Reject::UnsupportedSchema);
             }

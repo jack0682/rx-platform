@@ -22,7 +22,11 @@ fn binding(meta: &Installation, cfg: &CellConfiguration) -> Result<Option<view::
         package_digest: process.package_digest,
         site_config_digest: cfg.site_config_digest,
         maximum_budget: cfg.maximum_budget,
-        input_mode: "BOUND_CONFIGURATION",
+        input_mode: if cfg.execution.is_some() {
+            "PUBLISHED_SELECTION_V2"
+        } else {
+            "BOUND_CONFIGURATION"
+        },
     }))
 }
 
@@ -104,7 +108,22 @@ impl<R: Repository, C: Clock, A: QualificationAuthority> Engine<R, C, A> {
                 }
                 work_count += 1;
                 if work.len() < 256 {
+                    let mut resources = Vec::new();
+                    for resource in &value.intent.resource_set {
+                        let (revision, resource) = load(tx, "resource", resource, RESOURCE)?;
+                        resources.push(Versioned {
+                            revision,
+                            value: resource,
+                        });
+                    }
+                    let reconciliation = tx
+                        .get(&key("reconciliation", value.operation.id()))?
+                        .map(|row| decode(&row, "rx.internal.reconciliation-request.v1"))
+                        .transpose()?;
                     work.push(view::Work {
+                        resources,
+                        reconciliation,
+                        execution: value.execution,
                         operation: value.operation,
                         part: value.part,
                         slot: value.slot,

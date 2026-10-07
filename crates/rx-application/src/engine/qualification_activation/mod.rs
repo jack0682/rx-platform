@@ -4,6 +4,8 @@ use crate::{
     qualification_activation as a, requalification as q,
 };
 use rx_domain::host_qualification as host;
+mod storage;
+use storage::decode_task;
 const BATCH: &str = "rx.qualification-activation-batch.v1";
 const TASK: &str = "rx.qualification-host-task.v1";
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -237,23 +239,50 @@ fn record_batch(tx: &mut dyn Transaction, b: &a::Batch, expected: Option<Counter
     event(tx, "rx.event.qualification-batch.v1", b)
 }
 fn task(tx: &mut dyn Transaction, id: &Id) -> Result<(Counter, a::Task)> {
-    let (rev, t): (_, a::Task) = load(tx, "qualificationtask", id, TASK)?;
+    let row = tx
+        .get(&key("qualificationtask", id))?
+        .ok_or(StoreError::Rejected(Reject::NotFound))?;
+    let rev = row.revision;
+    let t = decode_task(tx, &row)?;
     if t.id != *id
         || t.request.is_some() != t.digest.is_some()
-        || t.request
-            .as_ref()
-            .is_some_and(|r| r.id != t.id || r.host != t.host || r.digest().ok() != t.digest)
+        || t.request.as_ref().is_some_and(|r| {
+            r.context().id != t.id || r.context().host != t.host || r.digest().ok() != t.digest
+        })
         || t.receipt
             .as_ref()
-            .is_some_and(|r| r.validate().is_err() || Some(r.request_digest) != t.digest)
+            .is_some_and(|r| r.validate().is_err() || Some(r.request_digest()) != t.digest)
     {
         return Err(StoreError::Integrity("qualification task identity".into()));
+    }
+    if t.request
+        .as_ref()
+        .is_some_and(|r| r.is_v2() != !t.execution_policies.is_empty())
+        || t.receipt
+            .as_ref()
+            .is_some_and(|r| r.is_v2() != !t.execution_policies.is_empty())
+        || t.observation
+            .as_ref()
+            .is_some_and(|o| o.is_v2() != !t.execution_policies.is_empty())
+    {
+        return Err(StoreError::Integrity(
+            "qualification task protocol differs".into(),
+        ));
+    }
+    if let Some(a::Request::V2(r)) = &t.request
+        && r.policies != t.execution_policies
+    {
+        return Err(StoreError::Integrity(
+            "qualification policy bindings differ".into(),
+        ));
+    }
+    if let Some(o) = &t.observation {
+        o.validate().map_err(StoreError::Integrity)?;
     }
     Ok((rev, t))
 }
 fn record_task(tx: &mut dyn Transaction, t: &a::Task, expected: Option<Counter>) -> Result<()> {
-    save(tx, "qualificationtask", &t.id, expected, TASK, t)?;
-    event(tx, "rx.event.qualification-host-task.v1", t)
+    storage::persist(tx, t, expected)
 }
 fn access(
     tx: &mut dyn Transaction,
@@ -328,58 +357,16 @@ fn approved(
     Ok((v, d))
 }
 fn quiet(tx: &mut dyn Transaction, j: &q::Job) -> Result<()> {
-    let cells: BTreeSet<_> = j
-        .request
-        .cells
-        .iter()
-        .map(|c| c.profile.cell.clone())
-        .collect();
-    for row in tx.scan("run/")? {
-        let r: Run = decode(&row, RUN)?;
-        if cells.contains(&r.cell) && !matches!(r.state, RunState::Completed | RunState::Abandoned)
-        {
-            return reject(Reject::Busy);
-        }
-    }
-    let mut resources = BTreeSet::new();
-    for name in &cells {
-        let (_, c): (_, Cell) = load(tx, "cell", name, CELL)?;
-        resources.extend(
-            c.configuration
-                .steps
-                .iter()
-                .flat_map(|s| s.intent.resource_set.iter().cloned()),
-        );
-    }
-    for row in tx.scan("work/")? {
-        let w: Work = decode(&row, WORK)?;
-        if cells.contains(&w.cell) {
-            resources.extend(w.intent.resource_set.iter().cloned());
-            if matches!(w.operation.outcome(), Outcome::None | Outcome::Unresolved)
-                || w.operation.integrity() == Integrity::Disputed
-            {
-                return reject(Reject::ContinuityUnproven);
-            }
-        }
-    }
-    for r in resources {
-        if let Some(row) = tx.get(&key("resource", &r))? {
-            let r: Resource = decode(&row, RESOURCE)?;
-            if r.holder.is_some() || r.quarantined {
-                return reject(Reject::Busy);
-            }
-        }
-    }
-    for row in tx.scan("case/")? {
-        let c: crate::intervention::Case = decode(&row, "rx.internal.intervention-case.v1")?;
-        if c.state != crate::intervention::CaseState::Closed
-            && (cells.contains(&c.cell) || c.effective_cells.iter().any(|c| cells.contains(c)))
-        {
-            return reject(Reject::BlockedByCase);
-        }
-    }
-    Ok(())
+    admission::quiet_cells(
+        tx,
+        &j.request
+            .cells
+            .iter()
+            .map(|c| c.profile.cell.clone())
+            .collect(),
+    )
 }
+
 fn pending_current(tx: &mut dyn Transaction, meta: &Installation, b: &a::Batch) -> Result<()> {
     if b.state != a::State::Pending
         || b.runtime_boot != meta.runtime_boot
@@ -559,7 +546,7 @@ fn view(tx: &mut dyn Transaction, meta: &Installation, b: a::Batch) -> Result<a:
         .filter(|t| {
             t.receipt
                 .as_ref()
-                .is_some_and(|r| r.status == host::Status::Accepted)
+                .is_some_and(|r| r.context().status == host::Status::Accepted)
         })
         .count();
     let unknown = hosts
@@ -609,6 +596,7 @@ fn active_current(tx: &mut dyn Transaction, meta: &Installation, b: &a::Batch) -
     )?;
     for target in &b.cells {
         let (_, cell): (_, Cell) = load(tx, "cell", &target.cell, CELL)?;
+        requalification::derived_current(tx, meta, &cell.configuration)?;
         if process_change::config_ref(&cell.configuration)? != target.configuration
             || cell.epoch != target.epoch
             || cell.scope_epochs != target.scopes
@@ -627,7 +615,7 @@ fn active_current(tx: &mut dyn Transaction, meta: &Installation, b: &a::Batch) -
             || !t
                 .observation
                 .as_ref()
-                .is_some_and(|o| o.receipt_matches_current_host)
+                .is_some_and(|o| o.receipt_matches_current_host())
         {
             return reject(Reject::HostNotPrepared);
         }
@@ -696,16 +684,15 @@ fn fresh_hosts(
             || t.issue.is_some()
             || t.receipt
                 .as_ref()
-                .is_none_or(|r| r.status != host::Status::Accepted)
-            || !o.receipt_matches_current_host
+                .is_none_or(|r| r.context().status != host::Status::Accepted)
+            || !o.receipt_matches_current_host()
             || !generation(tx, &t)?
         {
             return reject(Reject::HostNotPrepared);
         }
         let (at, hash) = reads.get(id).ok_or(StoreError::Rejected(Reject::Expired))?;
         if now.age_ns(at).is_none_or(|age| age > 3_000_000_000)
-            || canonical::digest("RX-QUALIFICATION-OBSERVATION-v1", o).map_err(domain_error)?
-                != *hash
+            || o.digest().map_err(StoreError::Invalid)? != *hash
         {
             return reject(Reject::Expired);
         }
@@ -853,3 +840,68 @@ pub(super) fn arm_clear(tx: &mut dyn Transaction, cell: &Cell) -> Result<Vec<Id>
 mod activation;
 mod host_tasks;
 mod issuance;
+
+fn policy_bindings(
+    tx: &mut dyn Transaction,
+    job: &q::Job,
+    host: &Name,
+    cells: &[Name],
+) -> Result<BTreeMap<Name, rx_process_contract::execution_v2::host_qualification::PolicyBinding>> {
+    let mut has_execution = false;
+    for id in cells {
+        let (_, cell): (_, Cell) = load(tx, "cell", id, CELL)?;
+        has_execution |= cell.configuration.execution.is_some();
+    }
+    if !has_execution {
+        return Ok(BTreeMap::new());
+    }
+    let change = process_change::change(tx, &job.request.change, &job.request.origin)?;
+    let application = change
+        .application
+        .as_ref()
+        .ok_or(StoreError::Rejected(Reject::HostNotPrepared))?;
+    let proof = application
+        .host_proofs
+        .iter()
+        .find(|p| &p.host == host)
+        .ok_or(StoreError::Rejected(Reject::HostNotPrepared))?;
+    let (_, source) = configuration_dispatch::read(tx, &proof.task)?;
+    let receipt = source
+        .receipt
+        .as_ref()
+        .ok_or(StoreError::Rejected(Reject::HostNotPrepared))?;
+    if source.integrity_disputed
+        || receipt.digest().map_err(StoreError::Integrity)? != proof.receipt_digest
+        || receipt.request_digest() != proof.request_digest
+    {
+        return reject(Reject::ContinuityUnproven);
+    }
+    let mut policies = BTreeMap::new();
+    for id in cells {
+        let (_, cell): (_, Cell) = load(tx, "cell", id, CELL)?;
+        let Some(binding) = &cell.configuration.execution else {
+            continue;
+        };
+        let crate::configuration_dispatch::Receipt::V2(receipt) = receipt else {
+            return reject(Reject::UnsupportedSchema);
+        };
+        let accepted = receipt
+            .request
+            .policies
+            .get(id)
+            .ok_or(StoreError::Rejected(Reject::HostNotPrepared))?;
+        if accepted.publication != binding.publication || accepted.reference != binding.policy {
+            return reject(Reject::StaleRevision);
+        }
+        policies.insert(
+            id.clone(),
+            rx_process_contract::execution_v2::host_qualification::PolicyBinding {
+                publication: accepted.publication.clone(),
+                policy: accepted.reference.clone(),
+                configuration_request: receipt.request_digest,
+                configuration_receipt: receipt.digest().map_err(StoreError::Integrity)?,
+            },
+        );
+    }
+    Ok(policies)
+}

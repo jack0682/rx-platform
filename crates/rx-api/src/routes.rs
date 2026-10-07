@@ -1,7 +1,14 @@
+mod component_intake;
+mod definition_catalog;
 mod device_binding;
 mod device_review;
+mod execution_inventory;
 mod host_recovery;
+mod resident_components;
+mod resident_execution;
 mod settlement;
+mod workflow_model;
+mod workflow_publication;
 use crate::{
     auth::{Auth, COOKIE, Credentials, SESSION_SECONDS},
     error::ApiError,
@@ -110,7 +117,123 @@ fn build_router(
         host_recovery,
     };
     Ok(Router::new()
+        .route(
+            "/api/v1/workflow-models",
+            get(workflow_model::list).post(workflow_model::save),
+        )
+        .route("/api/v1/workflow-model", get(workflow_model::get))
+        .route(
+            "/api/v1/workflow-resolutions",
+            post(workflow_model::resolve).get(workflow_model::reports),
+        )
+        .route("/api/v1/workflow-resolution", get(workflow_model::report))
+        .route(
+            "/api/v1/workflow-executions/report",
+            get(execution_inventory::report),
+        )
+        .route(
+            "/api/v1/workflow-executions/start-context",
+            get(execution_inventory::start_context),
+        )
+        .route(
+            "/api/v1/workflow-executions/start",
+            post(execution_inventory::start_run),
+        )
+        .route(
+            "/api/v1/workflow-executions/objects",
+            post(execution_inventory::bind_object).get(execution_inventory::object),
+        )
+        .route(
+            "/api/v1/workflow-executions/slot-pools",
+            post(execution_inventory::initialize).get(execution_inventory::pool),
+        )
+        .route(
+            "/api/v1/workflow-executions/runs",
+            post(execution_inventory::create_run).get(execution_inventory::run),
+        )
+        .route(
+            "/api/v1/workflow-executions/configuration",
+            post(workflow_publication::configuration),
+        )
+        .route(
+            "/api/v1/workflow-executions/preview",
+            post(workflow_publication::preview),
+        )
+        .route(
+            "/api/v1/workflow-executions/preview",
+            get(workflow_publication::get_preview),
+        )
+        .route(
+            "/api/v1/workflow-executions/material",
+            get(workflow_publication::material),
+        )
+        .route(
+            "/api/v1/workflow-executions/preview-report",
+            get(workflow_publication::report),
+        )
+        .route(
+            "/api/v1/workflow-executions/publish",
+            post(workflow_publication::publish),
+        )
+        .route(
+            "/api/v1/workflow-executions/publication",
+            get(workflow_publication::get_publication),
+        )
+        .route(
+            "/api/v1/definition-catalogs",
+            get(definition_catalog::catalogs).post(definition_catalog::save_catalog),
+        )
+        .route(
+            "/api/v1/definition-catalog",
+            get(definition_catalog::catalog),
+        )
+        .route(
+            "/api/v1/definitions",
+            get(definition_catalog::list).post(definition_catalog::save),
+        )
+        .route("/api/v1/definition", get(definition_catalog::get))
+        .route(
+            "/api/v1/definition-points",
+            post(definition_catalog::points),
+        )
+        .route(
+            "/api/v1/definition-history",
+            get(definition_catalog::history),
+        )
         .route("/api/v1/health", get(health))
+        .route(
+            "/api/v1/resident-executions",
+            post(resident_execution::propose),
+        )
+        .route("/api/v1/resident-execution", get(resident_execution::get))
+        .route(
+            "/api/v1/resident-executions/approve",
+            post(resident_execution::approve),
+        )
+        .route(
+            "/api/v1/resident-executions/stop",
+            post(resident_execution::stop),
+        )
+        .route(
+            "/api/v1/registration-source",
+            get(component_intake::context),
+        )
+        .route(
+            "/api/v1/registration-transfers",
+            post(component_intake::import),
+        )
+        .route(
+            "/api/v1/registration-transfer",
+            get(component_intake::progress),
+        )
+        .route(
+            "/api/v1/registration-transfer/receipt",
+            get(component_intake::receipt),
+        )
+        .route(
+            "/api/v1/registration-transfer/history",
+            get(component_intake::history),
+        )
         .route("/api/v1/session", post(login).get(profile))
         .route("/api/v1/session/end", post(logout))
         .route("/api/v1/overview", get(overview))
@@ -234,6 +357,7 @@ fn build_router(
             get(process_drafts).post(save_process_draft),
         )
         .route("/api/v1/process-draft", get(process_draft))
+        .route("/api/v1/process-draft-history", get(process_draft_history))
         .route(
             "/api/v1/process-draft-compile-input",
             get(draft_compile_input),
@@ -251,6 +375,39 @@ fn build_router(
         .route("/api/v1/device-restrictions", get(device_restrictions))
         .route("/api/cell/v1/cells/{cell_id}/inspect", get(cell_context))
         .route("/api/v1/cells", post(install_cell))
+        .route(
+            "/api/v1/components",
+            post(resident_components::create_component),
+        )
+        .route("/api/v1/component", get(resident_components::get_component))
+        .route(
+            "/api/v1/component/reporting-scope",
+            get(resident_components::get_reporting_scope),
+        )
+        .route(
+            "/api/v1/components/reporting",
+            post(resident_components::issue_reporting),
+        )
+        .route(
+            "/api/v1/components/reporting/continue",
+            post(resident_components::continue_reporting),
+        )
+        .route(
+            "/api/v1/components/reporting/revoke",
+            post(resident_components::revoke_reporting),
+        )
+        .route(
+            "/api/v1/component/report",
+            get(resident_components::get_report),
+        )
+        .route(
+            "/api/v1/components/update",
+            post(resident_components::update_component),
+        )
+        .route(
+            "/api/v1/components/retire",
+            post(resident_components::retire_component),
+        )
         .route("/api/v1/runs", post(create_run))
         .route("/api/v1/run/start-context", get(operator_start_context))
         .route("/api/v1/run/start-attempt", get(operator_start_attempt))
@@ -1082,6 +1239,37 @@ async fn cell_context(
 struct ProcessDraftListQuery {
     cell: Name,
     after: Option<Id>,
+    #[serde(default)]
+    q: String,
+    site: Option<String>,
+    service: Option<String>,
+    archived: Option<bool>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProcessDraftHistoryQuery {
+    cell: Name,
+    id: Id,
+    before: Option<Counter>,
+}
+async fn process_draft_history(
+    State(s): State<ApiState>,
+    headers: HeaderMap,
+    Query(q): Query<ProcessDraftHistoryQuery>,
+) -> Result<Response, ApiError> {
+    match s
+        .runtime
+        .request(Command::ListProcessDraftHistory {
+            identity: identity(&s, &headers)?,
+            cell: q.cell,
+            id: q.id,
+            before: q.before,
+        })
+        .await?
+    {
+        Reply::ProcessDraftHistory(page) => Ok(Json(page).into_response()),
+        _ => Err(mismatch()),
+    }
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -1101,6 +1289,12 @@ async fn process_drafts(
             identity: identity(&s, &headers)?,
             cell: q.cell,
             after: q.after,
+            filter: rx_application::process_draft::Filter {
+                query: q.q,
+                site: q.site,
+                service: q.service,
+                archived: q.archived,
+            },
         })
         .await?
     {

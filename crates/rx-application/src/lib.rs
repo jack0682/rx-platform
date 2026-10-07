@@ -9,6 +9,8 @@ pub mod model;
 pub mod persistence;
 pub mod procedure;
 pub mod projection;
+pub mod resident_component;
+pub mod resident_reporting;
 mod run_index;
 pub use engine::Engine;
 pub use model::*;
@@ -27,6 +29,7 @@ pub mod diagnostics;
 
 pub mod service_health;
 
+pub mod definition_catalog;
 pub mod process_draft;
 
 pub mod draft_bindings;
@@ -41,6 +44,8 @@ pub mod process_review;
 pub mod process_change;
 
 pub mod configuration_dispatch;
+mod configuration_exchange;
+mod qualification_exchange;
 
 pub mod requalification;
 
@@ -62,3 +67,15 @@ pub mod runtime_skill;
 pub mod software_skill;
 
 pub mod host_binding_transition;
+
+pub mod component_intake;
+
+pub mod resident_execution;
+
+mod artifact_storage;
+pub mod execution_qualification;
+pub mod execution_templates;
+pub mod workflow_model;
+pub mod workflow_publication;
+
+pub mod execution_inventory;

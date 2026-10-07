@@ -69,6 +69,11 @@ fn configuration(
         .request
         .as_ref()
         .ok_or(StoreError::Rejected(Reject::ContinuityUnproven))?;
+    if receipt.is_v2() || request.is_v2() {
+        return reject(Reject::UnsupportedSchema);
+    }
+    let receipt = receipt.context();
+    let request = request.context();
     if task.integrity_disputed
         || task.host != base.host
         || task.host_boot != base.host_boot
